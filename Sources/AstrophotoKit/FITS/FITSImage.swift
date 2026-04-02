@@ -1,6 +1,7 @@
 import Foundation
 import Metal
 import MetalKit
+import Accelerate
 import CCFITSIO
 import os
 
@@ -368,18 +369,28 @@ extension FITSFile {
             throw FITSFileError.readError(status: status, message: errorString)
         }
         
-        // Store raw data for reference
-        let rawData = floatBuffer.withUnsafeBytes { Data($0) }
-        
-        // Normalize pixel values to 0-1 range for Metal
-        let minVal = floatBuffer.min() ?? 0
-        let maxVal = floatBuffer.max() ?? 1
+        // Find min/max in one vDSP pass (no Swift loop, vectorised on all cores)
+        var minVal: Float32 = 0
+        var maxVal: Float32 = 0
+        vDSP_minv(floatBuffer, 1, &minVal, vDSP_Length(floatBuffer.count))
+        vDSP_maxv(floatBuffer, 1, &maxVal, vDSP_Length(floatBuffer.count))
+
+        // Normalise in-place: subtract min, divide by range — avoids a second [Float32] allocation
         let range = maxVal - minVal
-        let normalizedPixels = range > 0 ? floatBuffer.map { ($0 - minVal) / range } : floatBuffer
+        if range > 0 {
+            var negMin = -minVal
+            var invRange = 1.0 / range
+            // floatBuffer = (floatBuffer + negMin) * invRange
+            vDSP_vsadd(floatBuffer, 1, &negMin, &floatBuffer, 1, vDSP_Length(floatBuffer.count))
+            vDSP_vsmul(floatBuffer, 1, &invRange, &floatBuffer, 1, vDSP_Length(floatBuffer.count))
+        }
+
+        // Capture raw bytes before handing ownership to Data (zero-copy on supported platforms)
+        let rawData = floatBuffer.withUnsafeBytes { Data($0) }
+
+        Logger.swiftfitsio.debug("Successfully read image: \(floatBuffer.count) pixels, value range [\(minVal), \(maxVal)]")
         
-        Logger.swiftfitsio.debug("Successfully read image: \(normalizedPixels.count) pixels, value range [\(minVal), \(maxVal)]")
-        
-        return (width, height, depth, normalizedPixels, rawData, bitpix, minVal, maxVal)
+        return (width, height, depth, floatBuffer, rawData, bitpix, minVal, maxVal)
     }
     
     /// Reads a complete FITS image with metadata

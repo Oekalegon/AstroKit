@@ -129,7 +129,30 @@ public actor PipelineRunner {
             }
 
             // Execute all ready processes
+            // First, check if any processes need to be split (collection inputs with individually mode)
+            var processesToRun: [Process] = []
             for process in processesToExecute {
+                if let splitProcesses = await splitProcessForCollectionInputs(process: process) {
+                    // Process was split - add the split processes instead
+                    for splitProcess in splitProcesses {
+                        await processStack.add(process: splitProcess)
+                        await setupProcessInputLinks(process: splitProcess)
+                        // Create output data for each split process
+                        try await createProcessOutputData(process: splitProcess)
+                        processesToRun.append(splitProcess)
+                    }
+                    // Mark original process as cancelled since we split it
+                    var cancelledProcess = process
+                    cancelledProcess.markAsCancelled()
+                    await processStack.update(process: cancelledProcess)
+                } else {
+                    // Process doesn't need splitting, execute as normal
+                    processesToRun.append(process)
+                }
+            }
+
+            // Execute all processes (original or split)
+            for process in processesToRun {
                 try await executeProcess(
                     process: process,
                     device: device,
@@ -221,6 +244,196 @@ public actor PipelineRunner {
         return false
     }
 
+    /// Splits a process into multiple processes if it has collection inputs with individually mode
+    /// This is an implicit "split" process that expands a FrameSet into individual Frames
+    /// - Parameter process: The process to potentially split
+    /// - Returns: Array of split processes if splitting occurred, nil if no splitting needed
+    private func splitProcessForCollectionInputs(process: Process) async -> [Process]? {
+        // Find the first collection input with individually mode
+        for inputLink in process.inputData {
+            if case .input(_, let linkName, let type, let collectionMode, let stepLinkID) = inputLink {
+                if type == .frameSet && collectionMode == .individually {
+                    // Look up the FrameSet in the data stack
+                    if let frameSet = await dataStack.get(by: inputLink) as? FrameSet {
+                        let frames = frameSet.frames
+                        if frames.count > 1 {
+                            // We need to split - create one process per frame
+                            var splitProcesses: [Process] = []
+                            
+                            for (index, frame) in frames.enumerated() {
+                                // Create individual Frame data items for each frame in the FrameSet
+                                // Each frame needs to be added to the data stack with an outputLink
+                                // that matches the stepLinkID the split process will look for
+                                var individualFrame = frame
+                                // Set the outputLink to match what the split process will look for
+                                // The stepLinkID should match the input link's stepLinkID
+                                individualFrame.outputLink = .output(
+                                    process: UUID(), // Synthetic process ID for the split
+                                    link: linkName,
+                                    type: .frame,
+                                    stepLinkID: stepLinkID // Use the stepLinkID from the input link
+                                )
+                                // Add the individual frame to the data stack
+                                await dataStack.add(data: individualFrame)
+
+                                // Create a new process for this frame
+                                // Modify the input link to be a frame instead of frameSet
+                                let modifiedInputData = process.inputData.map { inputLink in
+                                    if case .input(let processId, let inputLinkName, _, let inputCollectionMode, let inputStepLinkID) = inputLink {
+                                        if inputLinkName == linkName {
+                                            // Change this input to be a frame (not frameSet) for the split process
+                                            // Use the same stepLinkID so it matches the individual frame we just created
+                                            return ProcessDataLink.input(
+                                                process: processId,
+                                                link: inputLinkName,
+                                                type: .frame,
+                                                collectionMode: inputCollectionMode,
+                                                stepLinkID: inputStepLinkID
+                                            )
+                                        }
+                                    }
+                                    return inputLink
+                                }
+
+                                // Create unique step identifier for each split process
+                                let splitStepIdentifier = "\(process.stepIdentifier)[\(index)]"
+
+                                // IMPORTANT: Keep the same stepLinkID for all outputs from split processes
+                                // This allows them to be collected later by the merge process
+                                let modifiedOutputData = process.outputData.map { outputLink -> ProcessDataLink in
+                                    if case .output(let processId, let outputLinkName, let outputType, let originalOutputStepLinkID) = outputLink {
+                                        // Keep the original stepLinkID so all split outputs share the same stepLinkID
+                                        // This is the key for the merge process to find them all
+                                        return .output(
+                                            process: processId,
+                                            link: outputLinkName,
+                                            type: outputType,
+                                            stepLinkID: originalOutputStepLinkID
+                                        )
+                                    }
+                                    return outputLink
+                                }
+
+                                // Create the split process with modified input/output data
+                                // Convert ProcessDataLinks back to tuples for Process.init
+                                // Convert ProcessDataLinks to tuples for Process.init
+                                // Note: Using a typealias to avoid large tuple warning
+                                typealias InputDataTuple = (String, DataType, CollectionMode, String)
+                                let inputDataTuples = modifiedInputData.compactMap { link -> InputDataTuple? in
+                                    if case .input(_, let linkName, let type, let collectionMode, let stepLinkID) = link {
+                                        return (linkName, type, collectionMode, stepLinkID)
+                                    }
+                                    return nil
+                                }
+                                let outputDataTuples = modifiedOutputData.compactMap { link -> (String, DataType)? in
+                                    if case .output(_, let linkName, let type, _) = link {
+                                        return (linkName, type)
+                                    }
+                                    return nil
+                                }
+
+                                let splitProcess = Process(
+                                    stepIdentifier: splitStepIdentifier,
+                                    processorIdentifier: process.processorIdentifier,
+                                    inputData: inputDataTuples,
+                                    parameters: process.parameters,
+                                    outputData: outputDataTuples
+                                )
+                                
+                                // Note: Process.init will create stepLinkIDs like "step[0].outputName"
+                                // The merge logic will match on the base stepLinkID (without the index)
+
+                                splitProcesses.append(splitProcess)
+                            }
+                            
+                            Logger.pipeline.info("Split process '\(process.stepIdentifier)' into \(splitProcesses.count) processes for collection input '\(linkName)'")
+                            return splitProcesses
+                        }
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Synthesizes a FrameSet from individual frames that share the same base stepLinkID
+    /// This is an implicit "merge" process that collects individual Frames into a FrameSet
+    /// - Parameters:
+    ///   - stepLinkID: The stepLinkID to match frames by (e.g., "subtract_bias_from_dark.calibrated_dark")
+    ///   - linkName: The link name for the synthesized FrameSet
+    /// - Returns: A FrameSet containing all matching frames, or nil if no frames found
+    private func synthesizeFrameSetFromFrames(stepLinkID: String, linkName: String) async -> FrameSet? {
+        // Find all frames in the data stack that have a matching base stepLinkID
+        // Split processes create outputs with stepLinkIDs like "step[0].output", "step[1].output"
+        // We need to match on the base part (e.g., "step.output") to collect them all
+        let allData = await dataStack.getAll()
+        var matchingFrames: [Frame] = []
+
+        // Extract the base stepLinkID (e.g., "step.output" from "step[0].output" or just "step.output")
+        let baseStepLinkID: String
+        if stepLinkID.contains("[") {
+            // If stepLinkID has an index, extract the base (but this shouldn't happen for merge inputs)
+            baseStepLinkID = String(stepLinkID.split(separator: "[").first!)
+        } else {
+            baseStepLinkID = stepLinkID
+        }
+
+        for data in allData {
+            if let frame = data as? Frame,
+               let outputLink = frame.outputLink,
+               case .output(_, _, _, let frameStepLinkID) = outputLink {
+                // Extract base from frame's stepLinkID (might be "step[0].output")
+                let frameBaseStepLinkID: String
+                if frameStepLinkID.contains("[") {
+                    // Extract base and output name: "step[0].output" -> "step.output"
+                    let parts = frameStepLinkID.split(separator: "[")
+                    if parts.count > 0 {
+                        let basePart = String(parts[0])
+                        // Find the output name after the index
+                        if let dotIndex = frameStepLinkID.firstIndex(of: ".") {
+                            let afterDot = String(frameStepLinkID[frameStepLinkID.index(after: dotIndex)...])
+                            frameBaseStepLinkID = "\(basePart).\(afterDot)"
+                        } else {
+                            frameBaseStepLinkID = basePart
+                        }
+                    } else {
+                        frameBaseStepLinkID = frameStepLinkID
+                    }
+                } else {
+                    frameBaseStepLinkID = frameStepLinkID
+                }
+
+                // Match on base stepLinkID
+                if frameBaseStepLinkID == baseStepLinkID {
+                    matchingFrames.append(frame)
+                }
+            }
+        }
+
+        if matchingFrames.isEmpty {
+            return nil
+        }
+
+        // Create a FrameSet from the matching frames
+        // The FrameSet's outputLink should reference the stepLinkID that will consume it
+        let frameSet = FrameSet(
+            frames: matchingFrames,
+            outputProcess: (
+                id: UUID(), // Synthetic process ID for the merge
+                name: linkName,
+                stepLinkID: stepLinkID
+            ),
+            inputProcesses: []
+        )
+
+        // Add the synthesized FrameSet to the data stack
+        await dataStack.add(data: frameSet)
+
+        Logger.pipeline.info("Synthesized FrameSet '\(linkName)' from \(matchingFrames.count) frames with base stepLinkID '\(baseStepLinkID)'")
+
+        return frameSet
+    }
+
     /// Prepares input data for a process from the data stack
     /// - Parameter process: The process to prepare inputs for
     /// - Returns: Dictionary of input name to ProcessData
@@ -228,9 +441,16 @@ public actor PipelineRunner {
     private func prepareProcessInputs(process: Process) async throws -> [String: ProcessData] {
         var inputs: [String: ProcessData] = [:]
         for inputLink in process.inputData {
-            if case .input(_, let linkName, _, _, _) = inputLink {
+            if case .input(_, let linkName, let type, let collectionMode, let stepLinkID) = inputLink {
                 if let data = await dataStack.get(by: inputLink) {
                     inputs[linkName] = data
+                } else if type == .frameSet && collectionMode == .together {
+                    // Try to synthesize a FrameSet from individual frames with the same stepLinkID
+                    if let synthesizedFrameSet = await synthesizeFrameSetFromFrames(stepLinkID: stepLinkID, linkName: linkName) {
+                        inputs[linkName] = synthesizedFrameSet
+                    } else {
+                        throw ProcessorExecutionError.missingRequiredInput(linkName)
+                    }
                 } else {
                     throw ProcessorExecutionError.missingRequiredInput(linkName)
                 }
@@ -368,8 +588,6 @@ public actor PipelineRunner {
             )
             await processStack.add(process: process)
 
-            // TODO: Create multiple processes for collections.
-
             // Set up input links for ProcessData
             await setupProcessInputLinks(process: process)
 
@@ -402,6 +620,7 @@ public actor PipelineRunner {
     }
 
     /// Creates a Process instance for a pipeline step
+    /// Note: Collection splitting happens at execution time, not at configuration time
     /// - Parameters:
     ///   - step: The pipeline step
     ///   - parameters: Resolved parameters for the step
@@ -440,8 +659,8 @@ public actor PipelineRunner {
     /// Sets up input links for ProcessData that is referenced by a process
     /// - Parameter process: The process to set up input links for
     private func setupProcessInputLinks(process: Process) async {
-            for inputLink in process.inputData {
-                if case .input(let processId, let linkName, let type, let collectionMode, let stepLinkID) = inputLink {
+        for inputLink in process.inputData {
+            if case .input(let processId, let linkName, let type, let collectionMode, let stepLinkID) = inputLink {
                 guard var processData = await dataStack.get(
                     by: .input(
                         process: processId,
@@ -458,25 +677,25 @@ public actor PipelineRunner {
                     link: linkName,
                     collectionMode: collectionMode
                 )
-                    _ = await dataStack.update(data: processData)
+                _ = await dataStack.update(data: processData)
             }
-                }
-            }   
+        }
+    }
 
     /// Creates output data for a process and adds it to the data stack
     /// - Parameter process: The process to create output data for
     /// - Throws: PipelineConfigurationError if output data creation fails
     private func createProcessOutputData(process: Process) async throws {
-            for outputLink in process.outputData {
-                if case .output(_, _, let type, _) = outputLink {
-                    if let outputData = try self.createOutputData(
-                        type: type,
-                        outputLink: outputLink
-                    ) {
-                        await dataStack.add(data: outputData)
-                    }
+        for outputLink in process.outputData {
+            if case .output(_, _, let type, _) = outputLink {
+                if let outputData = try self.createOutputData(
+                    type: type,
+                    outputLink: outputLink
+                ) {
+                    await dataStack.add(data: outputData)
                 }
             }
+        }
     }   
 
     private func createInitialInputData(

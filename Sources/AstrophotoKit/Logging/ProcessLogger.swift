@@ -56,33 +56,69 @@ public struct ProcessLogger {
         osLogger.debug("\(createLogMessage(message, runID: runID, process: process, data: data, stepLinkID: stepLinkID), privacy: .public)")
     }
 
-    public func notice(_ message: String) {
+    public func notice(
+        _ message: String,
+        runID: UUID,
+        process: UUID? = nil,
+        data: UUID? = nil,
+        stepLinkID: String? = nil
+    ) {
         guard shouldLog(.notice), let osLogger else { return }
-        osLogger.notice("\(message, privacy: .public)")
+        osLogger.notice("\(createLogMessage(message, runID: runID, process: process, data: data, stepLinkID: stepLinkID), privacy: .public)")
     }
 
-    public func info(_ message: String) {
+    public func info(
+        _ message: String,
+        runID: UUID,
+        process: UUID? = nil,
+        data: UUID? = nil,
+        stepLinkID: String? = nil
+    ) {
         guard shouldLog(.info), let osLogger else { return }
-        osLogger.info("\(message, privacy: .public)")
+        osLogger.info("\(createLogMessage(message, runID: runID, process: process, data: data, stepLinkID: stepLinkID), privacy: .public)")
     }
 
-    public func warning(_ message: String) {
+    public func warning(
+        _ message: String,
+        runID: UUID,
+        process: UUID? = nil,
+        data: UUID? = nil,
+        stepLinkID: String? = nil
+    ) {
         guard shouldLog(.warning), let osLogger else { return }
-        osLogger.warning("\(message, privacy: .public)")
+        osLogger.warning("\(createLogMessage(message, runID: runID, process: process, data: data, stepLinkID: stepLinkID), privacy: .public)")
     }
 
-    public func error(_ message: String) {
+    public func error(
+        _ message: String,
+        runID: UUID,
+        process: UUID? = nil,
+        data: UUID? = nil,
+        stepLinkID: String? = nil
+    ) {
         guard shouldLog(.error), let osLogger else { return }
-        osLogger.error("\(message, privacy: .public)")
+        osLogger.error("\(createLogMessage(message, runID: runID, process: process, data: data, stepLinkID: stepLinkID), privacy: .public)")
     }
 
-    public func critical(_ message: String) {
+    public func critical(
+        _ message: String,
+        runID: UUID,
+        process: UUID? = nil,
+        data: UUID? = nil,
+        stepLinkID: String? = nil
+    ) {
         guard shouldLog(.critical), let osLogger else { return }
-        osLogger.critical("\(message, privacy: .public)")
+        osLogger.critical("\(createLogMessage(message, runID: runID, process: process, data: data, stepLinkID: stepLinkID), privacy: .public)")
     }
 
-    public func log(_ message: String) {
+    public func log(
+        _ message: String,
+        runID: UUID,
+        process: UUID? = nil,
+        data: UUID? = nil,
+        stepLinkID: String? = nil
+    ) {
         guard shouldLog(.info), let osLogger else { return }
-        osLogger.info("\(message, privacy: .public)")
+        osLogger.info("\(createLogMessage(message, runID: runID, process: process, data: data, stepLinkID: stepLinkID)  , privacy: .public)")
     }
 }

@@ -73,6 +73,51 @@ public actor ProcessorRegistry {
         if implementations[fwhm.id] == nil {
             register(fwhm)
         }
+
+        let opticalQuality = OpticalQualityProcessor()
+        if implementations[opticalQuality.id] == nil {
+            register(opticalQuality)
+        }
+
+        let houghCircles = HoughCircleProcessor()
+        if implementations[houghCircles.id] == nil {
+            register(houghCircles)
+        }
+
+        let collimationAnalysis = CollimationAnalysisProcessor()
+        if implementations[collimationAnalysis.id] == nil {
+            register(collimationAnalysis)
+        }
+
+        let hfd = HFDProcessor()
+        if implementations[hfd.id] == nil {
+            register(hfd)
+        }
+
+        let autofocusCurve = AutofocusCurveProcessor()
+        if implementations[autofocusCurve.id] == nil {
+            register(autofocusCurve)
+        }
+
+        let houghCircleOverlay = HoughCircleOverlayProcessor()
+        if implementations[houghCircleOverlay.id] == nil {
+            register(houghCircleOverlay)
+        }
+
+        let radialProfile = RadialProfileProcessor()
+        if implementations[radialProfile.id] == nil {
+            register(radialProfile)
+        }
+
+        let waveletDonut = WaveletDonutProcessor()
+        if implementations[waveletDonut.id] == nil {
+            register(waveletDonut)
+        }
+
+        let ringSearch = RingSearchProcessor()
+        if implementations[ringSearch.id] == nil {
+            register(ringSearch)
+        }
         // Add more processors here as they are created
     }
 

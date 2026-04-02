@@ -53,6 +53,9 @@ let package = Package(
         .testTarget(
             name: "AstrophotoKitTests",
             dependencies: ["AstrophotoKit"],
+            exclude: [
+                "Resources/M51/processed"  // Exclude processed subfolder — duplicate filenames conflict with M51/
+            ],
             resources: [
                 .process("Resources")  // Include all FITS test files
             ])
