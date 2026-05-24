@@ -60,7 +60,7 @@ public actor PipelineRunner {
             from: inputs,
             device: device,
             initialProcess: initialProcess,
-            dataStack: dataStack,
+            dataStack: dataStack
         )
 
         // Preconfigure all pipeline processes
@@ -765,7 +765,7 @@ public actor PipelineRunner {
         from inputs: [String: Any],
         device: MTLDevice,
         initialProcess: Process,
-        dataStack: DataStack,
+        dataStack: DataStack
     ) async throws {
         // Create the initial input data for the pipeline.
         Logger.pipeline.debug("Creating initial input data for the pipeline")
@@ -823,7 +823,7 @@ public actor PipelineRunner {
                     link: key,
                     type: dataType,
                     stepLinkID: stepLinkID
-                ),
+                )
             )
             Logger.pipeline.debug("Created input data \(inputData.identifier) with stepLinkID: \(stepLinkID)")
             await dataStack.add(data: inputData)
@@ -833,7 +833,7 @@ public actor PipelineRunner {
     private func createInputData(
         from input: Any,
         device: MTLDevice,
-        outputProcess: ProcessDataLink,
+        outputProcess: ProcessDataLink
     ) throws -> ProcessData {
         if var frame = input as? Frame {
             Logger.pipeline.debug("Creating frame input data")

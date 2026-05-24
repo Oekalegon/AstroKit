@@ -89,7 +89,7 @@ public struct TableData: ProcessData {
     public mutating func addInputLink(
         process: UUID,
         link: String,
-        collectionMode: CollectionMode,
+        collectionMode: CollectionMode
     ) {
         guard let outputLink = outputLink else {
             fatalError("Output link is not set for table")
