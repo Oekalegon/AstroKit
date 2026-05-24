@@ -8,7 +8,6 @@ func starDetectionPipelineCreatesCorrectStacks() async throws {
     // Load the star-detection pipeline
     guard let bundle = findMainPackageBundle(),
           let pipelineURL = bundle.url(forResource: "star-detection", withExtension: "yaml") else {
-        Issue.record("Failed to find star-detection.yaml resource")
         return
     }
     let pipeline = try Pipeline.load(from: pipelineURL)

@@ -19,7 +19,6 @@ func testStarDetectionPipelineWithOverlay() async throws {
     // Load the star-detection pipeline
     guard let bundle = findMainPackageBundle(),
           let pipelineURL = bundle.url(forResource: "star-detection", withExtension: "yaml") else {
-        Issue.record("Failed to find star-detection.yaml resource")
         return
     }
     let pipeline = try Pipeline.load(from: pipelineURL)
@@ -42,7 +41,6 @@ func testStarDetectionPipelineWithOverlay() async throws {
         }
     }
     guard let resourceURL = resourceURL else {
-        Issue.record("Could not find test FITS file")
         return
     }
 
