@@ -15,6 +15,9 @@ struct Add: AsyncParsableCommand {
     @Flag(name: .long, help: "Recurse into subdirectories (when path is a directory).")
     var recursive: Bool = false
 
+    @Flag(name: .long, help: "Copy files into the archive folder hierarchy.")
+    var copy: Bool = false
+
     @Flag(name: .long, help: "Output results as JSON.")
     var json: Bool = false
 
@@ -31,9 +34,9 @@ struct Add: AsyncParsableCommand {
         let added: [ArchivedFrame]
         let skippedCount: Int
         if isDir.boolValue {
-            (added, skippedCount) = try await archive.add(directory: url, recursive: recursive)
+            (added, skippedCount) = try await archive.add(directory: url, recursive: recursive, copyFiles: copy)
         } else {
-            let (frame, isNew) = try await archive.add(fitsFile: url)
+            let (frame, isNew) = try await archive.add(fitsFile: url, copyFile: copy)
             added = isNew ? [frame] : []
             skippedCount = isNew ? 0 : 1
         }

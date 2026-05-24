@@ -1,5 +1,14 @@
 import Foundation
 
+public enum RejectionFilter: Sendable {
+    /// Return only non-rejected frames (default — safe for processing pipelines).
+    case excludeRejected
+    /// Return all frames regardless of rejection status.
+    case includeAll
+    /// Return only rejected frames.
+    case onlyRejected
+}
+
 public struct FrameQuery: Sendable {
     public var objectName: String?
     public var coneSearch: ConeSearch?
@@ -11,6 +20,7 @@ public struct FrameQuery: Sendable {
     public var stacked: Bool?
     public var stretched: Bool?
     public var processingLevel: ProcessingLevel?
+    public var rejectionFilter: RejectionFilter = .excludeRejected
     public var limit: Int?
 
     public init() {}

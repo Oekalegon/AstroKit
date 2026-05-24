@@ -46,6 +46,12 @@ actor ArchiveDatabase {
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_frames_signature ON frames(frame_signature);
         """,
+        // v5: rejected flag — frames marked rejected are excluded from queries by default.
+        """
+        ALTER TABLE frames ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE frames ADD COLUMN rejected_reason TEXT;
+        CREATE INDEX IF NOT EXISTS idx_frames_rejected ON frames(rejected);
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -131,8 +137,8 @@ actor ArchiveDatabase {
          filter, camera, focal_length, pixel_scale, temperature, timestamp,
          exposure_time, gain, offset, width, height, bitpix,
          calibrated, stacked, stretched, processing_level, added_at, thumbnail,
-         frame_signature)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         frame_signature, rejected, rejected_reason)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -169,6 +175,8 @@ actor ArchiveDatabase {
             filter: frame.filter,
             exposureTime: frame.exposureTime
         ))
+        sqlite3_bind_int(stmt, 27, frame.rejected ? 1 : 0)
+        bind(stmt, 28, frame.rejectedReason)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -255,6 +263,11 @@ actor ArchiveDatabase {
         if let lvl = query.processingLevel {
             conditions.append("processing_level = ?"); bindings.append(lvl.rawValue)
         }
+        switch query.rejectionFilter {
+        case .excludeRejected: conditions.append("rejected = 0")
+        case .onlyRejected:    conditions.append("rejected = 1")
+        case .includeAll:      break
+        }
 
         var sql = "SELECT * FROM frames"
         if !conditions.isEmpty { sql += " WHERE " + conditions.joined(separator: " AND ") }
@@ -295,6 +308,17 @@ actor ArchiveDatabase {
         sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return columnText(stmt, 0)
+    }
+
+    func updateRejected(id: UUID, rejected: Bool, reason: String?) throws {
+        let stmt = try prepare("UPDATE frames SET rejected = ?, rejected_reason = ? WHERE id = ?")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, rejected ? 1 : 0)
+        bind(stmt, 2, reason)
+        bind(stmt, 3, id.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
     }
 
     func deleteFrame(id: UUID) throws {
@@ -383,7 +407,9 @@ actor ArchiveDatabase {
             stretched:  sqlite3_column_int(stmt, 21) != 0,
             processingLevel: ProcessingLevel(rawValue: columnText(stmt, 22) ?? "raw") ?? .raw,
             addedAt: columnText(stmt, 23).flatMap { iso.date(from: $0) } ?? Date(),
-            thumbnail: columnBlob(stmt, 24)
+            thumbnail: columnBlob(stmt, 24),
+            rejected: sqlite3_column_int(stmt, 26) != 0,
+            rejectedReason: columnText(stmt, 27)
         )
     }
 

@@ -20,6 +20,10 @@ struct ArchiveTools {
                         "type": "boolean",
                         "description": "Recurse into subdirectories (when path is a directory). Default false.",
                     ],
+                    "copy": [
+                        "type": "boolean",
+                        "description": "Copy files into the archive folder hierarchy. Default false.",
+                    ],
                 ] as [String: Any],
                 "required": ["path"],
             ] as [String: Any],
@@ -72,6 +76,8 @@ struct ArchiveTools {
                     "dec": ["type": "number", "description": "Cone search centre Dec (degrees)."],
                     "radius_deg": ["type": "number", "description": "Cone search radius (degrees)."],
                     "limit": ["type": "integer", "description": "Maximum number of results."],
+                    "include_rejected": ["type": "boolean", "description": "Include rejected frames in results (default false)."],
+                    "rejected_only": ["type": "boolean", "description": "Return only rejected frames."],
                 ] as [String: Any],
                 "required": [],
             ] as [String: Any],
@@ -106,6 +112,19 @@ struct ArchiveTools {
                 "required": ["id"],
             ] as [String: Any],
         ],
+        [
+            "name": "archive_reject",
+            "description": "Mark a frame as rejected (excluded from processing) or clear the rejection flag.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "id": ["type": "string", "description": "Archive frame UUID."],
+                    "reason": ["type": "string", "description": "Optional reason for rejection."],
+                    "undo": ["type": "boolean", "description": "Set to true to clear the rejection flag (un-reject)."],
+                ] as [String: Any],
+                "required": ["id"],
+            ] as [String: Any],
+        ],
     ]
 
     // MARK: - Dispatch
@@ -118,6 +137,7 @@ struct ArchiveTools {
         case "archive_list_objects": return try await archiveListObjects()
         case "archive_stats":        return try await archiveStats()
         case "archive_remove":       return try await archiveRemove(arguments)
+        case "archive_reject":       return try await archiveReject(arguments)
         default: throw ToolError("Unknown archive tool: \(name)")
         }
     }
@@ -134,6 +154,7 @@ struct ArchiveTools {
             throw ToolError("archive_add requires 'path'.")
         }
         let recursive = args["recursive"] as? Bool ?? false
+        let copy      = args["copy"]      as? Bool ?? false
         let expanded  = (path as NSString).expandingTildeInPath
         let url       = URL(fileURLWithPath: expanded)
 
@@ -147,9 +168,9 @@ struct ArchiveTools {
         let added: [ArchivedFrame]
         let skippedCount: Int
         if isDir.boolValue {
-            (added, skippedCount) = try await archive.add(directory: url, recursive: recursive)
+            (added, skippedCount) = try await archive.add(directory: url, recursive: recursive, copyFiles: copy)
         } else {
-            let (frame, isNew) = try await archive.add(fitsFile: url)
+            let (frame, isNew) = try await archive.add(fitsFile: url, copyFile: copy)
             added = isNew ? [frame] : []
             skippedCount = isNew ? 0 : 1
         }
@@ -216,6 +237,10 @@ struct ArchiveTools {
         lines.append("")
         let flags = "calibrated: \(f.calibrated ? "✓" : "✗")  stacked: \(f.stacked ? "✓" : "✗")  stretched: \(f.stretched ? "✓" : "✗")"
         lines.append(row("Processing", "\(f.processingLevel.rawValue)  [\(flags)]"))
+        if f.rejected {
+            let reasonStr = f.rejectedReason.map { "  (\($0))" } ?? ""
+            lines.append(row("Rejected", "yes\(reasonStr)"))
+        }
         lines.append(row("Added at",   iso.string(from: f.addedAt)))
         lines.append(row("File",       f.filePath))
 
@@ -239,6 +264,11 @@ struct ArchiveTools {
            let dec = args["dec"] as? Double,
            let r = args["radius_deg"] as? Double {
             query.coneSearch = FrameQuery.ConeSearch(ra: ra, dec: dec, radiusDeg: r)
+        }
+        if args["rejected_only"] as? Bool == true {
+            query.rejectionFilter = .onlyRejected
+        } else if args["include_rejected"] as? Bool == true {
+            query.rejectionFilter = .includeAll
         }
 
         let frames = try await archive.frames(matching: query)
@@ -290,6 +320,23 @@ struct ArchiveTools {
         lines.append("  Used:      \(stats.usedBytesFormatted)")
         lines.append("  Available: \(stats.availableBytesFormatted)")
         return lines.joined(separator: "\n")
+    }
+
+    private func archiveReject(_ args: [String: Any]) async throws -> String {
+        guard let idStr = args["id"] as? String, let uuid = UUID(uuidString: idStr) else {
+            throw ToolError("archive_reject requires a valid 'id' UUID.")
+        }
+        let undo   = args["undo"] as? Bool ?? false
+        let reason = args["reason"] as? String
+        let archive = try makeArchive()
+        if undo {
+            try await archive.unreject(id: uuid)
+            return "Frame \(idStr) un-rejected."
+        } else {
+            try await archive.reject(id: uuid, reason: reason)
+            let suffix = reason.map { "  Reason: \($0)" } ?? ""
+            return "Frame \(idStr) marked as rejected.\(suffix)"
+        }
     }
 
     private func archiveRemove(_ args: [String: Any]) async throws -> String {

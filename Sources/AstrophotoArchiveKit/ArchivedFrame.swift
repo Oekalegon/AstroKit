@@ -28,6 +28,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var addedAt: Date
     /// JPEG or PNG thumbnail stored as raw bytes. Nil until autostretch is available.
     public var thumbnail: Data?
+    /// True if the frame has been flagged as unusable and should be excluded from processing.
+    public var rejected: Bool
+    public var rejectedReason: String?
 
     public init(
         id: UUID, filePath: String, objectName: String?, ra: Double?, dec: Double?,
@@ -37,7 +40,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
         width: Int?, height: Int?, bitpix: Int?,
         calibrated: Bool, stacked: Bool, stretched: Bool,
         processingLevel: ProcessingLevel, addedAt: Date,
-        thumbnail: Data? = nil
+        thumbnail: Data? = nil,
+        rejected: Bool = false, rejectedReason: String? = nil
     ) {
         self.id = id
         self.filePath = filePath
@@ -64,5 +68,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.processingLevel = processingLevel
         self.addedAt = addedAt
         self.thumbnail = thumbnail
+        self.rejected = rejected
+        self.rejectedReason = rejectedReason
     }
 }
