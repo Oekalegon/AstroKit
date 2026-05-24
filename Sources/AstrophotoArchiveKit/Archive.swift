@@ -21,13 +21,10 @@ public actor Archive {
 
     // MARK: - Ingestion
 
-    /// Adds a single FITS file to the archive.
-    /// - Parameters:
-    ///   - url: Path to the FITS file.
-    ///   - copyFile: When `true` the file is copied into the archive folder hierarchy.
+    /// Adds a single FITS file to the archive, copying it into the archive folder hierarchy.
     /// - Returns: The frame record and `isNew: true` if it was inserted, `false` if already in archive.
     @discardableResult
-    public func add(fitsFile url: URL, copyFile: Bool = false) async throws -> (frame: ArchivedFrame, isNew: Bool) {
+    public func add(fitsFile url: URL) async throws -> (frame: ArchivedFrame, isNew: Bool) {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw ArchiveError.fileNotFound(url.path)
         }
@@ -44,23 +41,17 @@ public actor Archive {
         }()
 
         let frameID = UUID()
-        let filePath: String
-        let copiedTo: URL?
-
-        if copyFile {
-            let dest = FolderOrganizer.destinationURL(
-                for: meta, in: configuration.rootURL, filename: url.lastPathComponent, id: frameID
-            )
-            try FileManager.default.createDirectory(
-                at: dest.deletingLastPathComponent(), withIntermediateDirectories: true
-            )
-            try FileManager.default.copyItem(at: url, to: dest)
-            filePath = dest.path
-            copiedTo = dest
-        } else {
-            filePath = url.path
-            copiedTo = nil
+        let dest = FolderOrganizer.destinationURL(
+            for: meta, in: configuration.rootURL, filename: url.lastPathComponent, id: frameID
+        )
+        try FileManager.default.createDirectory(
+            at: dest.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        if FileManager.default.fileExists(atPath: dest.path) {
+            try FileManager.default.removeItem(at: dest)
         }
+        try FileManager.default.copyItem(at: url, to: dest)
+        let filePath = dest.path
 
         let frame = ArchivedFrame(
             id: frameID,
@@ -88,23 +79,21 @@ public actor Archive {
             addedAt: Date()
         )
         let isNew = try await database.insertFrame(frame)
-        if !isNew, let copiedTo {
-            try? FileManager.default.removeItem(at: copiedTo)
+        if !isNew {
+            try? FileManager.default.removeItem(at: dest)
         }
         return (frame, isNew)
     }
 
-    /// Adds all FITS files in a directory.
+    /// Adds all FITS files in a directory, copying each into the archive folder hierarchy.
     /// - Parameters:
     ///   - directory: Directory to scan.
     ///   - recursive: Descend into subdirectories.
-    ///   - copyFiles: Copy each file into the archive folder hierarchy.
     /// - Returns: A tuple of newly added frames and the count of files already in the archive.
     @discardableResult
     public func add(
         directory: URL,
-        recursive: Bool = false,
-        copyFiles: Bool = false
+        recursive: Bool = false
     ) async throws -> (added: [ArchivedFrame], skippedCount: Int) {
         let extensions = Set(["fits", "fit", "fts"])
         let options: FileManager.DirectoryEnumerationOptions =
@@ -123,7 +112,7 @@ public actor Archive {
         var added: [ArchivedFrame] = []
         var skippedCount = 0
         for fileURL in urls {
-            let (frame, isNew) = try await add(fitsFile: fileURL, copyFile: copyFiles)
+            let (frame, isNew) = try await add(fitsFile: fileURL)
             if isNew { added.append(frame) } else { skippedCount += 1 }
         }
         return (added, skippedCount)

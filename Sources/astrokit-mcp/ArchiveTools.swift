@@ -20,10 +20,6 @@ struct ArchiveTools {
                         "type": "boolean",
                         "description": "Recurse into subdirectories (when path is a directory). Default false.",
                     ],
-                    "copy": [
-                        "type": "boolean",
-                        "description": "Copy files into the archive folder hierarchy. Default false.",
-                    ],
                 ] as [String: Any],
                 "required": ["path"],
             ] as [String: Any],
@@ -154,7 +150,6 @@ struct ArchiveTools {
             throw ToolError("archive_add requires 'path'.")
         }
         let recursive = args["recursive"] as? Bool ?? false
-        let copy      = args["copy"]      as? Bool ?? false
         let expanded  = (path as NSString).expandingTildeInPath
         let url       = URL(fileURLWithPath: expanded)
 
@@ -168,9 +163,9 @@ struct ArchiveTools {
         let added: [ArchivedFrame]
         let skippedCount: Int
         if isDir.boolValue {
-            (added, skippedCount) = try await archive.add(directory: url, recursive: recursive, copyFiles: copy)
+            (added, skippedCount) = try await archive.add(directory: url, recursive: recursive)
         } else {
-            let (frame, isNew) = try await archive.add(fitsFile: url, copyFile: copy)
+            let (frame, isNew) = try await archive.add(fitsFile: url)
             added = isNew ? [frame] : []
             skippedCount = isNew ? 0 : 1
         }
