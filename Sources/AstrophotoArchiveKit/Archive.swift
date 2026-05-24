@@ -47,9 +47,6 @@ public actor Archive {
         try FileManager.default.createDirectory(
             at: dest.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        if FileManager.default.fileExists(atPath: dest.path) {
-            try FileManager.default.removeItem(at: dest)
-        }
         try FileManager.default.copyItem(at: url, to: dest)
         let filePath = dest.path
 
