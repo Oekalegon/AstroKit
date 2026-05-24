@@ -25,6 +25,17 @@ struct ArchiveTools {
             ] as [String: Any],
         ],
         [
+            "name": "archive_get",
+            "description": "Show all stored information for a single archive frame by UUID.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "id": ["type": "string", "description": "Archive frame UUID (from archive_find)."],
+                ] as [String: Any],
+                "required": ["id"],
+            ] as [String: Any],
+        ],
+        [
             "name": "archive_find",
             "description": "Search the archive for frames matching a query. Returns matching frames as JSON.",
             "inputSchema": [
@@ -102,6 +113,7 @@ struct ArchiveTools {
     func call(name: String, arguments: [String: Any]) async throws -> String {
         switch name {
         case "archive_add":          return try await archiveAdd(arguments)
+        case "archive_get":          return try await archiveGet(arguments)
         case "archive_find":         return try await archiveFind(arguments)
         case "archive_list_objects": return try await archiveListObjects()
         case "archive_stats":        return try await archiveStats()
@@ -151,6 +163,62 @@ struct ArchiveTools {
             let obj    = f.objectName.map { " \($0)" } ?? ""
             lines.append("  \(f.frameType)\(filter)\(exp)\(obj)  \(f.id.uuidString)")
         }
+        return lines.joined(separator: "\n")
+    }
+
+    private func archiveGet(_ args: [String: Any]) async throws -> String {
+        guard let idStr = args["id"] as? String, let uuid = UUID(uuidString: idStr) else {
+            throw ToolError("archive_get requires a valid 'id' UUID.")
+        }
+        let archive = try makeArchive()
+        guard let f = try await archive.frame(id: uuid) else {
+            throw ToolError("No frame with id \(idStr) found in the archive.")
+        }
+
+        let iso = ISO8601DateFormatter()
+        func row(_ label: String, _ value: String) -> String {
+            String(format: "  %-18@ %@", (label + ":") as NSString, value as NSString)
+        }
+
+        var lines: [String] = []
+        lines.append("Frame  \(f.id.uuidString)")
+        lines.append(String(repeating: "─", count: 60))
+
+        lines.append(row("Type", f.frameType))
+        if let v = f.objectName   { lines.append(row("Object",       v)) }
+        if let v = f.filter       { lines.append(row("Filter",       v)) }
+        if let v = f.exposureTime { lines.append(row("Exposure",     String(format: "%.0f s", v))) }
+        if let v = f.timestamp    { lines.append(row("Date",         iso.string(from: v))) }
+
+        lines.append("")
+        var hasCameraSection = false
+        if let v = f.camera      { lines.append(row("Camera",       v));                              hasCameraSection = true }
+        if let v = f.gain        { lines.append(row("Gain",         String(format: "%.0f", v)));       hasCameraSection = true }
+        if let v = f.offset      { lines.append(row("Offset",       String(format: "%.0f", v)));       hasCameraSection = true }
+        if let v = f.temperature { lines.append(row("Temperature",  String(format: "%.1f °C", v)));    hasCameraSection = true }
+        if !hasCameraSection     { lines.removeLast() }
+
+        lines.append("")
+        var hasOpticsSection = false
+        if let ra = f.ra, let dec = f.dec {
+            lines.append(row("RA / Dec", String(format: "%.4f° / %.4f°  (J2000)", ra, dec)))
+            hasOpticsSection = true
+        }
+        if let v = f.pixelScale  { lines.append(row("Pixel scale",  String(format: "%.3f \"/px", v))); hasOpticsSection = true }
+        if let v = f.focalLength { lines.append(row("Focal length", String(format: "%.0f mm", v)));     hasOpticsSection = true }
+        if let w = f.width, let h = f.height {
+            let bitStr = f.bitpix.map { "  (\($0)-bit)" } ?? ""
+            lines.append(row("Size", "\(w) × \(h)\(bitStr)"))
+            hasOpticsSection = true
+        }
+        if !hasOpticsSection     { lines.removeLast() }
+
+        lines.append("")
+        let flags = "calibrated: \(f.calibrated ? "✓" : "✗")  stacked: \(f.stacked ? "✓" : "✗")  stretched: \(f.stretched ? "✓" : "✗")"
+        lines.append(row("Processing", "\(f.processingLevel.rawValue)  [\(flags)]"))
+        lines.append(row("Added at",   iso.string(from: f.addedAt)))
+        lines.append(row("File",       f.filePath))
+
         return lines.joined(separator: "\n")
     }
 

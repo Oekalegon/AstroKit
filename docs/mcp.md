@@ -203,6 +203,46 @@ Added 5 frame(s) to the archive.
 
 ---
 
+### `archive_get`
+
+Shows all stored information for a single archive frame.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `id` | string | ✓ | Frame UUID (from `archive_find`) |
+
+Example:
+```
+archive_get(id="A3F2B1C0-1234-5678-ABCD-EF0123456789")
+```
+
+Response:
+```
+Frame  A3F2B1C0-1234-5678-ABCD-EF0123456789
+────────────────────────────────────────────────────────────
+  Type:              light
+  Object:            DWB 111
+  Filter:            Hα
+  Exposure:          300 s
+  Date:              2025-03-25T08:25:40Z
+
+  Camera:            ZWO ASI2600MM Pro
+  Gain:              100
+  Offset:            50
+  Temperature:       -10.0 °C
+
+  RA / Dec:          83.8221° / -5.3911°  (J2000)
+  Pixel scale:       1.240 "/px
+  Focal length:      800 mm
+  Size:              6248 × 4176  (16-bit)
+
+  Processing:        raw  [calibrated: ✗  stacked: ✗  stretched: ✗]
+  Added at:          2026-05-24T10:23:00Z
+  File:              /Users/…/AstroArchive/DWB 111/light/Hα/frame.fits
+```
+
+---
+
 ### `archive_find`
 
 Searches the archive and returns matching frames.
