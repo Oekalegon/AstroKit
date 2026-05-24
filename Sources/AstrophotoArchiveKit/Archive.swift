@@ -40,20 +40,18 @@ public actor Archive {
             return healpix.pixel(at: coord)
         }()
 
+        let frameID = UUID()
         let dest = FolderOrganizer.destinationURL(
-            for: meta, in: configuration.rootURL, filename: url.lastPathComponent
+            for: meta, in: configuration.rootURL, filename: url.lastPathComponent, id: frameID
         )
         try FileManager.default.createDirectory(
             at: dest.deletingLastPathComponent(), withIntermediateDirectories: true
         )
-        if FileManager.default.fileExists(atPath: dest.path) {
-            try FileManager.default.removeItem(at: dest)
-        }
         try FileManager.default.copyItem(at: url, to: dest)
         let filePath = dest.path
 
         let frame = ArchivedFrame(
-            id: UUID(),
+            id: frameID,
             filePath: filePath,
             objectName: meta.objectName,
             ra: meta.ra, dec: meta.dec,
@@ -78,6 +76,9 @@ public actor Archive {
             addedAt: Date()
         )
         let isNew = try await database.insertFrame(frame)
+        if !isNew {
+            try? FileManager.default.removeItem(at: dest)
+        }
         return (frame, isNew)
     }
 
