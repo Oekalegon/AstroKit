@@ -5,8 +5,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Oekalegon/HEALPixKit.git",
       "state" : {
-        "revision" : "8a3559cd946803edf7f50d7b067f01ef6e101cc6",
-        "version" : "1.0.0"
+        "revision" : "3b555073a41f87aa495f41ee7044a9cd74cb4985",
+        "version" : "1.0.2"
       }
     },
     {
