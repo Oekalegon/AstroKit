@@ -9,6 +9,15 @@ struct Tools {
 
     static let definitions: [[String: Any]] = [
         [
+            "name": "get_version",
+            "description": "Return the astrokit-mcp server version string.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [String: Any](),
+                "required": [String](),
+            ] as [String: Any],
+        ],
+        [
             "name": "list_pipelines",
             "description": "List all available astrophoto processing pipelines with their IDs and descriptions.",
             "inputSchema": [
@@ -81,6 +90,7 @@ struct Tools {
 
     func call(name: String, arguments: [String: Any]) async throws -> String {
         switch name {
+        case "get_version":      return "astrokit-mcp \(Version.string)"
         case "list_pipelines":   return listPipelines()
         case "inspect_pipeline": return try inspectPipeline(id: required(arguments, "pipeline_id"))
         case "run_pipeline":     return try await runPipeline(arguments: arguments)

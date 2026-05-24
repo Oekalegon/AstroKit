@@ -29,6 +29,23 @@ actor ArchiveDatabase {
         schemaDDL,
         // v2: thumbnail blob for future autostretch support
         "ALTER TABLE frames ADD COLUMN thumbnail BLOB;",
+        // v3: unique constraint on file_path (superseded by v4 — kept for schema continuity)
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_frames_filepath ON frames(file_path);",
+        // v4: content-based deduplication — drop path index, add signature column and index.
+        // Signature = timestamp|frameType|filter|exposureTime so re-captured files with the
+        // same original path are still accepted, while true duplicate observations are rejected.
+        """
+        DROP INDEX IF EXISTS idx_frames_filepath;
+        ALTER TABLE frames ADD COLUMN frame_signature TEXT;
+        UPDATE frames SET frame_signature =
+            COALESCE(timestamp, '') || '|' || LOWER(frame_type) || '|' ||
+            LOWER(COALESCE(filter, '')) || '|' ||
+            COALESCE(PRINTF('%.3f', exposure_time), '');
+        DELETE FROM frames WHERE rowid NOT IN (
+            SELECT MIN(rowid) FROM frames GROUP BY frame_signature
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_frames_signature ON frames(frame_signature);
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -104,14 +121,18 @@ actor ArchiveDatabase {
 
     // MARK: - Insert
 
-    func insertFrame(_ frame: ArchivedFrame) throws {
+    /// Inserts a frame, ignoring duplicates by content signature (UNIQUE index, migration v4).
+    /// Returns `true` if the row was inserted, `false` if an identical observation already exists.
+    @discardableResult
+    func insertFrame(_ frame: ArchivedFrame) throws -> Bool {
         let sql = """
-        INSERT OR REPLACE INTO frames
+        INSERT OR IGNORE INTO frames
         (id, file_path, object_name, ra, dec, healpix_pixel, frame_type,
          filter, camera, focal_length, pixel_scale, temperature, timestamp,
          exposure_time, gain, offset, width, height, bitpix,
-         calibrated, stacked, stretched, processing_level, added_at, thumbnail)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         calibrated, stacked, stretched, processing_level, added_at, thumbnail,
+         frame_signature)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -142,10 +163,34 @@ actor ArchiveDatabase {
         bind(stmt, 23, frame.processingLevel.rawValue)
         bind(stmt, 24, iso.string(from: frame.addedAt))
         bind(stmt, 25, frame.thumbnail)
+        bind(stmt, 26, ArchiveDatabase.frameSignature(
+            timestamp: frame.timestamp,
+            frameType: frame.frameType,
+            filter: frame.filter,
+            exposureTime: frame.exposureTime
+        ))
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
         }
+        return sqlite3_changes(db) > 0
+    }
+
+    // Stable string key used for content-based deduplication.
+    // Components: ISO8601 timestamp (or ""), lowercased frame type,
+    // lowercased filter (or ""), exposure formatted to 3 decimal places (or "").
+    static func frameSignature(
+        timestamp: Date?,
+        frameType: String,
+        filter: String?,
+        exposureTime: Double?
+    ) -> String {
+        let iso = ISO8601DateFormatter()
+        let ts = timestamp.map { iso.string(from: $0) } ?? ""
+        let ft = frameType.lowercased()
+        let fi = (filter ?? "").lowercased()
+        let ex = exposureTime.map { String(format: "%.3f", $0) } ?? ""
+        return "\(ts)|\(ft)|\(fi)|\(ex)"
     }
 
     func insertTable(_ table: ArchivedTable) throws {

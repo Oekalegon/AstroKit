@@ -2,11 +2,15 @@ import Foundation
 
 enum FolderOrganizer {
     /// Returns the destination URL for a FITS file within the archive root.
-    /// Structure: <root>/<object>/<YYYY-MM-DD>/<frame-type>/<filter>/<filename>
+    /// Structure: <root>/<object>/<YYYY-MM-DD>/<frame-type>/<filter>/<stem>_<id>.<ext>
+    ///
+    /// The frame UUID is embedded in the filename so that two captures with the same
+    /// original name, object, date, type, and filter never collide on disk.
     static func destinationURL(
         for metadata: FrameArchiveMetadata,
         in archiveRoot: URL,
-        filename: String
+        filename: String,
+        id: UUID
     ) -> URL {
         let object = metadata.objectName?
             .trimmingCharacters(in: .whitespaces)
@@ -27,11 +31,15 @@ enum FolderOrganizer {
         let type   = metadata.frameType.isEmpty ? "unknown" : metadata.frameType
         let filter = metadata.filter?.trimmingCharacters(in: .whitespaces) ?? "no-filter"
 
+        let stem = (filename as NSString).deletingPathExtension
+        let ext  = (filename as NSString).pathExtension
+        let uniqueName = ext.isEmpty ? "\(stem)_\(id.uuidString)" : "\(stem)_\(id.uuidString).\(ext)"
+
         return archiveRoot
             .appendingPathComponent(object)
             .appendingPathComponent(date)
             .appendingPathComponent(type)
             .appendingPathComponent(filter)
-            .appendingPathComponent(filename)
+            .appendingPathComponent(uniqueName)
     }
 }

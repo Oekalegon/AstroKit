@@ -106,6 +106,10 @@ let package = Package(
             ],
             resources: [
                 .process("Resources")  // Include all FITS test files
-            ])
+            ]),
+        .testTarget(
+            name: "AstrophotoArchiveKitTests",
+            dependencies: ["AstrophotoArchiveKit"]
+        ),
     ]
 )

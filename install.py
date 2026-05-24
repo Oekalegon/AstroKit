@@ -100,6 +100,7 @@ for product in PRODUCTS:
         die(f"Binary not found: {src}")
     shutil.copy2(src, dst)
     dst.chmod(0o755)
+    subprocess.run(["codesign", "--sign", "-", "--force", str(dst)], check=True)
     ok(f"Installed {product} → {dst}")
 
 # ── PATH check ────────────────────────────────────────────────────────────────
