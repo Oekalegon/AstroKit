@@ -185,11 +185,12 @@ Adds a FITS file or directory of FITS files to the archive. Reads metadata autom
 |----------|------|----------|-------------|
 | `path` | string | ✓ | Absolute path to a FITS file or directory |
 | `recursive` | boolean | | Recurse into subdirectories (default `false`) |
-| `copy` | boolean | | Copy files into the archive folder hierarchy (default `false`) |
+
+Files are always copied into the archive folder hierarchy.
 
 Example:
 ```
-archive_add(path="/data/lights/M51", recursive=true, copy=true)
+archive_add(path="/data/lights/M51", recursive=true)
 ```
 
 Response:
