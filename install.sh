@@ -52,6 +52,7 @@ for product in "${PRODUCTS[@]}"; do
   [[ -f "$src" ]] || die "Binary not found: $src"
   cp "$src" "$dst"
   chmod +x "$dst"
+  codesign --sign - --force "$dst"
   ok "Installed $product → $dst"
 done
 

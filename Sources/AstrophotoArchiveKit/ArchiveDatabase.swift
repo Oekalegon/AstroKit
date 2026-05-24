@@ -29,6 +29,8 @@ actor ArchiveDatabase {
         schemaDDL,
         // v2: thumbnail blob for future autostretch support
         "ALTER TABLE frames ADD COLUMN thumbnail BLOB;",
+        // v3: unique constraint on file_path to prevent duplicate registrations
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_frames_filepath ON frames(file_path);",
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -104,9 +106,12 @@ actor ArchiveDatabase {
 
     // MARK: - Insert
 
-    func insertFrame(_ frame: ArchivedFrame) throws {
+    /// Inserts a frame, ignoring duplicates by file_path (UNIQUE index, migration v3).
+    /// Returns `true` if the row was inserted, `false` if it already existed.
+    @discardableResult
+    func insertFrame(_ frame: ArchivedFrame) throws -> Bool {
         let sql = """
-        INSERT OR REPLACE INTO frames
+        INSERT OR IGNORE INTO frames
         (id, file_path, object_name, ra, dec, healpix_pixel, frame_type,
          filter, camera, focal_length, pixel_scale, temperature, timestamp,
          exposure_time, gain, offset, width, height, bitpix,
@@ -146,6 +151,7 @@ actor ArchiveDatabase {
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
         }
+        return sqlite3_changes(db) > 0
     }
 
     func insertTable(_ table: ArchivedTable) throws {

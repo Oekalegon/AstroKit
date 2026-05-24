@@ -137,15 +137,20 @@ struct ArchiveTools {
             throw ToolError("Path not found: \(path)")
         }
 
-        let frames: [ArchivedFrame]
+        let added: [ArchivedFrame]
+        let skippedCount: Int
         if isDir.boolValue {
-            frames = try await archive.add(directory: url, recursive: recursive, copyFiles: copy)
+            (added, skippedCount) = try await archive.add(directory: url, recursive: recursive, copyFiles: copy)
         } else {
-            frames = [try await archive.add(fitsFile: url, copyFile: copy)]
+            let (frame, isNew) = try await archive.add(fitsFile: url, copyFile: copy)
+            added = isNew ? [frame] : []
+            skippedCount = isNew ? 0 : 1
         }
 
-        var lines = ["Added \(frames.count) frame(s) to the archive."]
-        for f in frames {
+        var summary = "Added \(added.count) frame(s) to the archive."
+        if skippedCount > 0 { summary += " Skipped \(skippedCount) already in archive." }
+        var lines = [summary]
+        for f in added {
             let filter = f.filter.map { " [\($0)]" } ?? ""
             let exp    = f.exposureTime.map { String(format: " %.0fs", $0) } ?? ""
             let obj    = f.objectName.map { " \($0)" } ?? ""

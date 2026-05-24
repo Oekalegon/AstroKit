@@ -25,8 +25,9 @@ public actor Archive {
     /// - Parameters:
     ///   - url: Path to the FITS file.
     ///   - copyFile: When `true` the file is copied into the archive folder hierarchy.
+    /// - Returns: The frame record and `isNew: true` if it was inserted, `false` if already in archive.
     @discardableResult
-    public func add(fitsFile url: URL, copyFile: Bool = false) async throws -> ArchivedFrame {
+    public func add(fitsFile url: URL, copyFile: Bool = false) async throws -> (frame: ArchivedFrame, isNew: Bool) {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw ArchiveError.fileNotFound(url.path)
         }
@@ -84,8 +85,8 @@ public actor Archive {
             processingLevel: meta.processingLevel,
             addedAt: Date()
         )
-        try await database.insertFrame(frame)
-        return frame
+        let isNew = try await database.insertFrame(frame)
+        return (frame, isNew)
     }
 
     /// Adds all FITS files in a directory.
@@ -93,12 +94,13 @@ public actor Archive {
     ///   - directory: Directory to scan.
     ///   - recursive: Descend into subdirectories.
     ///   - copyFiles: Copy each file into the archive folder hierarchy.
+    /// - Returns: A tuple of newly added frames and the count of files already in the archive.
     @discardableResult
     public func add(
         directory: URL,
         recursive: Bool = false,
         copyFiles: Bool = false
-    ) async throws -> [ArchivedFrame] {
+    ) async throws -> (added: [ArchivedFrame], skippedCount: Int) {
         let extensions = Set(["fits", "fit", "fts"])
         let options: FileManager.DirectoryEnumerationOptions =
             recursive ? [] : [.skipsSubdirectoryDescendants]
@@ -113,12 +115,13 @@ public actor Archive {
         let urls = enumerator.compactMap { $0 as? URL }
             .filter { extensions.contains($0.pathExtension.lowercased()) }
 
-        var results: [ArchivedFrame] = []
+        var added: [ArchivedFrame] = []
+        var skippedCount = 0
         for fileURL in urls {
-            let frame = try await add(fitsFile: fileURL, copyFile: copyFiles)
-            results.append(frame)
+            let (frame, isNew) = try await add(fitsFile: fileURL, copyFile: copyFiles)
+            if isNew { added.append(frame) } else { skippedCount += 1 }
         }
-        return results
+        return (added, skippedCount)
     }
 
     // MARK: - Queries
