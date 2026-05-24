@@ -24,7 +24,7 @@ let package = Package(
         // Dependencies declare other packages that this package depends on.
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
-        .package(path: "../HealPixKit"),
+        .package(url: "https://github.com/Oekalegon/HEALPixKit.git", from: "1.0.0"),
     ],
     targets: [
         // Build tool that generates Version.generated.swift at every build.
@@ -81,7 +81,7 @@ let package = Package(
             name: "AstrophotoArchiveKit",
             dependencies: [
                 "AstrophotoKit",
-                .product(name: "HEALPixKit", package: "HealPixKit"),
+                .product(name: "HEALPixKit", package: "HEALPixKit"),
             ],
             path: "Sources/AstrophotoArchiveKit"
         ),
