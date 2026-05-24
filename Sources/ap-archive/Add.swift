@@ -15,9 +15,6 @@ struct Add: AsyncParsableCommand {
     @Flag(name: .long, help: "Recurse into subdirectories (when path is a directory).")
     var recursive: Bool = false
 
-    @Flag(name: .long, help: "Copy files into the archive folder hierarchy.")
-    var copy: Bool = false
-
     @Flag(name: .long, help: "Output results as JSON.")
     var json: Bool = false
 
@@ -31,19 +28,23 @@ struct Add: AsyncParsableCommand {
             throw ValidationError("Path not found: \(path)")
         }
 
-        let frames: [ArchivedFrame]
+        let added: [ArchivedFrame]
+        let skippedCount: Int
         if isDir.boolValue {
-            frames = try await archive.add(directory: url, recursive: recursive, copyFiles: copy)
+            (added, skippedCount) = try await archive.add(directory: url, recursive: recursive)
         } else {
-            let frame = try await archive.add(fitsFile: url, copyFile: copy)
-            frames = [frame]
+            let (frame, isNew) = try await archive.add(fitsFile: url)
+            added = isNew ? [frame] : []
+            skippedCount = isNew ? 0 : 1
         }
 
         if json {
-            printJSON(frames)
+            printJSON(added)
         } else {
-            print("Added \(frames.count) frame(s) to the archive.")
-            for frame in frames {
+            var summary = "Added \(added.count) frame(s) to the archive."
+            if skippedCount > 0 { summary += " Skipped \(skippedCount) (already in archive)." }
+            print(summary)
+            for frame in added {
                 let filter   = frame.filter.map { " [\($0)]" } ?? ""
                 let exposure = frame.exposureTime.map { String(format: " %.0fs", $0) } ?? ""
                 let object   = frame.objectName.map { " \($0)" } ?? ""

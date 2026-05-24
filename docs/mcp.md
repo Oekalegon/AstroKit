@@ -185,11 +185,12 @@ Adds a FITS file or directory of FITS files to the archive. Reads metadata autom
 |----------|------|----------|-------------|
 | `path` | string | ✓ | Absolute path to a FITS file or directory |
 | `recursive` | boolean | | Recurse into subdirectories (default `false`) |
-| `copy` | boolean | | Copy files into the archive folder hierarchy (default `false`) |
+
+Files are always copied into the archive folder hierarchy.
 
 Example:
 ```
-archive_add(path="/data/lights/M51", recursive=true, copy=true)
+archive_add(path="/data/lights/M51", recursive=true)
 ```
 
 Response:
@@ -198,6 +199,46 @@ Added 5 frame(s) to the archive.
   light [Ha] 300s M51  A3F2B1C0-...
   light [Ha] 300s M51  B4E3D2F1-...
   …
+```
+
+---
+
+### `archive_get`
+
+Shows all stored information for a single archive frame.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `id` | string | ✓ | Frame UUID (from `archive_find`) |
+
+Example:
+```
+archive_get(id="A3F2B1C0-1234-5678-ABCD-EF0123456789")
+```
+
+Response:
+```
+Frame  A3F2B1C0-1234-5678-ABCD-EF0123456789
+────────────────────────────────────────────────────────────
+  Type:              light
+  Object:            DWB 111
+  Filter:            Hα
+  Exposure:          300 s
+  Date:              2025-03-25T08:25:40Z
+
+  Camera:            ZWO ASI2600MM Pro
+  Gain:              100
+  Offset:            50
+  Temperature:       -10.0 °C
+
+  RA / Dec:          83.8221° / -5.3911°  (J2000)
+  Pixel scale:       1.240 "/px
+  Focal length:      800 mm
+  Size:              6248 × 4176  (16-bit)
+
+  Processing:        raw  [calibrated: ✗  stacked: ✗  stretched: ✗]
+  Added at:          2026-05-24T10:23:00Z
+  File:              /Users/…/AstroArchive/DWB 111/light/Hα/frame.fits
 ```
 
 ---

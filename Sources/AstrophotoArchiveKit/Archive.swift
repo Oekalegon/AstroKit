@@ -21,12 +21,10 @@ public actor Archive {
 
     // MARK: - Ingestion
 
-    /// Adds a single FITS file to the archive.
-    /// - Parameters:
-    ///   - url: Path to the FITS file.
-    ///   - copyFile: When `true` the file is copied into the archive folder hierarchy.
+    /// Adds a single FITS file to the archive, copying it into the archive folder hierarchy.
+    /// - Returns: The frame record and `isNew: true` if it was inserted, `false` if already in archive.
     @discardableResult
-    public func add(fitsFile url: URL, copyFile: Bool = false) async throws -> ArchivedFrame {
+    public func add(fitsFile url: URL) async throws -> (frame: ArchivedFrame, isNew: Bool) {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw ArchiveError.fileNotFound(url.path)
         }
@@ -42,25 +40,18 @@ public actor Archive {
             return healpix.pixel(at: coord)
         }()
 
-        let filePath: String
-        if copyFile {
-            let dest = FolderOrganizer.destinationURL(
-                for: meta, in: configuration.rootURL, filename: url.lastPathComponent
-            )
-            try FileManager.default.createDirectory(
-                at: dest.deletingLastPathComponent(), withIntermediateDirectories: true
-            )
-            if FileManager.default.fileExists(atPath: dest.path) {
-                try FileManager.default.removeItem(at: dest)
-            }
-            try FileManager.default.copyItem(at: url, to: dest)
-            filePath = dest.path
-        } else {
-            filePath = url.path
-        }
+        let frameID = UUID()
+        let dest = FolderOrganizer.destinationURL(
+            for: meta, in: configuration.rootURL, filename: url.lastPathComponent, id: frameID
+        )
+        try FileManager.default.createDirectory(
+            at: dest.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        try FileManager.default.copyItem(at: url, to: dest)
+        let filePath = dest.path
 
         let frame = ArchivedFrame(
-            id: UUID(),
+            id: frameID,
             filePath: filePath,
             objectName: meta.objectName,
             ra: meta.ra, dec: meta.dec,
@@ -84,21 +75,23 @@ public actor Archive {
             processingLevel: meta.processingLevel,
             addedAt: Date()
         )
-        try await database.insertFrame(frame)
-        return frame
+        let isNew = try await database.insertFrame(frame)
+        if !isNew {
+            try? FileManager.default.removeItem(at: dest)
+        }
+        return (frame, isNew)
     }
 
-    /// Adds all FITS files in a directory.
+    /// Adds all FITS files in a directory, copying each into the archive folder hierarchy.
     /// - Parameters:
     ///   - directory: Directory to scan.
     ///   - recursive: Descend into subdirectories.
-    ///   - copyFiles: Copy each file into the archive folder hierarchy.
+    /// - Returns: A tuple of newly added frames and the count of files already in the archive.
     @discardableResult
     public func add(
         directory: URL,
-        recursive: Bool = false,
-        copyFiles: Bool = false
-    ) async throws -> [ArchivedFrame] {
+        recursive: Bool = false
+    ) async throws -> (added: [ArchivedFrame], skippedCount: Int) {
         let extensions = Set(["fits", "fit", "fts"])
         let options: FileManager.DirectoryEnumerationOptions =
             recursive ? [] : [.skipsSubdirectoryDescendants]
@@ -113,12 +106,13 @@ public actor Archive {
         let urls = enumerator.compactMap { $0 as? URL }
             .filter { extensions.contains($0.pathExtension.lowercased()) }
 
-        var results: [ArchivedFrame] = []
+        var added: [ArchivedFrame] = []
+        var skippedCount = 0
         for fileURL in urls {
-            let frame = try await add(fitsFile: fileURL, copyFile: copyFiles)
-            results.append(frame)
+            let (frame, isNew) = try await add(fitsFile: fileURL)
+            if isNew { added.append(frame) } else { skippedCount += 1 }
         }
-        return results
+        return (added, skippedCount)
     }
 
     // MARK: - Queries
