@@ -1,0 +1,26 @@
+name: Swift
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: macos-15
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Install CFITSIO
+      run: brew install cfitsio
+      
+    - name: Build
+      run: swift build
+      
+    - name: Run tests
+      run: swift test
+

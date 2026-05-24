@@ -21,9 +21,8 @@ public enum FITSInfoPanelTab: String, CaseIterable {
 public struct FITSInfoPanelView: View {
     let fitsImage: FITSImage?
     let texture: MTLTexture?
-    let processedImage: ProcessedImage?
-    let processedTable: ProcessedTable?
-    let processedScalar: ProcessedScalar?
+    let frame: Frame?
+    let table: TableData?
     let textureWidth: Int
     let textureHeight: Int
     let textureMinValue: Float
@@ -41,12 +40,11 @@ public struct FITSInfoPanelView: View {
     let onExtractedRegionSizeChanged: ((Int) -> Void)?
     @State private var selectedTab: FITSInfoPanelTab = .information
     
-    public init(fitsImage: FITSImage? = nil, texture: MTLTexture? = nil, processedImage: ProcessedImage? = nil, processedTable: ProcessedTable? = nil, processedScalar: ProcessedScalar? = nil, textureWidth: Int = 0, textureHeight: Int = 0, textureMinValue: Float = 0.0, textureMaxValue: Float = 1.0, imageID: String? = nil, blackPoint: Binding<Float>, whitePoint: Binding<Float>, cursorPosition: SIMD2<Float>? = nil, aspectRatio: SIMD2<Float> = SIMD2<Float>(1.0, 1.0), extractedRegion: FITSImage? = nil, extractedRegionTexture: MTLTexture? = nil, extractedRegionSize: Binding<Int> = .constant(30), zoom: Binding<Float> = .constant(1.0), panOffset: Binding<SIMD2<Float>> = .constant(SIMD2<Float>(0, 0)), onExtractedRegionSizeChanged: ((Int) -> Void)? = nil) {
+    public init(fitsImage: FITSImage? = nil, texture: MTLTexture? = nil, frame: Frame? = nil, table: TableData? = nil, textureWidth: Int = 0, textureHeight: Int = 0, textureMinValue: Float = 0.0, textureMaxValue: Float = 1.0, imageID: String? = nil, blackPoint: Binding<Float>, whitePoint: Binding<Float>, cursorPosition: SIMD2<Float>? = nil, aspectRatio: SIMD2<Float> = SIMD2<Float>(1.0, 1.0), extractedRegion: FITSImage? = nil, extractedRegionTexture: MTLTexture? = nil, extractedRegionSize: Binding<Int> = .constant(30), zoom: Binding<Float> = .constant(1.0), panOffset: Binding<SIMD2<Float>> = .constant(SIMD2<Float>(0, 0)), onExtractedRegionSizeChanged: ((Int) -> Void)? = nil) {
         self.fitsImage = fitsImage
         self.texture = texture
-        self.processedImage = processedImage
-        self.processedTable = processedTable
-        self.processedScalar = processedScalar
+        self.frame = frame
+        self.table = table
         self.textureWidth = textureWidth
         self.textureHeight = textureHeight
         self.textureMinValue = textureMinValue
@@ -84,7 +82,7 @@ public struct FITSInfoPanelView: View {
                 ImageTabView(fitsImage: fitsImage, texture: texture, textureWidth: textureWidth, textureHeight: textureHeight, textureMinValue: textureMinValue, textureMaxValue: textureMaxValue, imageID: imageID, blackPoint: $blackPoint, whitePoint: $whitePoint, cursorPosition: cursorPosition, aspectRatio: aspectRatio, extractedRegion: extractedRegion, extractedRegionTexture: extractedRegionTexture, extractedRegionSize: $extractedRegionSize, zoom: $zoom, panOffset: $panOffset, onExtractedRegionSizeChanged: onExtractedRegionSizeChanged)
                     .tag(FITSInfoPanelTab.image)
                 
-                PipelineTabView(processedImage: processedImage, processedTable: processedTable, processedScalar: processedScalar)
+                PipelineTabView(frame: frame, table: table)
                     .tag(FITSInfoPanelTab.pipeline)
             }
             .tabViewStyle(.automatic)
@@ -96,218 +94,40 @@ public struct FITSInfoPanelView: View {
 /// Pipeline tab showing processing history
 @available(iOS 16.0, macOS 13.0, *)
 private struct PipelineTabView: View {
-    let processedImage: ProcessedImage?
-    let processedTable: ProcessedTable?
-    let processedScalar: ProcessedScalar?
-    
+    let frame: Frame?
+    let table: TableData?
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                if let processedImage = processedImage {
+                if let frame = frame, let texture = frame.texture {
                     // Image properties
                     GroupBox("Image Properties") {
                         VStack(alignment: .leading, spacing: 8) {
-                            InfoRow(label: "Name", value: processedImage.name)
-                            InfoRow(label: "Image Type", value: processedImage.imageType.rawValue.capitalized)
-                            InfoRow(label: "Width", value: "\(processedImage.width) px")
-                            InfoRow(label: "Height", value: "\(processedImage.height) px")
-                            InfoRow(label: "Min Value", value: String(format: "%.6f", processedImage.originalMinValue))
-                            InfoRow(label: "Max Value", value: String(format: "%.6f", processedImage.originalMaxValue))
+                            InfoRow(label: "Width", value: "\(texture.width) px")
+                            InfoRow(label: "Height", value: "\(texture.height) px")
+                            InfoRow(label: "Color Space", value: "\(frame.colorSpace)")
+                            InfoRow(label: "Data Type", value: frame.dataType?.description ?? "Unknown")
                         }
                         .padding(.vertical, 4)
                     }
-                    
-                    // Processing history
-                    if !processedImage.processingHistory.isEmpty {
-                        GroupBox("Processing History") {
-                            VStack(alignment: .leading, spacing: 12) {
-                                ForEach(Array(processedImage.processingHistory.enumerated()), id: \.offset) { index, step in
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        HStack {
-                                            Text("\(index + 1).")
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                            Text(step.stepName)
-                                                .font(.caption)
-                                                .fontWeight(.semibold)
-                                            Spacer()
-                                        }
-                                        
-                                        if !step.parameters.isEmpty {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                ForEach(Array(step.parameters.keys.sorted()), id: \.self) { key in
-                                                    if let value = step.parameters[key] {
-                                                        HStack {
-                                                            Text("  • \(key):")
-                                                                .font(.caption2)
-                                                                .foregroundColor(.secondary)
-                                                            Text(value)
-                                                                .font(.caption2)
-                                                                .fontWeight(.medium)
-                                                            Spacer()
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            .padding(.leading, 16)
-                                        }
-                                    }
-                                    .padding(.vertical, 4)
-                                    
-                                    if index < processedImage.processingHistory.count - 1 {
-                                        Divider()
-                                    }
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
-                    } else {
-                        GroupBox("Processing History") {
-                            Text("No processing steps applied (original image)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding()
-                        }
-                    }
-                } else if let processedTable = processedTable {
+                }
+
+                if let table = table, table.dataFrame != nil {
                     // Table properties
                     GroupBox("Table Properties") {
                         VStack(alignment: .leading, spacing: 8) {
-                            InfoRow(label: "Name", value: processedTable.name)
-                            if let componentCount = processedTable.data["component_count"] as? Int {
-                                InfoRow(label: "Component Count", value: "\(componentCount)")
-                            }
-                            if let totalPixels = processedTable.data["total_pixels"] as? Int {
-                                InfoRow(label: "Total Pixels", value: "\(totalPixels)")
-                            }
+                            InfoRow(label: "Rows", value: "\(table.rowCount)")
+                            InfoRow(label: "Columns", value: "\(table.columnCount)")
+                            InfoRow(label: "Column Names", value: table.columnNames.joined(separator: ", "))
                         }
                         .padding(.vertical, 4)
                     }
-                    
-                    // Processing history
-                    if !processedTable.processingHistory.isEmpty {
-                        GroupBox("Processing History") {
-                            VStack(alignment: .leading, spacing: 12) {
-                                ForEach(Array(processedTable.processingHistory.enumerated()), id: \.offset) { index, step in
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        HStack {
-                                            Text("\(index + 1).")
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                            Text(step.stepName)
-                                                .font(.caption)
-                                                .fontWeight(.semibold)
-                                            Spacer()
-                                        }
-                                        
-                                        if !step.parameters.isEmpty {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                ForEach(Array(step.parameters.keys.sorted()), id: \.self) { key in
-                                                    if let value = step.parameters[key] {
-                                                        HStack {
-                                                            Text("  • \(key):")
-                                                                .font(.caption2)
-                                                                .foregroundColor(.secondary)
-                                                            Text(value)
-                                                                .font(.caption2)
-                                                                .fontWeight(.medium)
-                                                            Spacer()
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            .padding(.leading, 16)
-                                        }
-                                    }
-                                    .padding(.vertical, 4)
-                                    
-                                    if index < processedTable.processingHistory.count - 1 {
-                                        Divider()
-                                    }
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
-                    } else {
-                        GroupBox("Processing History") {
-                            Text("No processing steps applied")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding()
-                        }
-                    }
-                } else if let processedScalar = processedScalar {
-                    // Scalar properties
-                    GroupBox("Scalar Properties") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            InfoRow(label: "Name", value: processedScalar.name)
-                            InfoRow(label: "Value", value: String(format: "%.6f", processedScalar.value))
-                            if let unit = processedScalar.unit {
-                                InfoRow(label: "Unit", value: unit)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                    
-                    // Processing history for scalar
-                    if !processedScalar.processingHistory.isEmpty {
-                        GroupBox("Processing History") {
-                            VStack(alignment: .leading, spacing: 12) {
-                                ForEach(Array(processedScalar.processingHistory.enumerated()), id: \.offset) { index, step in
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        HStack {
-                                            Text("\(index + 1).")
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                            Text(step.stepName)
-                                                .font(.caption)
-                                                .fontWeight(.semibold)
-                                            Spacer()
-                                        }
-                                        
-                                        if !step.parameters.isEmpty {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                ForEach(Array(step.parameters.keys.sorted()), id: \.self) { key in
-                                                    if let value = step.parameters[key] {
-                                                        HStack {
-                                                            Text("  • \(key):")
-                                                                .font(.caption2)
-                                                                .foregroundColor(.secondary)
-                                                            Text(value)
-                                                                .font(.caption2)
-                                                                .fontWeight(.medium)
-                                                            Spacer()
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            .padding(.leading, 16)
-                                        }
-                                    }
-                                    .padding(.vertical, 4)
-                                    
-                                    if index < processedScalar.processingHistory.count - 1 {
-                                        Divider()
-                                    }
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
-                    } else {
-                        GroupBox("Processing History") {
-                            Text("No processing steps applied (original scalar)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding()
-                        }
-                    }
-                } else {
-                    Text("No processed data metadata available")
+                }
+
+                if frame == nil && table == nil {
+                    Text("No pipeline data available")
                         .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
                         .padding()
                 }
             }
@@ -315,6 +135,7 @@ private struct PipelineTabView: View {
         }
     }
 }
+
 
 /// Information tab showing FITS metadata
 @available(iOS 16.0, macOS 13.0, *)

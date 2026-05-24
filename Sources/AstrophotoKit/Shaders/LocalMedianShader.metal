@@ -9,6 +9,8 @@ kernel void local_median(texture2d<float> inputTexture [[texture(0)]],
                          constant int& windowSize [[buffer(0)]],
                          constant float& imageMinValue [[buffer(1)]],
                          constant float& imageMaxValue [[buffer(2)]],
+                         constant int& numBins [[buffer(3)]],
+                         constant int& sampleStepThreshold [[buffer(4)]],
                          uint2 gid [[thread_position_in_grid]]) {
     // Check bounds
     if (gid.x >= outputTexture.get_width() || gid.y >= outputTexture.get_height()) {
@@ -26,21 +28,25 @@ kernel void local_median(texture2d<float> inputTexture [[texture(0)]],
     int endY = min(height - 1, int(gid.y) + halfWindow);
     
     // Use a histogram to find the median
-    // For efficiency, we'll use a fixed number of bins (256 should be sufficient for most cases)
-    const int numBins = 256;
-    uint histogram[numBins];
+    // Number of bins is configurable (default: 128 for good performance/accuracy balance)
+    // Use fixed maximum size (256) to support variable numBins
+    const int maxBins = 256;
+    uint histogram[maxBins];
     
-    // Initialize histogram
-    for (int i = 0; i < numBins; i++) {
+    // Initialize histogram (only the bins we'll use)
+    int actualBins = min(numBins, maxBins);
+    for (int i = 0; i < actualBins; i++) {
         histogram[i] = 0;
     }
     
-    // Sample all pixels in the window and build histogram
+    // Sample pixels in the window and build histogram
+    // Adaptive sampling: for windows larger than threshold, sample every 2nd pixel
     int pixelCount = 0;
     float imageRange = imageMaxValue - imageMinValue;
+    int sampleStep = (windowSize > sampleStepThreshold) ? 2 : 1;
     
-    for (int y = startY; y <= endY; y++) {
-        for (int x = startX; x <= endX; x++) {
+    for (int y = startY; y <= endY; y += sampleStep) {
+        for (int x = startX; x <= endX; x += sampleStep) {
             float4 pixel = inputTexture.read(uint2(x, y));
             float normalizedValue = pixel.r;
             
@@ -51,18 +57,22 @@ kernel void local_median(texture2d<float> inputTexture [[texture(0)]],
             float normalizedForBin = (pixelValue - imageMinValue) / imageRange;
             normalizedForBin = clamp(normalizedForBin, 0.0f, 1.0f);
             
-            int binIndex = min(int(normalizedForBin * float(numBins)), numBins - 1);
+            int binIndex = min(int(normalizedForBin * float(actualBins)), actualBins - 1);
             histogram[binIndex]++;
             pixelCount++;
         }
     }
+    
+    // Adjust target count if we sampled (need to account for sampling)
+    // When sampling every 2nd pixel, we effectively have ~4x fewer samples
+    // but the median position relative to the sampled set is still correct
     
     // Find median from histogram
     int targetCount = pixelCount / 2; // Median is at 50% of pixels
     int cumulativeCount = 0;
     int medianBin = 0;
     
-    for (int i = 0; i < numBins; i++) {
+    for (int i = 0; i < actualBins; i++) {
         cumulativeCount += histogram[i];
         if (cumulativeCount >= targetCount) {
             medianBin = i;
@@ -71,7 +81,7 @@ kernel void local_median(texture2d<float> inputTexture [[texture(0)]],
     }
     
     // Convert median bin back to pixel value
-    float binCenter = (float(medianBin) + 0.5) / float(numBins);
+    float binCenter = (float(medianBin) + 0.5) / float(actualBins);
     float medianValue = imageMinValue + binCenter * imageRange;
     
     // Normalize back to [0, 1] range for output

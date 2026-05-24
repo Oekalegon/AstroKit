@@ -88,7 +88,6 @@ public class FITSImageRenderer: NSObject, MTKViewDelegate {
     var uniformBuffer: MTLBuffer!
     var texture: MTLTexture?
     var displayMode: FITSImageDisplayMode = .normal
-    private var grayscaleToRGBAConverter: GrayscaleToRGBA?
     var zoom: Float = 1.0
     var panOffset: SIMD2<Float> = SIMD2<Float>(0, 0)
     var previousZoom: Float = 1.0
@@ -150,46 +149,61 @@ public class FITSImageRenderer: NSObject, MTKViewDelegate {
     }
     
     func setupUniformBuffer() {
-        // Create buffer for zoom, pan, aspect ratio, and black/white point uniforms
-        // 3x SIMD2<Float> (scale, offset, aspectRatio) + 2x Float (blackPoint, whitePoint)
-        let uniformSize = MemoryLayout<SIMD2<Float>>.size * 3 + MemoryLayout<Float>.size * 2
+        // Create buffer for uniforms - use a struct to ensure proper alignment
+        // Metal aligns structs to 8-byte boundaries, so we need 40 bytes total
+        // 3x SIMD2<Float> (24 bytes) + padding (4 bytes) + 3x Float (12 bytes) = 40 bytes
+        struct Uniforms {
+            var scale: SIMD2<Float>        // 8 bytes, offset 0
+            var offset: SIMD2<Float>      // 8 bytes, offset 8
+            var aspectRatio: SIMD2<Float>  // 8 bytes, offset 16
+            var _padding: Float            // 4 bytes padding, offset 24
+            var blackPoint: Float          // 4 bytes, offset 28
+            var whitePoint: Float          // 4 bytes, offset 32
+            var isGrayscale: Float         // 4 bytes, offset 36
+        }
+        let uniformSize = MemoryLayout<Uniforms>.size
         uniformBuffer = device.makeBuffer(length: uniformSize, options: [])
         updateUniforms()
     }
     
     func updateUniforms() {
         guard let uniformBuffer = uniformBuffer, let view = mtkView else { return }
+        
+        // Define struct matching Metal shader struct for proper alignment
+        // Metal aligns structs to 8-byte boundaries, so we need padding
+        struct Uniforms {
+            var scale: SIMD2<Float>        // 8 bytes, offset 0
+            var offset: SIMD2<Float>      // 8 bytes, offset 8
+            var aspectRatio: SIMD2<Float>  // 8 bytes, offset 16
+            var _padding: Float            // 4 bytes padding, offset 24
+            var blackPoint: Float          // 4 bytes, offset 28
+            var whitePoint: Float        // 4 bytes, offset 32
+            var isGrayscale: Float         // 4 bytes, offset 36
+        }
+        
         let scale = SIMD2<Float>(zoom, zoom)
         let offset = panOffset
         
         // Calculate aspect ratio correction to keep pixels square
         let viewSize = view.bounds.size
-        guard viewSize.width > 0 && viewSize.height > 0 && imageWidth > 0 && imageHeight > 0 else {
-            // Fallback if dimensions are invalid
-            let pointer = uniformBuffer.contents().bindMemory(to: SIMD2<Float>.self, capacity: 3)
-            pointer[0] = scale
-            pointer[1] = offset
-            pointer[2] = SIMD2<Float>(1.0, 1.0)
-            // Set black/white points (normalized)
-            let floatPointer = uniformBuffer.contents().advanced(by: MemoryLayout<SIMD2<Float>>.size * 3).bindMemory(to: Float.self, capacity: 2)
-            floatPointer[0] = 0.0  // blackPoint (normalized)
-            floatPointer[1] = 1.0  // whitePoint (normalized)
-            return
-        }
-        
-        let imageAspect = Float(imageWidth) / Float(imageHeight)
-        let viewAspect = Float(viewSize.width) / Float(viewSize.height)
-        
-        // Calculate aspect ratio correction
-        // If view is wider than image aspect, we need to scale down X
-        // If view is taller than image aspect, we need to scale down Y
         let aspectRatio: SIMD2<Float>
-        if viewAspect > imageAspect {
-            // View is wider - scale down X to fit
-            aspectRatio = SIMD2<Float>(imageAspect / viewAspect, 1.0)
+        if viewSize.width > 0 && viewSize.height > 0 && imageWidth > 0 && imageHeight > 0 {
+            let imageAspect = Float(imageWidth) / Float(imageHeight)
+            let viewAspect = Float(viewSize.width) / Float(viewSize.height)
+            
+            // Calculate aspect ratio correction
+            // If view is wider than image aspect, we need to scale down X
+            // If view is taller than image aspect, we need to scale down Y
+            if viewAspect > imageAspect {
+                // View is wider - scale down X to fit
+                aspectRatio = SIMD2<Float>(imageAspect / viewAspect, 1.0)
+            } else {
+                // View is taller - scale down Y to fit
+                aspectRatio = SIMD2<Float>(1.0, viewAspect / imageAspect)
+            }
         } else {
-            // View is taller - scale down Y to fit
-            aspectRatio = SIMD2<Float>(1.0, viewAspect / imageAspect)
+            // Fallback if dimensions are invalid
+            aspectRatio = SIMD2<Float>(1.0, 1.0)
         }
         
         // Convert black/white points from original range to normalized (0-1)
@@ -204,15 +218,22 @@ public class FITSImageRenderer: NSObject, MTKViewDelegate {
             normalizedWhitePoint = 1.0
         }
         
-        let pointer = uniformBuffer.contents().bindMemory(to: SIMD2<Float>.self, capacity: 3)
-        pointer[0] = scale
-        pointer[1] = offset
-        pointer[2] = aspectRatio
+        // Determine if texture is grayscale based on pixel format
+        let isGrayscale: Float = (texture?.pixelFormat == .r32Float) ? 1.0 : 0.0
         
-        // Write black/white points after the SIMD2<Float> values
-        let floatPointer = uniformBuffer.contents().advanced(by: MemoryLayout<SIMD2<Float>>.size * 3).bindMemory(to: Float.self, capacity: 2)
-        floatPointer[0] = normalizedBlackPoint
-        floatPointer[1] = normalizedWhitePoint
+        // Write entire struct at once to ensure proper alignment
+        let uniforms = Uniforms(
+            scale: scale,
+            offset: offset,
+            aspectRatio: aspectRatio,
+            _padding: 0.0,  // Padding to match Metal alignment
+            blackPoint: normalizedBlackPoint,
+            whitePoint: normalizedWhitePoint,
+            isGrayscale: isGrayscale
+        )
+        
+        let pointer = uniformBuffer.contents().bindMemory(to: Uniforms.self, capacity: 1)
+        pointer[0] = uniforms
         
         // Store aspect ratio for use by rulers
         self.aspectRatio = aspectRatio
@@ -417,12 +438,8 @@ public class FITSImageRenderer: NSObject, MTKViewDelegate {
 
     func loadFITSImage(_ fitsImage: FITSImage) {
         do {
-            let grayscaleTexture = try fitsImage.createMetalTexture(device: device, pixelFormat: .r32Float)
-            // Convert to RGBA for consistent display format
-            if grayscaleToRGBAConverter == nil {
-                grayscaleToRGBAConverter = try GrayscaleToRGBA(device: device)
-            }
-            texture = try grayscaleToRGBAConverter?.convert(grayscaleTexture) ?? grayscaleTexture
+            // Keep texture as grayscale for memory efficiency - shader handles both formats
+            texture = try fitsImage.createMetalTexture(device: device, pixelFormat: .r32Float)
             imageWidth = fitsImage.width
             imageHeight = fitsImage.height
             originalMinValue = fitsImage.originalMinValue
@@ -442,44 +459,22 @@ public class FITSImageRenderer: NSObject, MTKViewDelegate {
     }
     
     /// Load a Metal texture directly (for pipeline results)
-    /// Converts grayscale textures to RGBA format for consistent display
+    /// Accepts both grayscale (r32Float) and RGBA (rgba32Float) textures
+    /// The shader handles both formats automatically
     func loadTexture(_ texture: MTLTexture, originalMinValue: Float = 0.0, originalMaxValue: Float = 1.0) {
-        do {
-            // Convert to RGBA if needed
-            if texture.pixelFormat != .rgba32Float {
-                if grayscaleToRGBAConverter == nil {
-                    grayscaleToRGBAConverter = try GrayscaleToRGBA(device: device)
-                }
-                self.texture = try grayscaleToRGBAConverter?.convert(texture) ?? texture
-            } else {
-                self.texture = texture
-            }
-            self.imageWidth = texture.width
-            self.imageHeight = texture.height
-            self.originalMinValue = originalMinValue
-            self.originalMaxValue = originalMaxValue
-            // Initialize black/white points to full range
-            self.blackPoint = originalMinValue
-            self.whitePoint = originalMaxValue
-            updateUniforms()
-            // Trigger a redraw
-            if let view = mtkView {
-                view.needsDisplay = true
-            }
-        } catch {
-            Logger.ui.error("Error converting texture to RGBA: \(error)")
-            // Fall back to original texture
-            self.texture = texture
-            self.imageWidth = texture.width
-            self.imageHeight = texture.height
-            self.originalMinValue = originalMinValue
-            self.originalMaxValue = originalMaxValue
-            self.blackPoint = originalMinValue
-            self.whitePoint = originalMaxValue
-            updateUniforms()
-            if let view = mtkView {
-                view.needsDisplay = true
-            }
+        // Use texture directly - shader handles both grayscale and RGBA formats
+        self.texture = texture
+        self.imageWidth = texture.width
+        self.imageHeight = texture.height
+        self.originalMinValue = originalMinValue
+        self.originalMaxValue = originalMaxValue
+        // Initialize black/white points to full range
+        self.blackPoint = originalMinValue
+        self.whitePoint = originalMaxValue
+        updateUniforms()
+        // Trigger a redraw
+        if let view = mtkView {
+            view.needsDisplay = true
         }
     }
     

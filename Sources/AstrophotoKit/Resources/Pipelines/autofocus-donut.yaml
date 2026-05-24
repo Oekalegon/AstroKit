@@ -1,0 +1,120 @@
+id: autofocus_donut
+name: Autofocus Pipeline (Donut Stars — Reflector)
+description: Autofocus pipeline for reflector telescopes where out-of-focus images show
+  the characteristic donut shape (outer disc + secondary mirror shadow). Uses the Hough
+  circle transform to locate donuts, then computes the Half-Flux Diameter (HFD) for
+  each donut. The HFD decreases as focus improves. Run this pipeline once per focuser
+  position to collect (focuser_position, median_hfd) pairs for the autofocus_curve processor.
+
+steps:
+  - id: grayscale
+    type: grayscale
+    name: Grayscale
+    description: Converts the input frame to grayscale
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+        description: Out-of-focus light frame from the reflector
+    parameters: []
+    outputs:
+      - name: grayscale_frame
+        type: frame
+        description: Grayscale frame
+        metadata:
+          processing_stage: "color_conversion"
+          image_type: "grayscale"
+
+  - id: hough_circles
+    type: hough_circles
+    name: Hough Circle Detection
+    description: Detects donut-shaped star images using GPU Hough transform
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Greyscale out-of-focus image
+    parameters:
+      - name: r_min
+        from: hough_r_min
+        default_value: 30
+        description: Minimum donut outer radius in pixels (larger than for collimation — far from focus)
+      - name: r_max
+        from: hough_r_max
+        default_value: 180
+        description: Maximum donut outer radius in pixels
+      - name: edge_threshold
+        from: hough_edge_threshold
+        default_value: 0.05
+        description: Sobel magnitude threshold
+      - name: nms_radius
+        from: hough_nms_radius
+        default_value: 5
+        description: NMS radius in accumulator
+      - name: min_votes
+        from: hough_min_votes
+        default_value: 20
+        description: Minimum votes for a valid peak
+      - name: max_donuts
+        from: hough_max_donuts
+        default_value: 30
+        description: Maximum donuts to detect per image
+      - name: margin
+        from: hough_margin
+        default_value: 25
+        description: Extra pixels around r_max in crop
+      - name: max_crop_memory_mb
+        default_value: 256
+    outputs:
+      - name: donuts
+        type: table
+        description: Per-donut table with outer/inner circle geometry
+        metadata:
+          processing_stage: "circle_detection"
+          table_type: "donut_catalog"
+      - name: hough_summary
+        type: table
+        description: Summary of detected donuts
+
+  - id: hfd
+    type: hfd
+    name: HFD Calculation (Donut Mode)
+    description: Computes Half-Flux Diameter for each donut, skipping the dark inner hole
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Greyscale frame for pixel intensity sampling
+      - name: donuts
+        type: table
+        from: hough_circles.donuts
+        description: Donut geometry table (triggers donut mode in HFDProcessor)
+    parameters:
+      - name: region_multiplier
+        from: hfd_region_multiplier
+        default_value: 1.3
+        description: Region size as multiple of outer_r (1.3 adds 30% margin)
+      - name: min_region_size
+        default_value: 40
+      - name: max_region_size
+        default_value: 800
+      - name: donut_margin
+        from: hfd_donut_margin
+        default_value: 25
+        description: Pixel margin beyond outer_r for the sampling region
+    outputs:
+      - name: hfd_measurements
+        type: table
+        description: Per-donut HFD and flux
+        metadata:
+          processing_stage: "hfd_calculation"
+          table_type: "donut_catalog"
+      - name: median_hfd
+        type: table
+        description: Median HFD across all detected donuts
+        metadata:
+          processing_stage: "hfd_calculation"
+          table_type: "statistics"

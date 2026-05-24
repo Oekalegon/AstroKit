@@ -1,6 +1,7 @@
 import Foundation
 import Metal
 import MetalKit
+import Accelerate
 import CCFITSIO
 import os
 
@@ -159,6 +160,28 @@ public enum FITSDataType: Equatable {
         case .longLong: return .r32Uint  // Metal doesn't support 64-bit textures
         case .float: return .r32Float
         case .double: return .r32Float  // Convert double to float for Metal
+        }
+    }
+    
+    /// Creates a FITSDataType from a Metal pixel format.
+    /// 
+    /// Note: Some conversions are lossy. For example, both `.long` and `.longLong` 
+    /// map to `.r32Uint`, and both `.float` and `.double` map to `.r32Float`.
+    /// This method assumes the most common mapping (`.long` for `.r32Uint`, `.float` for `.r32Float`).
+    /// - Parameter pixelFormat: The Metal pixel format
+    /// - Returns: The corresponding FITSDataType, or `nil` if the format is not supported
+    static func from(metalPixelFormat pixelFormat: MTLPixelFormat) -> FITSDataType? {
+        switch pixelFormat {
+        case .r8Unorm, .r8Uint, .r8Sint:
+            return .byte
+        case .r16Unorm, .r16Uint, .r16Sint, .r16Float:
+            return .short
+        case .r32Uint, .r32Sint:
+            return .long
+        case .r32Float:
+            return .float
+        default:
+            return nil
         }
     }
 }
@@ -346,18 +369,28 @@ extension FITSFile {
             throw FITSFileError.readError(status: status, message: errorString)
         }
         
-        // Store raw data for reference
-        let rawData = floatBuffer.withUnsafeBytes { Data($0) }
-        
-        // Normalize pixel values to 0-1 range for Metal
-        let minVal = floatBuffer.min() ?? 0
-        let maxVal = floatBuffer.max() ?? 1
+        // Find min/max in one vDSP pass (no Swift loop, vectorised on all cores)
+        var minVal: Float32 = 0
+        var maxVal: Float32 = 0
+        vDSP_minv(floatBuffer, 1, &minVal, vDSP_Length(floatBuffer.count))
+        vDSP_maxv(floatBuffer, 1, &maxVal, vDSP_Length(floatBuffer.count))
+
+        // Normalise in-place: subtract min, divide by range — avoids a second [Float32] allocation
         let range = maxVal - minVal
-        let normalizedPixels = range > 0 ? floatBuffer.map { ($0 - minVal) / range } : floatBuffer
+        if range > 0 {
+            var negMin = -minVal
+            var invRange = 1.0 / range
+            // floatBuffer = (floatBuffer + negMin) * invRange
+            vDSP_vsadd(floatBuffer, 1, &negMin, &floatBuffer, 1, vDSP_Length(floatBuffer.count))
+            vDSP_vsmul(floatBuffer, 1, &invRange, &floatBuffer, 1, vDSP_Length(floatBuffer.count))
+        }
+
+        // Capture raw bytes before handing ownership to Data (zero-copy on supported platforms)
+        let rawData = floatBuffer.withUnsafeBytes { Data($0) }
+
+        Logger.swiftfitsio.debug("Successfully read image: \(floatBuffer.count) pixels, value range [\(minVal), \(maxVal)]")
         
-        Logger.swiftfitsio.debug("Successfully read image: \(normalizedPixels.count) pixels, value range [\(minVal), \(maxVal)]")
-        
-        return (width, height, depth, normalizedPixels, rawData, bitpix, minVal, maxVal)
+        return (width, height, depth, floatBuffer, rawData, bitpix, minVal, maxVal)
     }
     
     /// Reads a complete FITS image with metadata
@@ -400,13 +433,21 @@ extension FITSFile {
 /// Extension to create Metal resources from FITS images
 extension FITSImage {
     /// Creates a Metal texture from the FITS image data
+    /// 
+    /// Note: `pixelData` is always stored as `[Float32]` (normalized), so the texture
+    /// is always created as `.r32Float` format regardless of the original FITS data type.
+    /// The original data type is preserved in the `dataType` field for reference.
     /// - Parameters:
     ///   - device: The Metal device
-    ///   - pixelFormat: Optional pixel format (defaults to r32Float)
+    ///   - pixelFormat: Optional pixel format (defaults to r32Float, which matches pixelData format)
     /// - Returns: A Metal texture containing the image data
     public func createMetalTexture(device: MTLDevice, pixelFormat: MTLPixelFormat = .r32Float) throws -> MTLTexture {
+        // pixelData is always [Float32], so we must use .r32Float format
+        // Using a different format would require data conversion and could cause issues
+        let actualFormat: MTLPixelFormat = .r32Float
+        
         let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-            pixelFormat: pixelFormat,
+            pixelFormat: actualFormat,
             width: width,
             height: height,
             mipmapped: false
@@ -420,8 +461,11 @@ extension FITSImage {
         let region = MTLRegion(origin: MTLOrigin(x: 0, y: 0, z: 0),
                               size: MTLSize(width: width, height: height, depth: 1))
         
+        // Calculate bytes per row for r32Float format
+        let bytesPerRow = width * MemoryLayout<Float32>.size
+        
         pixelData.withUnsafeBytes { bytes in
-            texture.replace(region: region, mipmapLevel: 0, withBytes: bytes.baseAddress!, bytesPerRow: width * MemoryLayout<Float32>.size)
+            texture.replace(region: region, mipmapLevel: 0, withBytes: bytes.baseAddress!, bytesPerRow: bytesPerRow)
         }
         
         return texture

@@ -3,6 +3,7 @@ using namespace metal;
 
 /// Compute shader for background subtraction
 /// Subtracts a constant background level from each pixel and clamps to zero
+/// Optimized for grayscale textures (r32Float) - works on R channel only
 kernel void background_subtract(texture2d<float> inputTexture [[texture(0)]],
                                   texture2d<float, access::write> outputTexture [[texture(1)]],
                                   constant float& backgroundLevel [[buffer(0)]],
@@ -12,18 +13,20 @@ kernel void background_subtract(texture2d<float> inputTexture [[texture(0)]],
         return;
     }
     
-    // Read input pixel
-    float4 inputPixel = inputTexture.read(gid);
+    // Read input pixel (grayscale texture - only R channel has data)
+    float value = inputTexture.read(gid).r;
     
     // Subtract background and clamp to zero
-    float4 result = max(float4(0.0), inputPixel - float4(backgroundLevel));
+    float result = max(0.0, value - backgroundLevel);
     
-    // Write output
-    outputTexture.write(result, gid);
+    // Write output (grayscale - only R channel is used)
+    // Using float4(result) broadcasts the value, which is more efficient than explicit zeros
+    outputTexture.write(float4(result), gid);
 }
 
 /// Compute shader to create a uniform background texture
 /// Fills the entire texture with a constant background level
+/// Optimized for grayscale textures (r32Float) - only R channel is used
 kernel void background_fill(texture2d<float, access::write> outputTexture [[texture(0)]],
                           constant float& backgroundLevel [[buffer(0)]],
                           uint2 gid [[thread_position_in_grid]]) {
@@ -32,7 +35,8 @@ kernel void background_fill(texture2d<float, access::write> outputTexture [[text
         return;
     }
     
-    // Write uniform background level
+    // Write uniform background level (grayscale - only R channel is used)
+    // Using float4(backgroundLevel) broadcasts the value, which is more efficient than explicit zeros
     outputTexture.write(float4(backgroundLevel), gid);
 }
 
