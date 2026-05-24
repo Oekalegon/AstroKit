@@ -87,7 +87,7 @@ public struct Process {
         processorIdentifier: String,
         inputData: [(String, DataType, CollectionMode, String)] = [], // (name, type, collectionMode, stepLinkID)
         parameters: [String: Parameter] = [:],
-        outputData: [(String, DataType)] = [], // (name, type) - stepLinkID will be constructed as stepIdentifier.name
+        outputData: [(String, DataType)] = [] // (name, type) - stepLinkID will be constructed as stepIdentifier.name
     ) {
         self.stepIdentifier = stepIdentifier
         self.processorIdentifier = processorIdentifier
