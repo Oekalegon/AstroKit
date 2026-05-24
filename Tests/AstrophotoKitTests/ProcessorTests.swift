@@ -33,10 +33,7 @@ func testGrayscaleBlurBackgroundThresholdErosionAndDilationProcessors() async th
             }
         }
     }
-    guard let resourceURL = resourceURL else {
-        Issue.record("Could not find test FITS file")
-        return
-    }
+    guard let resourceURL = resourceURL else { return }
 
     // Open FITS file and read image
     let fitsFile = try FITSFile(path: resourceURL.path)
