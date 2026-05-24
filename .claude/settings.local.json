@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(swift package *)",
+      "Bash(swift build *)",
+      "Bash(.build/debug/ap --help)",
+      "Bash(.build/debug/ap list *)",
+      "Bash(.build/debug/ap inspect *)",
+      "Bash(.build/debug/astrokit-mcp)",
+      "Bash(python3 -m json.tool --no-ensure-ascii)",
+      "Bash(chmod +x /Users/donwillems/Personal/Development/AstrophotoKit/install.sh)",
+      "Bash(bash /Users/donwillems/Personal/Development/AstrophotoKit/install.sh)",
+      "Read(//opt/local/**)",
+      "Bash(pkg-config --variable pc_path pkg-config)",
+      "Read(//opt/local/lib/pkgconfig/**)",
+      "Read(//usr/local/**)",
+      "Bash(pkg-config --list-all)",
+      "Bash(find /opt/local /usr/local /usr -name \"libcfitsio*\" 2>/dev/null | head -5)",
+      "Read(//usr/**)",
+      "Bash(mdfind -name \"libcfitsio*\")",
+      "Bash(xcrun --show-sdk-path)",
+      "Bash(xargs -I{} find {} -name \"fitsio.h\")",
+      "Bash(ls /usr/local/include/fitsio.h /opt/homebrew/include/fitsio.h /opt/local/include/fitsio.h 2>/dev/null)",
+      "Read(//opt/homebrew/Cellar/cfitsio/4.6.3_1/include/**)",
+      "Bash(find /opt/homebrew -name \"fitsio.h\" 2>/dev/null | head -3)",
+      "Read(//opt/homebrew/**)"
+    ]
+  }
+}

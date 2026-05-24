@@ -118,13 +118,18 @@ public struct BackgroundEstimationProcessor: Processor {
             device: device
         )
 
-        // Create intermediate texture for multi-pass approach
+        // Two intermediate textures for ping-pong buffering across multi-pass runs —
+        // reading and writing the same texture in one Metal dispatch is undefined behaviour.
         let intermediateDescriptor = ProcessorHelpers.createTextureDescriptor(
             pixelFormat: inputTexture.pixelFormat,
             width: inputTexture.width,
             height: inputTexture.height
         )
-        let intermediateTexture = try ProcessorHelpers.createTexture(
+        let intermediateTextureA = try ProcessorHelpers.createTexture(
+            descriptor: intermediateDescriptor,
+            device: device
+        )
+        let intermediateTextureB = try ProcessorHelpers.createTexture(
             descriptor: intermediateDescriptor,
             device: device
         )
@@ -153,7 +158,8 @@ public struct BackgroundEstimationProcessor: Processor {
         let multiPassParams = MultiPassParams(
             inputTexture: inputTexture,
             backgroundTexture: backgroundTexture,
-            intermediateTexture: intermediateTexture,
+            intermediateTextureA: intermediateTextureA,
+            intermediateTextureB: intermediateTextureB,
             windowSize: Int(windowSize),
             localMedianPipelineState: localMedianPipelineState,
             minValueBuffer: minValueBuffer,
@@ -246,7 +252,8 @@ public struct BackgroundEstimationProcessor: Processor {
     private struct MultiPassParams {
         let inputTexture: MTLTexture
         let backgroundTexture: MTLTexture
-        let intermediateTexture: MTLTexture
+        let intermediateTextureA: MTLTexture
+        let intermediateTextureB: MTLTexture
         let windowSize: Int
         let localMedianPipelineState: MTLComputePipelineState
         let minValueBuffer: MTLBuffer
@@ -268,7 +275,9 @@ public struct BackgroundEstimationProcessor: Processor {
         // Calculate threadgroups
         let (threadgroupSize, threadgroupsPerGrid) = ProcessorHelpers.calculateThreadgroups(for: params.inputTexture)
 
-        // Multi-pass background estimation
+        // Multi-pass background estimation.
+        // Ping-pong between intermediateTextureA and intermediateTextureB so that no
+        // pass reads and writes the same texture — Metal does not permit that.
         for (passIndex, passWindowSize) in windowSizes.enumerated() {
             var windowSizeInt = Int32(passWindowSize)
             let windowSizeBuffer = try ProcessorHelpers.createBuffer(from: &windowSizeInt, device: params.device)
@@ -276,11 +285,23 @@ public struct BackgroundEstimationProcessor: Processor {
             // Create command buffer for this pass
             let commandBuffer = try ProcessorHelpers.createCommandBuffer(commandQueue: params.commandQueue)
 
-            // Determine input and output textures for this pass
-            let passInputTexture = passIndex == 0 ? params.inputTexture : params.intermediateTexture
-            let passOutputTexture = passIndex == windowSizes.count - 1
-                ? params.backgroundTexture
-                : params.intermediateTexture
+            // Determine input and output textures for this pass.
+            // Pass 0: inputTexture → A
+            // Pass 1: A → B (or backgroundTexture if last)
+            // Pass 2: B → A (or backgroundTexture if last)
+            // ...
+            let passInputTexture: MTLTexture
+            let passOutputTexture: MTLTexture
+            if passIndex == 0 {
+                passInputTexture  = params.inputTexture
+                passOutputTexture = windowSizes.count == 1 ? params.backgroundTexture : params.intermediateTextureA
+            } else {
+                let readA = passIndex % 2 == 1
+                passInputTexture  = readA ? params.intermediateTextureA : params.intermediateTextureB
+                passOutputTexture = passIndex == windowSizes.count - 1
+                    ? params.backgroundTexture
+                    : (readA ? params.intermediateTextureB : params.intermediateTextureA)
+            }
 
             // Estimate local median background with current window size
             let encoder = try ProcessorHelpers.createComputeEncoder(commandBuffer: commandBuffer)

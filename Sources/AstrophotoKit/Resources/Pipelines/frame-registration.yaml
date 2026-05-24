@@ -1,0 +1,76 @@
+id: frame_registration
+name: Frame Registration Pipeline
+description: Registers multiple frames of the same sky area by detecting stars and quads in each frame, matching quad patterns to compute geometric transforms (translation, rotation, scale) relative to the best-quality reference frame, and reporting per-frame star quality metrics.
+
+steps:
+  - id: registration
+    type: frame_registration
+    name: Frame Registration
+    description: Detects stars in each input frame, matches quad patterns between frames, and computes similarity transforms relative to the reference frame.
+    dataInputs:
+      - name: input_frames
+        type: frameSet
+        from: input_frames
+        is_collection: true
+        collection_mode: together
+        description: Collection of light frames to register
+    parameters:
+      - name: reference_frame
+        from: reference_frame
+        default_value: -1
+        description: Index of reference frame (-1 = auto-select best quality frame)
+      - name: match_threshold
+        from: match_threshold
+        default_value: 0.05
+        description: Maximum L2 distance in quad descriptor space for a valid match
+      - name: min_matches
+        from: min_matches
+        default_value: 4
+        description: Minimum number of matched quad pairs required for valid registration
+      - name: ransac_iterations
+        from: ransac_iterations
+        default_value: 100
+        description: Number of RANSAC iterations for outlier rejection
+      - name: inlier_threshold
+        from: inlier_threshold
+        default_value: 3.0
+        description: Maximum residual in pixels for a point pair to be considered an inlier
+      - name: blur_radius
+        from: blur_radius
+        default_value: 3.0
+        description: Gaussian blur radius in pixels applied before star detection
+      - name: threshold_value
+        from: threshold_value
+        default_value: 3.0
+        description: Sigma multiplier for star detection threshold
+      - name: erosion_kernel_size
+        from: erosion_kernel_size
+        default_value: 3
+        description: Morphological erosion kernel size
+      - name: dilation_kernel_size
+        from: dilation_kernel_size
+        default_value: 3
+        description: Morphological dilation kernel size
+      - name: max_stars
+        from: max_stars
+        default_value: 100
+        description: Maximum number of stars to use for quad formation per frame
+      - name: min_distance_percent
+        from: min_distance_percent
+        default_value: 1.0
+        description: Minimum distance between stars as a percentage of the image diagonal
+      - name: k_neighbors
+        from: k_neighbors
+        default_value: 5
+        description: Number of nearest neighbours used to form quads around each star
+    outputs:
+      - name: registration_table
+        type: table
+        description: Registration results — one row per frame with transform parameters and star quality metrics
+        metadata:
+          processing_stage: "registration"
+          data_type: "table"
+          table_type: "registration"
+      - name: reference_stars
+        type: table
+        description: Pixel positions (x, y) of stars detected in the reference frame

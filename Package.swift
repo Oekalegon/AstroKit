@@ -13,12 +13,30 @@ let package = Package(
         .library(
             name: "AstrophotoKit",
             targets: ["AstrophotoKit"]),
+        .library(
+            name: "AstrophotoArchiveKit",
+            targets: ["AstrophotoArchiveKit"]),
+        .executable(name: "ap", targets: ["ap"]),
+        .executable(name: "ap-archive", targets: ["ap-archive"]),
+        .executable(name: "astrokit-mcp", targets: ["astrokit-mcp"]),
     ],
     dependencies: [
         // Dependencies declare other packages that this package depends on.
-        .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0")
+        .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0"),
+        .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
+        .package(path: "../HealPixKit"),
     ],
     targets: [
+        // Build tool that generates Version.generated.swift at every build.
+        .executableTarget(
+            name: "version-tool",
+            path: "Sources/version-tool"
+        ),
+        .plugin(
+            name: "VersionPlugin",
+            capability: .buildTool(),
+            dependencies: ["version-tool"]
+        ),
         // System CFITSIO library (Homebrew / apt)
         .systemLibrary(
             name: "CCFITSIO",
@@ -49,7 +67,37 @@ let package = Package(
             resources: [
                 .process("Shaders"),  // Include Metal shader source files as resources
                 .process("Resources")  // Include pipeline configuration files
-            ]),
+            ],
+            plugins: ["VersionPlugin"]),
+        .executableTarget(
+            name: "ap",
+            dependencies: [
+                "AstrophotoKit",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/ap"
+        ),
+        .target(
+            name: "AstrophotoArchiveKit",
+            dependencies: [
+                "AstrophotoKit",
+                .product(name: "HEALPixKit", package: "HealPixKit"),
+            ],
+            path: "Sources/AstrophotoArchiveKit"
+        ),
+        .executableTarget(
+            name: "ap-archive",
+            dependencies: [
+                "AstrophotoArchiveKit",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "Sources/ap-archive"
+        ),
+        .executableTarget(
+            name: "astrokit-mcp",
+            dependencies: ["AstrophotoKit", "AstrophotoArchiveKit"],
+            path: "Sources/astrokit-mcp"
+        ),
         .testTarget(
             name: "AstrophotoKitTests",
             dependencies: ["AstrophotoKit"],

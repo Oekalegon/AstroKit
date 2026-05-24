@@ -118,7 +118,16 @@ public actor ProcessorRegistry {
         if implementations[ringSearch.id] == nil {
             register(ringSearch)
         }
-        // Add more processors here as they are created
+
+        let frameRegistration = FrameRegistrationProcessor()
+        if implementations[frameRegistration.id] == nil {
+            register(frameRegistration)
+        }
+
+        let frameStacking = FrameStackingProcessor()
+        if implementations[frameStacking.id] == nil {
+            register(frameStacking)
+        }
     }
 
     /// Register a processor using its `id` property
@@ -143,6 +152,12 @@ public actor ProcessorRegistry {
     public func get(id: String) -> (any Processor)? {
         initializeIfNeeded()
         return implementations[id]
+    }
+
+    /// Get all registered processor IDs (sorted)
+    public func getAllIDs() -> [String] {
+        initializeIfNeeded()
+        return Array(implementations.keys).sorted()
     }
 
     /// Clear all registered processors (useful for testing)

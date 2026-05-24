@@ -1,0 +1,131 @@
+id: frame_stacking
+name: Frame Stacking Pipeline
+description: >
+  Registers multiple light frames by detecting and matching star patterns, then aligns and
+  combines them into a single stacked image. Supports sum, average, median, max-pixel, and
+  min-pixel combine methods; additive, multiplicative, and scaled normalisation; and sigma-clip
+  or winsorized pixel rejection.
+
+steps:
+  - id: registration
+    type: frame_registration
+    name: Frame Registration
+    description: Detects stars in each frame and computes similarity transforms relative to the best-quality reference frame.
+    dataInputs:
+      - name: input_frames
+        type: frameSet
+        from: input_frames
+        is_collection: true
+        collection_mode: together
+        description: Collection of light frames to register and stack
+    parameters:
+      - name: reference_frame
+        from: reference_frame
+        default_value: -1
+        description: Index of reference frame (-1 = auto-select)
+      - name: match_threshold
+        from: match_threshold
+        default_value: 0.05
+        description: Maximum L2 distance in quad descriptor space for a valid match
+      - name: min_matches
+        from: min_matches
+        default_value: 4
+        description: Minimum matched quad pairs required for valid registration
+      - name: ransac_iterations
+        from: ransac_iterations
+        default_value: 100
+        description: Number of RANSAC iterations for outlier rejection
+      - name: inlier_threshold
+        from: inlier_threshold
+        default_value: 3.0
+        description: Maximum residual in pixels for a RANSAC inlier
+      - name: blur_radius
+        from: blur_radius
+        default_value: 3.0
+        description: Gaussian blur radius in pixels applied before star detection
+      - name: threshold_value
+        from: threshold_value
+        default_value: 3.0
+        description: Sigma multiplier for star detection threshold
+      - name: erosion_kernel_size
+        from: erosion_kernel_size
+        default_value: 3
+        description: Morphological erosion kernel size
+      - name: dilation_kernel_size
+        from: dilation_kernel_size
+        default_value: 3
+        description: Morphological dilation kernel size
+      - name: max_stars
+        from: max_stars
+        default_value: 100
+        description: Maximum number of stars to use for quad formation per frame
+      - name: min_distance_percent
+        from: min_distance_percent
+        default_value: 1.0
+        description: Minimum distance between stars as a percentage of the image diagonal
+      - name: k_neighbors
+        from: k_neighbors
+        default_value: 5
+        description: Number of nearest neighbours used to form quads
+    outputs:
+      - name: registration_table
+        type: table
+        description: Per-frame transform parameters and star quality metrics
+        metadata:
+          table_type: registration
+      - name: reference_stars
+        type: table
+        description: Pixel positions (x, y) of stars detected in the reference frame
+
+  - id: stacking
+    type: frame_stacking
+    name: Frame Stacking
+    description: Applies registration transforms to align frames, normalises them, and combines them into a stacked image.
+    dataInputs:
+      - name: input_frames
+        type: frameSet
+        from: input_frames
+        is_collection: true
+        collection_mode: together
+        description: The same input frames passed directly to the stacking step
+      - name: registration_table
+        type: table
+        from: registration.registration_table
+        description: Registration table from the registration step
+      - name: reference_stars
+        type: table
+        from: registration.reference_stars
+        description: Reference frame star positions for post-warp alignment verification
+    parameters:
+      - name: method
+        from: method
+        default_value: average
+        description: "Combine method: sum | average | median | max_pixel | min_pixel"
+      - name: normalisation
+        from: normalisation
+        default_value: none
+        description: "Normalisation: none | additive | multiplicative | additive_scaling | multiplicative_scaling"
+      - name: pixel_rejection
+        from: pixel_rejection
+        default_value: sigma_clip
+        description: "Pixel rejection: none | sigma_clip | winsorized"
+      - name: rejection_low
+        from: rejection_low
+        default_value: 3.0
+        description: Lower rejection threshold in sigma units
+      - name: rejection_high
+        from: rejection_high
+        default_value: 3.0
+        description: Upper rejection threshold in sigma units
+    outputs:
+      - name: stacked_frame
+        type: frame
+        description: The final stacked image
+        metadata:
+          processing_stage: stacking
+          frame_type: processedLight
+      - name: stacked_registration_table
+        type: table
+        description: Registration table carried through to the output FITS file
+        metadata:
+          table_type: registration

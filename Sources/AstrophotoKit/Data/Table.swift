@@ -187,6 +187,9 @@ public enum TableType: String, Metadata {
     /// and may contain a reference to detected stars in the frame.
     case objectCatalogue
 
+    /// The table contains frame registration results: per-frame transform and star quality statistics.
+    case registration
+
     /// The key for this metadata value.
     /// Returns the ``TableMetadataKey.type`` key.
     public var key: any MetadataKey {

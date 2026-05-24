@@ -376,80 +376,116 @@ public struct RingSearchProcessor: Processor {
         return (innerCX, innerCY, innerR)
     }
 
-    /// Refines the outer ring centre by grid search maximising mean intensity along
-    /// a circle of radius `outerR`.  This is rotation-invariant and unaffected by
-    /// asymmetric ring brightness (collimation offset makes one arc brighter, which
-    /// biases a DoG centroid but does not bias a ring-mean score).
+    /// Refines the outer ring centre using iterative weighted least-squares circle fitting.
     ///
-    /// Search: coarse grid ±outerR/4 at outerR/8 steps, then fine grid ±outerR/8 at
-    /// outerR/16 steps around the coarse best.  Evaluates ~(9×9 + 9×9) = ~162 candidates.
+    /// Each bright pixel in the ring annulus constrains the centre to lie at distance
+    /// `outerR` from it.  We linearise this constraint and solve the resulting 2×2
+    /// normal-equation system for a sub-pixel centre correction, repeating 3 times.
+    /// This is rotation-invariant: a non-uniform ring (one arc brighter than another
+    /// due to collimation) shifts the centroid but the weighted least-squares fit
+    /// compensates because the distance residual is symmetric around the true centre.
+    ///
+    /// Weight = pixel intensity above local background, so brighter ring pixels
+    /// contribute more — but the distance residual forces even faint arcs to pull
+    /// the centre toward the geometric correct position.
     private func refineOuterCenterLocal(
         dogPixels: [Float], W: Int, H: Int,
         peakX: Int, peakY: Int, outerR: Double,
         pixels: [Float]
     ) -> (cx: Double, cy: Double) {
-        let bandwidth = max(2.0, outerR * 0.12)   // ring annulus ±bandwidth around outerR
+        let bandwidth = max(2.0, outerR * 0.15)
+        let r1 = outerR - bandwidth, r2 = outerR + bandwidth
+        let r1sq = r1*r1, r2sq = r2*r2
 
-        func ringScore(cx: Double, cy: Double) -> Double {
-            let r1 = outerR - bandwidth, r2 = outerR + bandwidth
-            let r1sq = r1 * r1, r2sq = r2 * r2
+        // Estimate background as mean of pixels well outside the ring
+        let bgBoxR = Int(r2 + bandwidth + 1)
+        let bgXLo = max(0, peakX - bgBoxR), bgXHi = min(W - 1, peakX + bgBoxR)
+        let bgYLo = max(0, peakY - bgBoxR), bgYHi = min(H - 1, peakY + bgBoxR)
+        var bgSum = 0.0, bgCount = 0
+        for py in bgYLo...bgYHi {
+            let dy = Double(py) - Double(peakY)
+            for px in bgXLo...bgXHi {
+                let dx = Double(px) - Double(peakX)
+                let d2 = dx*dx + dy*dy
+                if d2 > r2sq {
+                    bgSum += Double(pixels[py * W + px]); bgCount += 1
+                }
+            }
+        }
+        let bg = bgCount > 0 ? bgSum / Double(bgCount) : 0.0
+
+        // Seed from DoG-weighted centroid rather than raw integer peak — gives a
+        // better starting point so the least-squares needs fewer steps and is less
+        // likely to diverge when the peak pixel is already close to the true centre.
+        var cx = Double(peakX), cy = Double(peakY)
+        let seedWinR = max(2, Int((outerR / 3.0).rounded()))
+        let sxLo = max(0, peakX - seedWinR), sxHi = min(W - 1, peakX + seedWinR)
+        let syLo = max(0, peakY - seedWinR), syHi = min(H - 1, peakY + seedWinR)
+        var swx = 0.0, swy = 0.0, sw = 0.0
+        for py in syLo...syHi {
+            for px in sxLo...sxHi {
+                let v = Double(dogPixels[py * W + px])
+                guard v > 0 else { continue }
+                swx += v * Double(px); swy += v * Double(py); sw += v
+            }
+        }
+        if sw > 0 { cx = swx / sw; cy = swy / sw }
+        let seedCX = cx, seedCY = cy   // remember seed to clamp final result
+        let maxDisp = outerR * 0.25    // never move the centre more than 25% of outerR
+
+        for _ in 0..<4 {
             let boxR = Int(r2 + 1)
             let xLo = max(0, Int(cx) - boxR), xHi = min(W - 1, Int(cx) + boxR)
             let yLo = max(0, Int(cy) - boxR), yHi = min(H - 1, Int(cy) + boxR)
-            var sum = 0.0, count = 0
+
+            // 2×2 normal equations: J^T W J * delta = J^T W f
+            // where f_i = dist_i - outerR  (signed residual)
+            // J_i = [-dx_i/d_i, -dy_i/d_i]  (gradient of f w.r.t. cx, cy)
+            var A = 0.0, B = 0.0, C = 0.0   // J^T W J entries
+            var Ex = 0.0, Ey = 0.0           // J^T W f entries
+
             for py in yLo...yHi {
                 let dy = Double(py) - cy
-                let dy2 = dy * dy
+                let dy2 = dy*dy
                 if dy2 > r2sq { continue }
                 for px in xLo...xHi {
                     let dx = Double(px) - cx
                     let d2 = dx*dx + dy2
-                    if d2 >= r1sq && d2 <= r2sq {
-                        sum += Double(pixels[py * W + px])
-                        count += 1
-                    }
+                    guard d2 >= r1sq && d2 <= r2sq else { continue }
+                    let v = Double(pixels[py * W + px])
+                    let w = max(0.0, v - bg)
+                    guard w > 0 else { continue }
+                    let d = sqrt(d2)
+                    let ux = dx / d, uy = dy / d   // unit vector from centre to pixel
+                    let f  = d - outerR             // distance residual
+                    A  += w * ux * ux
+                    B  += w * ux * uy
+                    C  += w * uy * uy
+                    Ex += w * f  * ux
+                    Ey += w * f  * uy
                 }
             }
-            return count > 0 ? sum / Double(count) : 0
+
+            let det = A*C - B*B
+            guard abs(det) > 1e-12 else { break }
+            // delta = J^T W J \ J^T W f  — move centre to reduce distance residuals
+            let dcx = (C*Ex - B*Ey) / det
+            let dcy = (A*Ey - B*Ex) / det
+            cx += dcx; cy += dcy
+            if dcx*dcx + dcy*dcy < 0.01 { break }   // converged
         }
 
-        var bestX = Double(peakX), bestY = Double(peakY)
-
-        // Coarse pass
-        let coarseStep = outerR / 8.0
-        let coarseRange = outerR / 4.0
-        var bestScore = ringScore(cx: bestX, cy: bestY)
-        var stride = -coarseRange
-        while stride <= coarseRange {
-            var strideY = -coarseRange
-            while strideY <= coarseRange {
-                let cx = Double(peakX) + stride
-                let cy = Double(peakY) + strideY
-                let s = ringScore(cx: cx, cy: cy)
-                if s > bestScore { bestScore = s; bestX = cx; bestY = cy }
-                strideY += coarseStep
-            }
-            stride += coarseStep
+        // Clamp total displacement from seed — prevents divergence when the ring
+        // is very faint or asymmetric (e.g. collimation makes one arc much brighter).
+        let dispX = cx - seedCX, dispY = cy - seedCY
+        let disp  = sqrt(dispX*dispX + dispY*dispY)
+        if disp > maxDisp {
+            let scale = maxDisp / disp
+            cx = seedCX + dispX * scale
+            cy = seedCY + dispY * scale
         }
 
-        // Fine pass around coarse best
-        let fineStep = outerR / 16.0
-        let fineRange = outerR / 8.0
-        let coarseBestX = bestX, coarseBestY = bestY
-        stride = -fineRange
-        while stride <= fineRange {
-            var strideY = -fineRange
-            while strideY <= fineRange {
-                let cx = coarseBestX + stride
-                let cy = coarseBestY + strideY
-                let s = ringScore(cx: cx, cy: cy)
-                if s > bestScore { bestScore = s; bestX = cx; bestY = cy }
-                strideY += fineStep
-            }
-            stride += fineStep
-        }
-
-        return (bestX, bestY)
+        return (cx, cy)
     }
 
     /// Refines the inner shadow centre using local contrast around a predicted position.

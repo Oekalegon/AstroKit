@@ -8,6 +8,8 @@ public enum DataType: String, Codable {
     case frameSet
     /// A table (structured data like star catalogs, measurements, etc.)
     case table
+    /// A collection of tables
+    case tableSet
 }
 
 /// Represents a piece of data in a pipeline.

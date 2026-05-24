@@ -1,0 +1,439 @@
+import Foundation
+import TabularData
+import CCFITSIO
+import os
+
+@_silgen_name("write_stacked_fits")
+private func writeStackedFITSC(
+    _ filename: UnsafePointer<CChar>,
+    _ imageData: UnsafeMutablePointer<Float>,
+    _ width: Int32,
+    _ height: Int32,
+    // registration table
+    _ nrows: Int32,
+    _ frameIndex: UnsafeMutablePointer<Int32>,
+    _ filePaths: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    _ timestamps: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    _ exposures: UnsafeMutablePointer<Double>,
+    _ filterNames: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    _ gains: UnsafeMutablePointer<Double>,
+    _ offsetVals: UnsafeMutablePointer<Double>,
+    _ frameTypes: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    _ translationX: UnsafeMutablePointer<Double>,
+    _ translationY: UnsafeMutablePointer<Double>,
+    _ rotationDeg: UnsafeMutablePointer<Double>,
+    _ scale: UnsafeMutablePointer<Double>,
+    _ matchCount: UnsafeMutablePointer<Int32>,
+    _ rmse: UnsafeMutablePointer<Double>,
+    _ starCount: UnsafeMutablePointer<Int32>,
+    _ meanFWHM: UnsafeMutablePointer<Double>,
+    _ medianFWHM: UnsafeMutablePointer<Double>,
+    _ meanEccentricity: UnsafeMutablePointer<Double>,
+    _ meanPositionAngle: UnsafeMutablePointer<Double>,
+    _ meanFlux: UnsafeMutablePointer<Double>,
+    _ skyBackground: UnsafeMutablePointer<Double>,
+    _ skyNoise: UnsafeMutablePointer<Double>,
+    _ referenceFrame: Int32,
+    // stacking metadata for FITS header
+    _ totalExposure: Double,
+    _ filterName: UnsafePointer<CChar>,
+    _ gain: Double,
+    _ offsetVal: Double,
+    _ dateObs: UnsafePointer<CChar>,
+    _ stackMethod: UnsafePointer<CChar>,
+    _ normalisation: UnsafePointer<CChar>,
+    _ rejection: UnsafePointer<CChar>,
+    _ rejLow: Double,
+    _ rejHigh: Double,
+    _ stackedSkyBkg: Double,
+    _ stackedSkyNoise: Double,
+    _ statusOut: UnsafeMutablePointer<Int32>
+) -> Int32
+
+@_silgen_name("write_registration_fits_table")
+private func writeRegistrationFITSTableC(
+    _ filename: UnsafePointer<CChar>,
+    _ nrows: Int32,
+    _ frameIndex: UnsafeMutablePointer<Int32>,
+    _ filePaths: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    _ timestamps: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    _ exposures: UnsafeMutablePointer<Double>,
+    _ filterNames: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    _ gains: UnsafeMutablePointer<Double>,
+    _ offsetVals: UnsafeMutablePointer<Double>,
+    _ frameTypes: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>,
+    _ translationX: UnsafeMutablePointer<Double>,
+    _ translationY: UnsafeMutablePointer<Double>,
+    _ rotationDeg: UnsafeMutablePointer<Double>,
+    _ scale: UnsafeMutablePointer<Double>,
+    _ matchCount: UnsafeMutablePointer<Int32>,
+    _ rmse: UnsafeMutablePointer<Double>,
+    _ starCount: UnsafeMutablePointer<Int32>,
+    _ meanFWHM: UnsafeMutablePointer<Double>,
+    _ medianFWHM: UnsafeMutablePointer<Double>,
+    _ meanEccentricity: UnsafeMutablePointer<Double>,
+    _ meanPositionAngle: UnsafeMutablePointer<Double>,
+    _ meanFlux: UnsafeMutablePointer<Double>,
+    _ skyBackground: UnsafeMutablePointer<Double>,
+    _ skyNoise: UnsafeMutablePointer<Double>,
+    _ referenceFrame: Int32,
+    _ statusOut: UnsafeMutablePointer<Int32>
+) -> Int32
+
+/// Writes pipeline table outputs to disk in FITS or CSV format.
+public struct FITSTableWriter {
+
+    public enum OutputFormat {
+        case fits
+        case csv
+    }
+
+    /// Write a registration DataFrame to disk.
+    /// - Parameters:
+    ///   - df: The registration DataFrame (must contain the standard registration columns).
+    ///   - path: Destination file path.
+    ///   - format: `.fits` (BINTABLE extension) or `.csv`.
+    public static func writeRegistrationTable(
+        _ df: DataFrame,
+        to path: String,
+        format: OutputFormat = .fits
+    ) throws {
+        switch format {
+        case .csv:
+            try writeCSV(df, to: path)
+        case .fits:
+            try writeFITS(df, to: path)
+        }
+    }
+
+    /// Write a stacked image + registration table to a FITS file.
+    ///
+    /// The primary HDU is a 32-bit float image with full FITS header metadata
+    /// (IMAGETYP, NFRAMES, EXPTIME, FILTER, GAIN, DATE-OBS, stacking keywords).
+    /// A REGISTRATION BINTABLE extension carries the per-frame registration data.
+    /// - Parameters:
+    ///   - pixelData: Row-major float32 pixel values (row 0 = top).
+    ///   - width: Image width in pixels.
+    ///   - height: Image height in pixels.
+    ///   - registrationTable: DataFrame from the frame_registration step.
+    ///   - method: Combine method used (e.g. "average", "median").
+    ///   - normalisation: Normalisation method used.
+    ///   - rejection: Pixel rejection method used.
+    ///   - rejectionLow: Lower rejection sigma.
+    ///   - rejectionHigh: Upper rejection sigma.
+    ///   - path: Destination file path.
+    public static func writeStackedOutput(
+        pixelData: [Float],
+        width: Int,
+        height: Int,
+        registrationTable df: DataFrame,
+        method: String = "average",
+        normalisation: String = "none",
+        rejection: String = "sigma_clip",
+        rejectionLow: Double = 3.0,
+        rejectionHigh: Double = 3.0,
+        to path: String
+    ) throws {
+        let nrows = Int32(df.rows.count)
+
+        func doubles(_ col: String) -> [Double] {
+            df.rows.map { ($0[col] as? Double) ?? 0 }
+        }
+        func optionalDoubles(_ col: String) -> [Double] {
+            df.rows.map { ($0[col] as? Double) ?? Double.nan }
+        }
+        func ints(_ col: String) -> [Int32] {
+            df.rows.map { row -> Int32 in
+                if let v = row[col] as? Int32 { return v }
+                if let v = row[col] as? Int   { return Int32(v) }
+                return 0
+            }
+        }
+        func strings(_ col: String) -> [String] {
+            guard df.columns.contains(where: { $0.name == col }) else {
+                return Array(repeating: "", count: Int(nrows))
+            }
+            return df.rows.map { ($0[col] as? String) ?? "" }
+        }
+
+        var frameIndex        = ints("frame_index")
+        var translationX      = doubles("translation_x")
+        var translationY      = doubles("translation_y")
+        var rotationDeg       = doubles("rotation_deg")
+        var scale             = doubles("scale")
+        var matchCount        = ints("match_count")
+        var rmse              = doubles("rmse")
+        var starCount         = ints("star_count")
+        var meanFWHM          = doubles("mean_fwhm")
+        var medianFWHM        = doubles("median_fwhm")
+        var meanEccentricity  = doubles("mean_eccentricity")
+        var meanPositionAngle = doubles("mean_position_angle")
+        var meanFlux          = doubles("mean_flux")
+        var skyBackground     = doubles("sky_background")
+        var skyNoise          = doubles("sky_noise")
+        var exposures         = optionalDoubles("exposure")
+        var gains             = optionalDoubles("gain")
+        var offsetVals        = optionalDoubles("offset")
+
+        var cFilePaths   = strings("file_path").map   { strdup($0) }
+        var cTimestamps  = strings("timestamp").map   { strdup($0) }
+        var cFilterNames = strings("filter").map      { strdup($0) }
+        var cFrameTypes  = strings("frame_type").map  { strdup($0) }
+        defer {
+            cFilePaths.forEach   { free($0) }
+            cTimestamps.forEach  { free($0) }
+            cFilterNames.forEach { free($0) }
+            cFrameTypes.forEach  { free($0) }
+        }
+
+        let refOffset = frameIndex.enumerated().first { i, _ in
+            abs(translationX[i]) < 1e-9 && abs(translationY[i]) < 1e-9
+        }?.offset ?? 0
+        let refFrameIdx = Int32(refOffset)
+
+        // --- Derive header metadata from the registration table ---
+
+        // Total integration time: sum of all valid per-frame exposures
+        let totalExposure = exposures
+            .filter { !$0.isNaN && $0 > 0 }
+            .reduce(0, +)
+
+        // Filter: from the reference frame (or first non-empty)
+        let refFilter = df.rows
+            .first { row in
+                let idx = row["frame_index"] as? Int32 ?? -1
+                return Int(idx) == refOffset
+            }
+            .flatMap { $0["filter"] as? String }
+            .flatMap { $0.isEmpty ? nil : $0 }
+            ?? strings("filter").first { !$0.isEmpty }
+            ?? ""
+
+        // Gain / offset: from the reference frame (-1.0 = unknown)
+        let refGain: Double = {
+            let v = gains.indices.contains(refOffset) ? gains[refOffset] : Double.nan
+            return v.isNaN ? -1.0 : v
+        }()
+        let refOffset_val: Double = {
+            let v = offsetVals.indices.contains(refOffset) ? offsetVals[refOffset] : Double.nan
+            return v.isNaN ? -1.0 : v
+        }()
+
+        // Earliest observation timestamp
+        let dateObs = strings("timestamp")
+            .filter { !$0.isEmpty }
+            .sorted()
+            .first ?? ""
+
+        var pixels = pixelData
+
+        // Noise of the stacked image: NMAD on a strided sample.
+        // median(pixels) → sky background; 1.4826 × median(|x − bg|) → σ_sky.
+        let stackedSkyBkg: Double
+        let stackedSkyNoise: Double
+        do {
+            let step = max(1, pixels.count / 65536)
+            var sample = [Double]()
+            sample.reserveCapacity(pixels.count / step + 1)
+            var idx = 0
+            while idx < pixels.count { sample.append(Double(pixels[idx])); idx += step }
+            sample.sort()
+            let bg = sample[sample.count / 2]
+            var devs = sample.map { abs($0 - bg) }
+            devs.sort()
+            stackedSkyBkg   = bg
+            stackedSkyNoise = 1.4826 * devs[devs.count / 2]
+        }
+
+        var statusOut: Int32 = 0
+
+        _ = path.withCString { cPath in
+        method.withCString { cMethod in
+        normalisation.withCString { cNorm in
+        rejection.withCString { cRej in
+        refFilter.withCString { cFilter in
+        dateObs.withCString { cDateObs in
+            pixels.withUnsafeMutableBufferPointer { imgBuf in
+            frameIndex.withUnsafeMutableBufferPointer { fi in
+            translationX.withUnsafeMutableBufferPointer { tx in
+            translationY.withUnsafeMutableBufferPointer { ty in
+            rotationDeg.withUnsafeMutableBufferPointer { rd in
+            scale.withUnsafeMutableBufferPointer { sc in
+            matchCount.withUnsafeMutableBufferPointer { mc in
+            rmse.withUnsafeMutableBufferPointer { rm in
+            starCount.withUnsafeMutableBufferPointer { stc in
+            meanFWHM.withUnsafeMutableBufferPointer { mf in
+            medianFWHM.withUnsafeMutableBufferPointer { mdf in
+            meanEccentricity.withUnsafeMutableBufferPointer { me in
+            meanPositionAngle.withUnsafeMutableBufferPointer { mp in
+            meanFlux.withUnsafeMutableBufferPointer { mfl in
+            skyBackground.withUnsafeMutableBufferPointer { sbg in
+            skyNoise.withUnsafeMutableBufferPointer { sn in
+            exposures.withUnsafeMutableBufferPointer { exp in
+            gains.withUnsafeMutableBufferPointer { gn in
+            offsetVals.withUnsafeMutableBufferPointer { ov in
+            cFilePaths.withUnsafeMutableBufferPointer { fp in
+            cTimestamps.withUnsafeMutableBufferPointer { ts in
+            cFilterNames.withUnsafeMutableBufferPointer { fn in
+            cFrameTypes.withUnsafeMutableBufferPointer { ft in
+                writeStackedFITSC(
+                    cPath,
+                    imgBuf.baseAddress!, Int32(width), Int32(height),
+                    nrows,
+                    fi.baseAddress!, fp.baseAddress!, ts.baseAddress!, exp.baseAddress!,
+                    fn.baseAddress!, gn.baseAddress!, ov.baseAddress!, ft.baseAddress!,
+                    tx.baseAddress!, ty.baseAddress!, rd.baseAddress!, sc.baseAddress!,
+                    mc.baseAddress!, rm.baseAddress!, stc.baseAddress!,
+                    mf.baseAddress!, mdf.baseAddress!, me.baseAddress!,
+                    mp.baseAddress!, mfl.baseAddress!,
+                    sbg.baseAddress!, sn.baseAddress!,
+                    refFrameIdx,
+                    totalExposure, cFilter, refGain, refOffset_val, cDateObs,
+                    cMethod, cNorm, cRej, rejectionLow, rejectionHigh,
+                    stackedSkyBkg, stackedSkyNoise,
+                    &statusOut
+                )
+            }}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+
+        if statusOut != 0 {
+            var errText = [CChar](repeating: 0, count: 81)
+            getFITSErrorStatus(statusOut, &errText)
+            errText[80] = 0
+            throw FITSTableWriterError.writeFailed(String(cString: errText))
+        }
+        Logger.swiftfitsio.info("Wrote stacked FITS to \(path)")
+    }
+
+    /// Write any DataFrame as CSV using TabularData's built-in exporter.
+    public static func writeCSV(_ df: DataFrame, to path: String) throws {
+        let url = URL(fileURLWithPath: path)
+        try df.writeCSV(to: url)
+        Logger.swiftfitsio.info("Wrote CSV table to \(path)")
+    }
+
+    // MARK: - FITS BINTABLE writer
+
+    private static func writeFITS(_ df: DataFrame, to path: String) throws {
+        let nrows = Int32(df.rows.count)
+        guard nrows > 0 else {
+            throw FITSTableWriterError.emptyTable
+        }
+
+        func doubles(_ col: String) -> [Double] {
+            df.rows.map { ($0[col] as? Double) ?? 0 }
+        }
+        func optionalDoubles(_ col: String) -> [Double] {
+            df.rows.map { row -> Double in
+                (row[col] as? Double) ?? Double.nan
+            }
+        }
+        func ints(_ col: String) -> [Int32] {
+            df.rows.map { row -> Int32 in
+                if let v = row[col] as? Int32 { return v }
+                if let v = row[col] as? Int   { return Int32(v) }
+                return 0
+            }
+        }
+        func strings(_ col: String) -> [String] {
+            guard df.columns.contains(where: { $0.name == col }) else {
+                return Array(repeating: "", count: Int(nrows))
+            }
+            return df.rows.map { ($0[col] as? String) ?? "" }
+        }
+
+        var frameIndex        = ints("frame_index")
+        var translationX      = doubles("translation_x")
+        var translationY      = doubles("translation_y")
+        var rotationDeg       = doubles("rotation_deg")
+        var scale             = doubles("scale")
+        var matchCount        = ints("match_count")
+        var rmse              = doubles("rmse")
+        var starCount         = ints("star_count")
+        var meanFWHM          = doubles("mean_fwhm")
+        var medianFWHM        = doubles("median_fwhm")
+        var meanEccentricity  = doubles("mean_eccentricity")
+        var meanPositionAngle = doubles("mean_position_angle")
+        var meanFlux          = doubles("mean_flux")
+        var skyBackground     = doubles("sky_background")
+        var skyNoise          = doubles("sky_noise")
+        var exposures         = optionalDoubles("exposure")
+        var gains             = optionalDoubles("gain")
+        var offsetVals        = optionalDoubles("offset")
+
+        // String columns — allocated as C strings; freed after the call
+        var cFilePaths   = strings("file_path").map   { strdup($0) }
+        var cTimestamps  = strings("timestamp").map   { strdup($0) }
+        var cFilterNames = strings("filter").map      { strdup($0) }
+        var cFrameTypes  = strings("frame_type").map  { strdup($0) }
+        defer {
+            cFilePaths.forEach   { free($0) }
+            cTimestamps.forEach  { free($0) }
+            cFilterNames.forEach { free($0) }
+            cFrameTypes.forEach  { free($0) }
+        }
+
+        // Find reference frame (row where translation_x == 0 and translation_y == 0)
+        let refFrameIdx = Int32(frameIndex.enumerated().first { i, _ in
+            abs(translationX[i]) < 1e-9 && abs(translationY[i]) < 1e-9
+        }?.offset ?? 0)
+
+        var statusOut: Int32 = 0
+        _ = path.withCString { cPath in
+            frameIndex.withUnsafeMutableBufferPointer { fi in
+            translationX.withUnsafeMutableBufferPointer { tx in
+            translationY.withUnsafeMutableBufferPointer { ty in
+            rotationDeg.withUnsafeMutableBufferPointer { rd in
+            scale.withUnsafeMutableBufferPointer { sc in
+            matchCount.withUnsafeMutableBufferPointer { mc in
+            rmse.withUnsafeMutableBufferPointer { rm in
+            starCount.withUnsafeMutableBufferPointer { stc in
+            meanFWHM.withUnsafeMutableBufferPointer { mf in
+            medianFWHM.withUnsafeMutableBufferPointer { mdf in
+            meanEccentricity.withUnsafeMutableBufferPointer { me in
+            meanPositionAngle.withUnsafeMutableBufferPointer { mp in
+            meanFlux.withUnsafeMutableBufferPointer { mfl in
+            skyBackground.withUnsafeMutableBufferPointer { sbg in
+            skyNoise.withUnsafeMutableBufferPointer { sn in
+            exposures.withUnsafeMutableBufferPointer { exp in
+            gains.withUnsafeMutableBufferPointer { gn in
+            offsetVals.withUnsafeMutableBufferPointer { ov in
+            cFilePaths.withUnsafeMutableBufferPointer { fp in
+            cTimestamps.withUnsafeMutableBufferPointer { ts in
+            cFilterNames.withUnsafeMutableBufferPointer { fn in
+            cFrameTypes.withUnsafeMutableBufferPointer { ft in
+                writeRegistrationFITSTableC(
+                    cPath, nrows,
+                    fi.baseAddress!,
+                    fp.baseAddress!, ts.baseAddress!, exp.baseAddress!,
+                    fn.baseAddress!, gn.baseAddress!, ov.baseAddress!, ft.baseAddress!,
+                    tx.baseAddress!, ty.baseAddress!, rd.baseAddress!, sc.baseAddress!,
+                    mc.baseAddress!, rm.baseAddress!, stc.baseAddress!,
+                    mf.baseAddress!, mdf.baseAddress!, me.baseAddress!,
+                    mp.baseAddress!, mfl.baseAddress!,
+                    sbg.baseAddress!, sn.baseAddress!,
+                    refFrameIdx, &statusOut
+                )
+            }}}}}}}}}}}}}}}}}}}}}}
+        }
+
+        if statusOut != 0 {
+            var errText = [CChar](repeating: 0, count: 81)
+            getFITSErrorStatus(statusOut, &errText)
+            errText[80] = 0
+            throw FITSTableWriterError.writeFailed(String(cString: errText))
+        }
+        Logger.swiftfitsio.info("Wrote FITS registration table to \(path)")
+    }
+}
+
+public enum FITSTableWriterError: Error, LocalizedError {
+    case emptyTable
+    case writeFailed(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .emptyTable:            return "Cannot write empty table"
+        case .writeFailed(let msg):  return "FITS write failed: \(msg)"
+        }
+    }
+}

@@ -434,6 +434,62 @@ public actor PipelineRunner {
         return frameSet
     }
 
+    /// Synthesizes a TableSet from individual tables that share the same base stepLinkID.
+    /// Mirrors synthesizeFrameSetFromFrames for the table collection case.
+    private func synthesizeTableSetFromTables(stepLinkID: String, linkName: String) async -> TableSet? {
+        let allData = await dataStack.getAll()
+        var matchingTables: [(index: Int, table: TableData)] = []
+
+        let baseStepLinkID: String
+        if stepLinkID.contains("[") {
+            baseStepLinkID = String(stepLinkID.split(separator: "[").first ?? Substring(stepLinkID))
+        } else {
+            baseStepLinkID = stepLinkID
+        }
+
+        for data in allData {
+            guard let table = data as? TableData,
+                  let outputLink = table.outputLink,
+                  case .output(_, _, _, let tableStepLinkID) = outputLink else { continue }
+
+            let tableBaseStepLinkID: String
+            var frameIndex = 0
+            if tableStepLinkID.contains("[") {
+                let parts = tableStepLinkID.split(separator: "[")
+                let basePart = String(parts[0])
+                if let bracketEnd = tableStepLinkID.firstIndex(of: "]"),
+                   let bracketStart = tableStepLinkID.firstIndex(of: "[") {
+                    let idxStr = tableStepLinkID[tableStepLinkID.index(after: bracketStart)..<bracketEnd]
+                    frameIndex = Int(idxStr) ?? 0
+                }
+                if let dotIndex = tableStepLinkID.firstIndex(of: ".") {
+                    let afterDot = String(tableStepLinkID[tableStepLinkID.index(after: dotIndex)...])
+                    tableBaseStepLinkID = "\(basePart).\(afterDot)"
+                } else {
+                    tableBaseStepLinkID = basePart
+                }
+            } else {
+                tableBaseStepLinkID = tableStepLinkID
+            }
+
+            if tableBaseStepLinkID == baseStepLinkID {
+                matchingTables.append((index: frameIndex, table: table))
+            }
+        }
+
+        if matchingTables.isEmpty { return nil }
+
+        let sortedTables = matchingTables.sorted { $0.index < $1.index }.map { $0.table }
+        let tableSet = TableSet(
+            tables: sortedTables,
+            outputProcess: (id: UUID(), name: linkName, stepLinkID: stepLinkID),
+            inputProcesses: []
+        )
+        await dataStack.add(data: tableSet)
+        Logger.pipeline.info("Synthesized TableSet '\(linkName)' from \(sortedTables.count) tables with base stepLinkID '\(baseStepLinkID)'")
+        return tableSet
+    }
+
     /// Prepares input data for a process from the data stack
     /// - Parameter process: The process to prepare inputs for
     /// - Returns: Dictionary of input name to ProcessData
@@ -448,6 +504,13 @@ public actor PipelineRunner {
                     // Try to synthesize a FrameSet from individual frames with the same stepLinkID
                     if let synthesizedFrameSet = await synthesizeFrameSetFromFrames(stepLinkID: stepLinkID, linkName: linkName) {
                         inputs[linkName] = synthesizedFrameSet
+                    } else {
+                        throw ProcessorExecutionError.missingRequiredInput(linkName)
+                    }
+                } else if type == .tableSet && collectionMode == .together {
+                    // Try to synthesize a TableSet from individual tables with the same stepLinkID
+                    if let synthesizedTableSet = await synthesizeTableSetFromTables(stepLinkID: stepLinkID, linkName: linkName) {
+                        inputs[linkName] = synthesizedTableSet
                     } else {
                         throw ProcessorExecutionError.missingRequiredInput(linkName)
                     }
@@ -832,6 +895,17 @@ public actor PipelineRunner {
                 outputProcess: outputLink,
                 inputProcesses: []
             )
+        case .tableSet:
+            Logger.pipeline.debug("Creating table set output data placeholder")
+            if case .output(let processId, let linkName, _, let stepLinkID) = outputLink {
+                return TableSet(
+                    tables: [],
+                    outputProcess: (id: processId, name: linkName, stepLinkID: stepLinkID),
+                    inputProcesses: []
+                )
+            } else {
+                fatalError("Output link must be an output case")
+            }
         }
     }
 }
