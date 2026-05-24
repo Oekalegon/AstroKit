@@ -91,8 +91,8 @@ func pipelineStepCount() throws {
     
     let pipeline = try Pipeline.load(from: pipelineURL)
     
-    // The star-detection pipeline should have 9 steps
-    #expect(pipeline.steps.count == 9)
+    // The star-detection pipeline should have 10 steps
+    #expect(pipeline.steps.count == 10)
 }
 
 @Test("Pipeline steps have required fields")

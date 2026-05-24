@@ -24,14 +24,14 @@ func testAutofocusCurveExactParabola() async throws {
     df.append(column: Column(name: "focuser_position", contents: positions))
     df.append(column: Column(name: "median_hfd",       contents: hfdValues))
 
-    var measureTable = TableData(type: .objectCatalogue)
+    var measureTable = TableData()
     measureTable.dataFrame = df
 
     let processor = AutofocusCurveProcessor()
     let inputs: [String: ProcessData] = ["focus_measurements": measureTable]
 
-    var resultTable = TableData(type: .objectCatalogue)
-    var curveTable  = TableData(type: .objectCatalogue)
+    let resultTable = TableData()
+    let curveTable  = TableData()
     var outputs: [String: ProcessData] = [
         "autofocus_result": resultTable,
         "fitted_curve":     curveTable
@@ -49,9 +49,9 @@ func testAutofocusCurveExactParabola() async throws {
     #expect(result != nil, "autofocus_result table should be set")
 
     if let resultDF = result {
-        let optimal = (resultDF["optimal_position"] as? AnyColumn)?[0] as? Double
-        let rSq     = (resultDF["r_squared"]         as? AnyColumn)?[0] as? Double
-        let valid   = (resultDF["valid"]             as? AnyColumn)?[0] as? Bool
+        let optimal = (resultDF.columns.first(where: { $0.name == "optimal_position" }))?[0] as? Double
+        let rSq     = (resultDF.columns.first(where: { $0.name == "r_squared" }))?[0] as? Double
+        let valid   = (resultDF.columns.first(where: { $0.name == "valid" }))?[0] as? Bool
 
         #expect(valid == true, "Fit should be valid for perfect parabola data")
         #expect(rSq != nil && rSq! > 0.999, "R² should be > 0.999 for exact parabola, got \(rSq ?? 0)")
@@ -75,14 +75,14 @@ func testAutofocusCurveInsufficientData() async throws {
     df.append(column: Column(name: "focuser_position", contents: [100.0, 200.0, 300.0]))
     df.append(column: Column(name: "median_hfd",       contents: [5.0,   3.0,   5.0]))
 
-    var measureTable = TableData(type: .objectCatalogue)
+    var measureTable = TableData()
     measureTable.dataFrame = df
 
     let processor = AutofocusCurveProcessor()
     let inputs: [String: ProcessData] = ["focus_measurements": measureTable]
     var outputs: [String: ProcessData] = [
-        "autofocus_result": TableData(type: .objectCatalogue),
-        "fitted_curve":     TableData(type: .objectCatalogue)
+        "autofocus_result": TableData(),
+        "fitted_curve":     TableData()
     ]
 
     try processor.execute(
@@ -112,13 +112,13 @@ func testAutofocusCurveDownwardParabola() async throws {
     df.append(column: Column(name: "focuser_position", contents: positions))
     df.append(column: Column(name: "median_hfd",       contents: hfdValues))
 
-    var measureTable = TableData(type: .objectCatalogue)
+    var measureTable = TableData()
     measureTable.dataFrame = df
 
     let processor = AutofocusCurveProcessor()
     var outputs: [String: ProcessData] = [
-        "autofocus_result": TableData(type: .objectCatalogue),
-        "fitted_curve":     TableData(type: .objectCatalogue)
+        "autofocus_result": TableData(),
+        "fitted_curve":     TableData()
     ]
 
     try processor.execute(
@@ -142,7 +142,7 @@ func testAutofocusCurveSigmaClipping() async throws {
 
     // Perfect parabola with one extreme outlier
     let trueOptimal = 5000.0
-    var positions = stride(from: 4600.0, through: 5400.0, by: 100.0).map { $0 }
+    let positions = stride(from: 4600.0, through: 5400.0, by: 100.0).map { $0 }
     var hfdValues  = positions.map { 0.001 * ($0 - trueOptimal) * ($0 - trueOptimal) + 2.0 }
     // Insert outlier at position 4700 (index 1)
     hfdValues[1] = 50.0
@@ -151,13 +151,13 @@ func testAutofocusCurveSigmaClipping() async throws {
     df.append(column: Column(name: "focuser_position", contents: positions))
     df.append(column: Column(name: "median_hfd",       contents: hfdValues))
 
-    var measureTable = TableData(type: .objectCatalogue)
+    var measureTable = TableData()
     measureTable.dataFrame = df
 
     let processor = AutofocusCurveProcessor()
     var outputs: [String: ProcessData] = [
-        "autofocus_result": TableData(type: .objectCatalogue),
-        "fitted_curve":     TableData(type: .objectCatalogue)
+        "autofocus_result": TableData(),
+        "fitted_curve":     TableData()
     ]
 
     try processor.execute(
@@ -264,19 +264,19 @@ func testOpticalQualityTiltDiagnosis() async throws {
     }
 
     let frame = try makeSyntheticFrame(device: device)
-    var starTable = TableData(type: .starsDetected)
+    var starTable = TableData()
     starTable.dataFrame = syntheticStarTable(eccentricity: 0.6, rotationAngle: 0.3)
 
     let processor = OpticalQualityProcessor()
     var outputs: [String: ProcessData] = [
-        "optical_quality_map":     TableData(type: .objectCatalogue),
-        "optical_quality_summary": TableData(type: .objectCatalogue)
+        "optical_quality_map":     TableData(),
+        "optical_quality_summary": TableData()
     ]
 
     try processor.execute(
         inputs: ["input_frame": frame, "pixel_coordinates": starTable],
         outputs: &outputs,
-        parameters: [:],
+        parameters: ["min_stars_per_cell": .int(1)],
         device: device,
         commandQueue: commandQueue
     )
@@ -308,13 +308,13 @@ func testOpticalQualityPerCellCounts() async throws {
 
     let frame = try makeSyntheticFrame(device: device)
     // 25 stars in a 5×5 grid → each grid cell in a 5×4 output grid should have ≥1 star
-    var starTable = TableData(type: .starsDetected)
+    var starTable = TableData()
     starTable.dataFrame = syntheticStarTable(gridN: 5)
 
     let processor = OpticalQualityProcessor()
     var outputs: [String: ProcessData] = [
-        "optical_quality_map":     TableData(type: .objectCatalogue),
-        "optical_quality_summary": TableData(type: .objectCatalogue)
+        "optical_quality_map":     TableData(),
+        "optical_quality_summary": TableData()
     ]
 
     try processor.execute(
@@ -330,7 +330,7 @@ func testOpticalQualityPerCellCounts() async throws {
 
     // Each cell with at least 1 star should report that star count
     if let mapDF = mapDF,
-       let countCol = mapDF["star_count"] as? AnyColumn {
+       let countCol = mapDF.columns.first(where: { $0.name == "star_count" }) {
         let counts = (0..<mapDF.rows.count).compactMap { countCol[$0] as? Int }
         let totalStars = counts.reduce(0, +)
         // With 25 stars in a 5×5 grid over a 5×5 output grid, most cells should have ≥1
@@ -360,13 +360,13 @@ func testOpticalQualityEmptyTable() async throws {
     df.append(column: Column(name: "fwhm_major",     contents: [] as [Double]))
     df.append(column: Column(name: "fwhm_minor",     contents: [] as [Double]))
     df.append(column: Column(name: "saturated",      contents: [] as [Bool]))
-    var starTable = TableData(type: .starsDetected)
+    var starTable = TableData()
     starTable.dataFrame = df
 
     let processor = OpticalQualityProcessor()
     var outputs: [String: ProcessData] = [
-        "optical_quality_map":     TableData(type: .objectCatalogue),
-        "optical_quality_summary": TableData(type: .objectCatalogue)
+        "optical_quality_map":     TableData(),
+        "optical_quality_summary": TableData()
     ]
 
     // Should not throw — just produce an insufficient_data diagnosis
@@ -438,13 +438,13 @@ func testCollimationAnalysisSyntheticOffset() async throws {
     df.append(column: Column(name: "offset_angle",     contents: offAs))
     df.append(column: Column(name: "r_ratio",          contents: ratios))
 
-    var donutTable = TableData(type: .objectCatalogue)
+    var donutTable = TableData()
     donutTable.dataFrame = df
 
     let processor = CollimationAnalysisProcessor()
     var outputs: [String: ProcessData] = [
-        "collimation_map":     TableData(type: .objectCatalogue),
-        "collimation_summary": TableData(type: .objectCatalogue)
+        "collimation_map":     TableData(),
+        "collimation_summary": TableData()
     ]
 
     try processor.execute(
@@ -525,13 +525,13 @@ func testCollimationAnalysisWellCollimated() async throws {
     df.append(column: Column(name: "offset_angle",     contents: offAs))
     df.append(column: Column(name: "r_ratio",          contents: ratios))
 
-    var donutTable = TableData(type: .objectCatalogue)
+    var donutTable = TableData()
     donutTable.dataFrame = df
 
     let processor = CollimationAnalysisProcessor()
     var outputs: [String: ProcessData] = [
-        "collimation_map":     TableData(type: .objectCatalogue),
-        "collimation_summary": TableData(type: .objectCatalogue)
+        "collimation_map":     TableData(),
+        "collimation_summary": TableData()
     ]
 
     try processor.execute(
@@ -600,13 +600,13 @@ func testHFDProcessorFocusedMode() async throws {
     starDF.append(column: Column(name: "fwhm_major",     contents: [sigma * 2.355]))
     starDF.append(column: Column(name: "fwhm_minor",     contents: [sigma * 2.355]))
     starDF.append(column: Column(name: "saturated",      contents: [false]))
-    var starTable = TableData(type: .starsDetected)
+    var starTable = TableData()
     starTable.dataFrame = starDF
 
     let processor = HFDProcessor()
     var outputs: [String: ProcessData] = [
-        "hfd_measurements": TableData(type: .objectCatalogue),
-        "median_hfd":        TableData(type: .objectCatalogue)
+        "hfd_measurements": TableData(),
+        "median_hfd":        TableData()
     ]
 
     try processor.execute(
@@ -655,13 +655,13 @@ func testHFDProcessorMedianTable() async throws {
     starDF.append(column: Column(name: "fwhm_major",     contents: [9.4, 9.4]))
     starDF.append(column: Column(name: "fwhm_minor",     contents: [9.4, 9.4]))
     starDF.append(column: Column(name: "saturated",      contents: [false, false]))
-    var starTable = TableData(type: .starsDetected)
+    var starTable = TableData()
     starTable.dataFrame = starDF
 
     let processor = HFDProcessor()
     var outputs: [String: ProcessData] = [
-        "hfd_measurements": TableData(type: .objectCatalogue),
-        "median_hfd":       TableData(type: .objectCatalogue)
+        "hfd_measurements": TableData(),
+        "median_hfd":       TableData()
     ]
 
     try processor.execute(

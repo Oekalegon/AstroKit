@@ -74,7 +74,7 @@ func starDetectionPipelineCreatesCorrectStacks() async throws {
         }
     }
     
-    // The star-detection pipeline has 9 steps:
+    // The star-detection pipeline has 10 steps:
     // 1. grayscale
     // 2. blur
     // 3. background
@@ -82,10 +82,11 @@ func starDetectionPipelineCreatesCorrectStacks() async throws {
     // 5. erosion
     // 6. dilation
     // 7. connected_components
-    // 8. quads
-    // 9. overlay
-    #expect(processes.count == 9)
-    
+    // 8. fwhm
+    // 9. quads
+    // 10. overlay
+    #expect(processes.count == 10)
+
     // Verify each process has the correct processor identifier
     let expectedTypes = [
         "grayscale",
@@ -95,18 +96,19 @@ func starDetectionPipelineCreatesCorrectStacks() async throws {
         "erosion",
         "dilation",
         "connected_components",
+        "fwhm",
         "quads",
         "star_detection_overlay"
     ]
-    
+
     let actualTypes = processes.map { $0.processorIdentifier }
     for expectedType in expectedTypes {
         #expect(actualTypes.contains(expectedType))
     }
-    
+
     // Verify all processes are in pending status initially
     let pendingProcesses = await runner.processStack.getPending()
-    #expect(pendingProcesses.count == 9)
+    #expect(pendingProcesses.count == 10)
     
     // Verify the data stack
     // We provided "input_frame" as input, so the data stack should contain at least one item
