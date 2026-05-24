@@ -568,7 +568,7 @@ public struct FrameRegistrationProcessor: Processor {
         }
 
         // RANSAC
-        let (bestInliers, bestTransform) = ransac(
+        let (bestInliers, _) = ransac(
             pairs: pairs,
             iterations: ransacIterations,
             inlierThreshold: inlierThreshold

@@ -165,10 +165,10 @@ public struct RadialProfileProcessor: Processor {
         rMin: Int, rMax: Int, margin: Int,
         imageWidth W: Int, imageHeight H: Int
     ) -> [CandidatePos] {
-        guard let cxCol = df["centroid_x"] as? AnyColumn,
-              let cyCol = df["centroid_y"] as? AnyColumn else { return [] }
+        guard let cxCol = df.columns.first(where: { $0.name == "centroid_x" }),
+              let cyCol = df.columns.first(where: { $0.name == "centroid_y" }) else { return [] }
 
-        let areaCol = df["area"] as? AnyColumn
+        let areaCol = df.columns.first(where: { $0.name == "area" })
         // Require at least a quarter-disc at rMin — large enough to be a real ring arc,
         // small enough to pass even for faint donuts at high threshold.
         let minArea = Double.pi * Double(rMin) * Double(rMin) * 0.25

@@ -141,10 +141,10 @@ public struct QuadsProcessor: Processor {
     }
 
     private func extractStars(from dataFrame: DataFrame) throws -> [StarInfo] {
-        guard let idColumn = dataFrame["id"] as? AnyColumn,
-              let areaColumn = dataFrame["area"] as? AnyColumn,
-              let centroidXColumn = dataFrame["centroid_x"] as? AnyColumn,
-              let centroidYColumn = dataFrame["centroid_y"] as? AnyColumn else {
+        guard let idColumn = dataFrame.columns.first(where: { $0.name == "id" }),
+              let areaColumn = dataFrame.columns.first(where: { $0.name == "area" }),
+              let centroidXColumn = dataFrame.columns.first(where: { $0.name == "centroid_x" }),
+              let centroidYColumn = dataFrame.columns.first(where: { $0.name == "centroid_y" }) else {
             throw ProcessorExecutionError.executionFailed("Missing required columns in pixel_coordinates table")
         }
 

@@ -48,8 +48,8 @@ public struct AutofocusCurveProcessor: Processor {
         let sigmaClip = parameters["sigma_clip"]?.doubleValue ?? 2.5
 
         // Extract (position, hfd) pairs
-        guard let posCol = df["focuser_position"] as? AnyColumn,
-              let hfdCol = df["median_hfd"]        as? AnyColumn else {
+        guard let posCol = df.columns.first(where: { $0.name == "focuser_position" }),
+              let hfdCol = df.columns.first(where: { $0.name == "median_hfd" }) else {
             throw ProcessorExecutionError.executionFailed(
                 "focus_measurements table missing 'focuser_position' or 'median_hfd' columns"
             )

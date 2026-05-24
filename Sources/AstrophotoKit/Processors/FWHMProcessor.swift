@@ -105,10 +105,10 @@ public struct FWHMProcessor: Processor {
 
     /// Extracts star information and calculates region sizes based on major/minor axes
     private func extractStarInfoWithRegionSizes(from dataFrame: DataFrame) throws -> [(centroidX: Double, centroidY: Double, regionSize: Int)] {
-        guard let centroidXColumn = dataFrame["centroid_x"] as? AnyColumn,
-              let centroidYColumn = dataFrame["centroid_y"] as? AnyColumn,
-              let majorAxisColumn = dataFrame["major_axis"] as? AnyColumn,
-              let minorAxisColumn = dataFrame["minor_axis"] as? AnyColumn else {
+        guard let centroidXColumn = dataFrame.columns.first(where: { $0.name == "centroid_x" }),
+              let centroidYColumn = dataFrame.columns.first(where: { $0.name == "centroid_y" }),
+              let majorAxisColumn = dataFrame.columns.first(where: { $0.name == "major_axis" }),
+              let minorAxisColumn = dataFrame.columns.first(where: { $0.name == "minor_axis" }) else {
             throw ProcessorExecutionError.executionFailed(
                 "Missing required columns (centroid_x, centroid_y, major_axis, minor_axis) in pixel_coordinates table"
             )
@@ -263,13 +263,13 @@ public struct FWHMProcessor: Processor {
         var reorderedDataFrame = DataFrame()
 
         // Add id column
-        if let idColumn = dataFrame["id"] as? AnyColumn {
+        if let idColumn = dataFrame.columns.first(where: { $0.name == "id" }) {
             let idValues: [Int] = (0..<dataFrame.rows.count).compactMap { idColumn[$0] as? Int }
             reorderedDataFrame.append(column: Column(name: "id", contents: idValues))
         }
 
         // Add area column
-        if let areaColumn = dataFrame["area"] as? AnyColumn {
+        if let areaColumn = dataFrame.columns.first(where: { $0.name == "area" }) {
             let areaValues: [Int] = (0..<dataFrame.rows.count).compactMap { areaColumn[$0] as? Int }
             reorderedDataFrame.append(column: Column(name: "area", contents: areaValues))
         }
@@ -297,19 +297,19 @@ public struct FWHMProcessor: Processor {
 
     /// Adds remaining columns (major_axis, minor_axis, eccentricity, rotation_angle) to the DataFrame
     private func addRemainingColumns(to dataFrame: inout DataFrame, from sourceDataFrame: DataFrame) throws {
-        if let majorAxisColumn = sourceDataFrame["major_axis"] as? AnyColumn {
+        if let majorAxisColumn = sourceDataFrame.columns.first(where: { $0.name == "major_axis" }) {
             let majorAxisValues: [Double] = (0..<sourceDataFrame.rows.count).compactMap { majorAxisColumn[$0] as? Double }
             dataFrame.append(column: Column(name: "major_axis", contents: majorAxisValues))
         }
-        if let minorAxisColumn = sourceDataFrame["minor_axis"] as? AnyColumn {
+        if let minorAxisColumn = sourceDataFrame.columns.first(where: { $0.name == "minor_axis" }) {
             let minorAxisValues: [Double] = (0..<sourceDataFrame.rows.count).compactMap { minorAxisColumn[$0] as? Double }
             dataFrame.append(column: Column(name: "minor_axis", contents: minorAxisValues))
         }
-        if let eccentricityColumn = sourceDataFrame["eccentricity"] as? AnyColumn {
+        if let eccentricityColumn = sourceDataFrame.columns.first(where: { $0.name == "eccentricity" }) {
             let eccentricityValues: [Double] = (0..<sourceDataFrame.rows.count).compactMap { eccentricityColumn[$0] as? Double }
             dataFrame.append(column: Column(name: "eccentricity", contents: eccentricityValues))
         }
-        if let rotationAngleColumn = sourceDataFrame["rotation_angle"] as? AnyColumn {
+        if let rotationAngleColumn = sourceDataFrame.columns.first(where: { $0.name == "rotation_angle" }) {
             let rotationAngleValues: [Double] = (0..<sourceDataFrame.rows.count).compactMap { rotationAngleColumn[$0] as? Double }
             dataFrame.append(column: Column(name: "rotation_angle", contents: rotationAngleValues))
         }

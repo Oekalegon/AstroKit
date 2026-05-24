@@ -159,10 +159,10 @@ public struct HoughCircleProcessor: Processor {
         imageWidth: Int,
         imageHeight: Int
     ) -> [CandidatePos] {
-        guard let cxCol = df["centroid_x"] as? AnyColumn,
-              let cyCol = df["centroid_y"] as? AnyColumn else { return [] }
+        guard let cxCol = df.columns.first(where: { $0.name == "centroid_x" }),
+              let cyCol = df.columns.first(where: { $0.name == "centroid_y" }) else { return [] }
 
-        let areaCol = df["area"] as? AnyColumn
+        let areaCol = df.columns.first(where: { $0.name == "area" })
 
         // Minimum area: a filled circle at r_min has area π*r_min². Use half that as floor
         // to also catch ring-only blobs (the donut ring is thinner than a filled disc).

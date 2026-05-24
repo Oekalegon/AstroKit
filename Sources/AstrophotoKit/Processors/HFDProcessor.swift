@@ -132,9 +132,9 @@ public struct HFDProcessor: Processor {
         minRegionSize: Int,
         maxRegionSize: Int
     ) throws -> [(centroidX: Double, centroidY: Double, regionSize: Int, isDonut: Bool, innerR: Double)] {
-        guard let cxCol = df["centroid_x"] as? AnyColumn,
-              let cyCol = df["centroid_y"] as? AnyColumn,
-              let majorCol = df["major_axis"] as? AnyColumn else {
+        guard let cxCol = df.columns.first(where: { $0.name == "centroid_x" }),
+              let cyCol = df.columns.first(where: { $0.name == "centroid_y" }),
+              let majorCol = df.columns.first(where: { $0.name == "major_axis" }) else {
             throw ProcessorExecutionError.executionFailed(
                 "pixel_coordinates table missing centroid_x, centroid_y, or major_axis columns"
             )
@@ -156,10 +156,10 @@ public struct HFDProcessor: Processor {
         donutMargin: Int,
         maxRegionSize: Int
     ) throws -> [(centroidX: Double, centroidY: Double, regionSize: Int, isDonut: Bool, innerR: Double)] {
-        guard let ocxCol = df["outer_cx"] as? AnyColumn,
-              let ocyCol = df["outer_cy"] as? AnyColumn,
-              let orCol  = df["outer_r"]  as? AnyColumn,
-              let irCol  = df["inner_r"]  as? AnyColumn else {
+        guard let ocxCol = df.columns.first(where: { $0.name == "outer_cx" }),
+              let ocyCol = df.columns.first(where: { $0.name == "outer_cy" }),
+              let orCol  = df.columns.first(where: { $0.name == "outer_r" }),
+              let irCol  = df.columns.first(where: { $0.name == "inner_r" }) else {
             throw ProcessorExecutionError.executionFailed(
                 "donuts table missing outer_cx, outer_cy, outer_r, or inner_r columns"
             )

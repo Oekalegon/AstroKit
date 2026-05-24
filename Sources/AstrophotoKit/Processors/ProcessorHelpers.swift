@@ -127,7 +127,10 @@ public enum ProcessorHelpers {
             throw ProcessorExecutionError.couldNotCreateResource("Cannot create buffer from empty array")
         }
         let length = data.count * MemoryLayout<T>.stride
-        guard let buffer = device.makeBuffer(bytes: data, length: length, options: []) else {
+        let buffer = data.withUnsafeBytes { raw in
+            device.makeBuffer(bytes: raw.baseAddress!, length: length, options: [])
+        }
+        guard let buffer else {
             throw ProcessorExecutionError.couldNotCreateResource("Could not create buffer")
         }
         return buffer

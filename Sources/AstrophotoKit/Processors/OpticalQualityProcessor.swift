@@ -108,19 +108,19 @@ public struct OpticalQualityProcessor: Processor {
     }
 
     private func extractStars(from df: DataFrame) throws -> [StarData] {
-        guard let cxCol    = df["centroid_x"]    as? AnyColumn,
-              let cyCol    = df["centroid_y"]    as? AnyColumn,
-              let eccCol   = df["eccentricity"]  as? AnyColumn,
-              let rotCol   = df["rotation_angle"] as? AnyColumn,
-              let majCol   = df["fwhm_major"]    as? AnyColumn,
-              let minCol   = df["fwhm_minor"]    as? AnyColumn else {
+        guard let cxCol    = df.columns.first(where: { $0.name == "centroid_x" }),
+              let cyCol    = df.columns.first(where: { $0.name == "centroid_y" }),
+              let eccCol   = df.columns.first(where: { $0.name == "eccentricity" }),
+              let rotCol   = df.columns.first(where: { $0.name == "rotation_angle" }),
+              let majCol   = df.columns.first(where: { $0.name == "fwhm_major" }),
+              let minCol   = df.columns.first(where: { $0.name == "fwhm_minor" }) else {
             throw ProcessorExecutionError.executionFailed(
                 "pixel_coordinates table missing required columns " +
                 "(centroid_x, centroid_y, eccentricity, rotation_angle, fwhm_major, fwhm_minor)"
             )
         }
 
-        let satCol = df["saturated"] as? AnyColumn
+        let satCol = df.columns.first(where: { $0.name == "saturated" })
 
         return (0..<df.rows.count).compactMap { i in
             guard let cx  = cxCol[i]  as? Double,

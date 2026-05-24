@@ -66,7 +66,7 @@ public struct RingSearchProcessor: Processor {
             return
         }
 
-        guard let outerRCol = df["outer_r"] as? AnyColumn,
+        guard let outerRCol = df.columns.first(where: { $0.name == "outer_r" }),
               let outerR64  = outerRCol[0] as? Double,
               outerR64 > 0 else {
             Logger.processor.error("RingSearchProcessor: could not read outer_r from reference_donut")
@@ -76,7 +76,7 @@ public struct RingSearchProcessor: Processor {
 
         // Use r_ratio from reference if available, otherwise use physics-based default.
         let rRatio: Double
-        if let rRatioCol = df["r_ratio"] as? AnyColumn,
+        if let rRatioCol = df.columns.first(where: { $0.name == "r_ratio" }),
            let rr = rRatioCol[0] as? Double, rr > 0 {
             rRatio = rr
         } else {
@@ -91,8 +91,8 @@ public struct RingSearchProcessor: Processor {
         // from faint donuts where the shadow is indistinguishable from sky background.
         let refOffsetX: Double
         let refOffsetY: Double
-        if let oxCol = df["offset_x"] as? AnyColumn, let ox = oxCol[0] as? Double,
-           let oyCol = df["offset_y"] as? AnyColumn, let oy = oyCol[0] as? Double {
+        if let oxCol = df.columns.first(where: { $0.name == "offset_x" }), let ox = oxCol[0] as? Double,
+           let oyCol = df.columns.first(where: { $0.name == "offset_y" }), let oy = oyCol[0] as? Double {
             refOffsetX = ox
             refOffsetY = oy
         } else {

@@ -103,12 +103,12 @@ public struct HoughCircleOverlayProcessor: Processor {
         lineWidth: Float,
         crosshairRatio: Float
     ) -> ([Float], [Float]) {
-        guard let ocxCol = df["outer_cx"] as? AnyColumn,
-              let ocyCol = df["outer_cy"] as? AnyColumn,
-              let orCol  = df["outer_r"]  as? AnyColumn,
-              let icxCol = df["inner_cx"] as? AnyColumn,
-              let icyCol = df["inner_cy"] as? AnyColumn,
-              let irCol  = df["inner_r"]  as? AnyColumn else {
+        guard let ocxCol = df.columns.first(where: { $0.name == "outer_cx" }),
+              let ocyCol = df.columns.first(where: { $0.name == "outer_cy" }),
+              let orCol  = df.columns.first(where: { $0.name == "outer_r" }),
+              let icxCol = df.columns.first(where: { $0.name == "inner_cx" }),
+              let icyCol = df.columns.first(where: { $0.name == "inner_cy" }),
+              let irCol  = df.columns.first(where: { $0.name == "inner_r" }) else {
             return ([], [])
         }
 

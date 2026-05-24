@@ -38,7 +38,7 @@ public struct StarDetectionOverlayProcessor: Processor {
         commandQueue: MTLCommandQueue
     ) throws {
         // Extract input frame
-        let (inputFrame, inputTexture) = try ProcessorHelpers.validateInputFrame(from: inputs)
+        let (_, inputTexture) = try ProcessorHelpers.validateInputFrame(from: inputs)
 
         // Extract pixel_coordinates table
         guard let pixelCoordinatesTable = inputs["pixel_coordinates"] as? TableData,
@@ -119,11 +119,11 @@ public struct StarDetectionOverlayProcessor: Processor {
     }
 
     private func extractEllipses(from dataFrame: DataFrame) throws -> [StarEllipse] {
-        guard let centroidXColumn = dataFrame["centroid_x"] as? AnyColumn,
-              let centroidYColumn = dataFrame["centroid_y"] as? AnyColumn,
-              let majorAxisColumn = dataFrame["major_axis"] as? AnyColumn,
-              let minorAxisColumn = dataFrame["minor_axis"] as? AnyColumn,
-              let rotationAngleColumn = dataFrame["rotation_angle"] as? AnyColumn else {
+        guard let centroidXColumn = dataFrame.columns.first(where: { $0.name == "centroid_x" }),
+              let centroidYColumn = dataFrame.columns.first(where: { $0.name == "centroid_y" }),
+              let majorAxisColumn = dataFrame.columns.first(where: { $0.name == "major_axis" }),
+              let minorAxisColumn = dataFrame.columns.first(where: { $0.name == "minor_axis" }),
+              let rotationAngleColumn = dataFrame.columns.first(where: { $0.name == "rotation_angle" }) else {
             throw ProcessorExecutionError.executionFailed("Missing required columns in pixel_coordinates table")
         }
 
@@ -150,14 +150,14 @@ public struct StarDetectionOverlayProcessor: Processor {
     }
 
     private func extractQuads(from dataFrame: DataFrame) throws -> [QuadLine] {
-        guard let s1XColumn = dataFrame["s1_x"] as? AnyColumn,
-              let s1YColumn = dataFrame["s1_y"] as? AnyColumn,
-              let s2XColumn = dataFrame["s2_x"] as? AnyColumn,
-              let s2YColumn = dataFrame["s2_y"] as? AnyColumn,
-              let s3XColumn = dataFrame["s3_x"] as? AnyColumn,
-              let s3YColumn = dataFrame["s3_y"] as? AnyColumn,
-              let s4XColumn = dataFrame["s4_x"] as? AnyColumn,
-              let s4YColumn = dataFrame["s4_y"] as? AnyColumn else {
+        guard let s1XColumn = dataFrame.columns.first(where: { $0.name == "s1_x" }),
+              let s1YColumn = dataFrame.columns.first(where: { $0.name == "s1_y" }),
+              let s2XColumn = dataFrame.columns.first(where: { $0.name == "s2_x" }),
+              let s2YColumn = dataFrame.columns.first(where: { $0.name == "s2_y" }),
+              let s3XColumn = dataFrame.columns.first(where: { $0.name == "s3_x" }),
+              let s3YColumn = dataFrame.columns.first(where: { $0.name == "s3_y" }),
+              let s4XColumn = dataFrame.columns.first(where: { $0.name == "s4_x" }),
+              let s4YColumn = dataFrame.columns.first(where: { $0.name == "s4_y" }) else {
             throw ProcessorExecutionError.executionFailed("Missing required columns in quads table")
         }
 

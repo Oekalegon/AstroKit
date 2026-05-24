@@ -92,12 +92,12 @@ public struct CollimationAnalysisProcessor: Processor {
     }
 
     private func extractDonuts(from df: DataFrame) throws -> [DonutData] {
-        guard let ocxCol  = df["outer_cx"]         as? AnyColumn,
-              let ocyCol  = df["outer_cy"]         as? AnyColumn,
-              let offXCol = df["offset_x"]         as? AnyColumn,
-              let offYCol = df["offset_y"]         as? AnyColumn,
-              let offMCol = df["offset_magnitude"] as? AnyColumn,
-              let offACol = df["offset_angle"]     as? AnyColumn else {
+        guard let ocxCol  = df.columns.first(where: { $0.name == "outer_cx" }),
+              let ocyCol  = df.columns.first(where: { $0.name == "outer_cy" }),
+              let offXCol = df.columns.first(where: { $0.name == "offset_x" }),
+              let offYCol = df.columns.first(where: { $0.name == "offset_y" }),
+              let offMCol = df.columns.first(where: { $0.name == "offset_magnitude" }),
+              let offACol = df.columns.first(where: { $0.name == "offset_angle" }) else {
             throw ProcessorExecutionError.executionFailed(
                 "donuts table missing required offset columns"
             )
