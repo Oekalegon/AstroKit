@@ -25,7 +25,7 @@ export ASTROARCHIVE_PATH=~/AstroArchive
 
 The archive root contains:
 - `archive.db` — SQLite database with frame metadata and spatial index
-- Optionally, FITS files organised into subfolders when `--copy` is used
+- FITS files organised into subfolders by object, date, type, and filter
 
 ---
 
@@ -255,7 +255,7 @@ Right ascension and declination are indexed using [HEALPix](https://healpix.sour
 
 ### Folder structure
 
-When `--copy` is used, files are placed under:
+Files are placed under:
 
 ```
 <archive-root>/<object>/<YYYY-MM-DD>/<frame-type>/<filter>/<filename>.fits
