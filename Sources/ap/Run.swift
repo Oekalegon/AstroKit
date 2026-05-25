@@ -237,6 +237,17 @@ extension AP {
                 }
             }
 
+            // Auto-archive result frames when an archive is configured.
+            if !frames.isEmpty {
+                await autoArchiveResults(
+                    frames: frames,
+                    pipelineID: pipelineID,
+                    parameters: parameters,
+                    inputPaths: inputPaths,
+                    existingOutputPath: (output?.hasSuffix(".fits") == true || output?.hasSuffix(".fit") == true) ? output : nil
+                )
+            }
+
             if json {
                 let result: [String: Any] = [
                     "pipeline": pipelineID,
@@ -251,6 +262,82 @@ extension AP {
                 for (i, table) in tables.enumerated() {
                     printTable(table, index: i + 1)
                 }
+            }
+        }
+
+        private func autoArchiveResults(
+            frames: [Frame],
+            pipelineID: String,
+            parameters: [String: Parameter],
+            inputPaths: [String: [String]],
+            existingOutputPath: String?
+        ) async {
+            guard let config = try? ArchiveConfiguration.fromEnvironment() else { return }
+            guard let archive = try? Archive(configuration: config) else { return }
+
+            do {
+                // Build provenance: for each input file path, look up its archive frame ID.
+                var runInputs: [ProcessingRunInputRef] = []
+                for (name, paths) in inputPaths.sorted(by: { $0.key < $1.key }) {
+                    for (pos, path) in paths.enumerated() {
+                        let archivedFrame = try? await archive.frame(filePath: path)
+                        runInputs.append(ProcessingRunInputRef(
+                            inputName: name,
+                            frameID: archivedFrame?.id,
+                            filePath: path,
+                            position: pos
+                        ))
+                    }
+                }
+
+                let paramMap = parameters.reduce(into: [String: String]()) { $0[$1.key] = $1.value.stringValue }
+                let run = try await archive.recordProcessingRun(
+                    pipelineID: pipelineID, parameters: paramMap, inputs: runInputs
+                )
+
+                for frame in frames {
+                    guard let texture = frame.texture else { continue }
+                    let w = texture.width, h = texture.height
+                    var pixels = [Float](repeating: 0, count: w * h)
+                    texture.getBytes(&pixels,
+                                     bytesPerRow: w * MemoryLayout<Float>.size,
+                                     from: MTLRegionMake2D(0, 0, w, h),
+                                     mipmapLevel: 0)
+
+                    // Reuse the user's output file if there's exactly one result frame.
+                    let tempURL: URL?
+                    let fileToArchive: URL
+                    if let outPath = existingOutputPath, frames.count == 1 {
+                        fileToArchive = URL(fileURLWithPath: outPath)
+                        tempURL = nil
+                    } else {
+                        let tmp = FileManager.default.temporaryDirectory
+                            .appendingPathComponent("ap_result_\(UUID().uuidString).fits")
+                        try FITSTableWriter.writeResultFrame(
+                            pixelData: pixels, width: w, height: h,
+                            pipelineID: pipelineID,
+                            imageType: "Light Frame",
+                            filterName: frame.filterName,
+                            stacked: frame.type == .processedLight,
+                            to: tmp.path
+                        )
+                        fileToArchive = tmp
+                        tempURL = tmp
+                    }
+
+                    let (archived, isNew) = try await archive.add(fitsFile: fileToArchive, processingRunID: run.id)
+                    if let tmp = tempURL { try? FileManager.default.removeItem(at: tmp) }
+
+                    if !json {
+                        if isNew {
+                            print("Archived result → \(archived.id)")
+                        } else {
+                            print("Result already in archive: \(archived.id)")
+                        }
+                    }
+                }
+            } catch {
+                if !json { print("Warning: auto-archive failed: \(error.localizedDescription)") }
             }
         }
 

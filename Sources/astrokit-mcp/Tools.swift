@@ -386,6 +386,18 @@ struct Tools {
             }
         }
 
+        // Auto-archive result frames when an archive is configured.
+        if !frames.isEmpty {
+            let archiveNote = await autoArchiveResults(
+                frames: frames,
+                pipelineID: pipelineID,
+                parameters: parameters,
+                pipelineInputs: pipelineInputs,
+                existingOutputPath: (outputPath?.hasSuffix(".fits") == true || outputPath?.hasSuffix(".fit") == true) ? outputPath : nil
+            )
+            if let note = archiveNote { savedNote += "\n\(note)" }
+        }
+
         var lines = [
             "Pipeline '\(pipelineID)' completed in \(String(format: "%.2f", elapsed))s.",
             "\(frames.count) frame(s) produced, \(tables.count) table(s) produced.\(savedNote)",
@@ -412,6 +424,83 @@ struct Tools {
     }
 
     // MARK: - Helpers
+
+    private func autoArchiveResults(
+        frames: [Frame],
+        pipelineID: String,
+        parameters: [String: Parameter],
+        pipelineInputs: [String: Any],
+        existingOutputPath: String?
+    ) async -> String? {
+        guard let config = try? ArchiveConfiguration.fromEnvironment(),
+              let archive = try? Archive(configuration: config) else { return nil }
+
+        do {
+            // Collect input file paths from the pipeline inputs for provenance.
+            var runInputs: [ProcessingRunInputRef] = []
+            for (name, value) in pipelineInputs.sorted(by: { $0.key < $1.key }) {
+                let paths: [String]
+                if let frameSet = value as? FrameSet {
+                    paths = frameSet.frames.compactMap { $0.filePath }
+                } else if let frame = value as? Frame {
+                    paths = frame.filePath.map { [$0] } ?? []
+                } else {
+                    paths = []
+                }
+                for (pos, path) in paths.enumerated() {
+                    let archivedFrame = try? await archive.frame(filePath: path)
+                    runInputs.append(ProcessingRunInputRef(
+                        inputName: name, frameID: archivedFrame?.id, filePath: path, position: pos
+                    ))
+                }
+            }
+
+            let paramMap = parameters.reduce(into: [String: String]()) { $0[$1.key] = $1.value.stringValue }
+            let run = try await archive.recordProcessingRun(
+                pipelineID: pipelineID, parameters: paramMap, inputs: runInputs
+            )
+
+            var archivedIDs: [String] = []
+            for frame in frames {
+                guard let texture = frame.texture else { continue }
+                let w = texture.width, h = texture.height
+                var pixels = [Float](repeating: 0, count: w * h)
+                texture.getBytes(&pixels,
+                                 bytesPerRow: w * MemoryLayout<Float>.size,
+                                 from: MTLRegionMake2D(0, 0, w, h),
+                                 mipmapLevel: 0)
+
+                let tempURL: URL?
+                let fileToArchive: URL
+                if let outPath = existingOutputPath, frames.count == 1 {
+                    fileToArchive = URL(fileURLWithPath: outPath)
+                    tempURL = nil
+                } else {
+                    let tmp = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("ap_result_\(UUID().uuidString).fits")
+                    try FITSTableWriter.writeResultFrame(
+                        pixelData: pixels, width: w, height: h,
+                        pipelineID: pipelineID,
+                        imageType: "Light Frame",
+                        filterName: frame.filterName,
+                        stacked: frame.type == .processedLight,
+                        to: tmp.path
+                    )
+                    fileToArchive = tmp
+                    tempURL = tmp
+                }
+
+                let (archived, _) = try await archive.add(fitsFile: fileToArchive, processingRunID: run.id)
+                if let tmp = tempURL { try? FileManager.default.removeItem(at: tmp) }
+                archivedIDs.append(archived.id.uuidString)
+            }
+
+            if archivedIDs.isEmpty { return nil }
+            return "Archived result frame(s): \(archivedIDs.joined(separator: ", ")) (run: \(run.id))"
+        } catch {
+            return "Auto-archive failed: \(error.localizedDescription)"
+        }
+    }
 
     private func stackSummaryLine(pixels: [Float], registrationTable df: DataFrame, inputFrameSet: FrameSet?) -> String? {
         let skyNoises = df.rows.compactMap { $0["sky_noise"] as? Double }.filter { !$0.isNaN && $0 > 0 }

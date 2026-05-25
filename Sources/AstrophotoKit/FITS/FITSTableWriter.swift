@@ -50,6 +50,19 @@ private func writeStackedFITSC(
     _ statusOut: UnsafeMutablePointer<Int32>
 ) -> Int32
 
+@_silgen_name("write_result_frame_fits")
+private func writeResultFrameFITSC(
+    _ filename: UnsafePointer<CChar>,
+    _ pixels: UnsafeMutablePointer<Float>,
+    _ width: Int32,
+    _ height: Int32,
+    _ pipelineID: UnsafePointer<CChar>,
+    _ imageType: UnsafePointer<CChar>,
+    _ filterName: UnsafePointer<CChar>,
+    _ stacked: Int32,
+    _ statusOut: UnsafeMutablePointer<Int32>
+) -> Int32
+
 @_silgen_name("write_registration_fits_table")
 private func writeRegistrationFITSTableC(
     _ filename: UnsafePointer<CChar>,
@@ -302,6 +315,46 @@ public struct FITSTableWriter {
             throw FITSTableWriterError.writeFailed(String(cString: errText))
         }
         Logger.swiftfitsio.info("Wrote stacked FITS to \(path)")
+    }
+
+    /// Write a result frame to a minimal FITS primary-HDU image file.
+    ///
+    /// Used for auto-archiving pipeline output frames that are not otherwise
+    /// saved via `writeStackedOutput`. Produces a 32-bit float image with a
+    /// small set of processing provenance keywords in the FITS header.
+    public static func writeResultFrame(
+        pixelData: [Float],
+        width: Int,
+        height: Int,
+        pipelineID: String,
+        imageType: String = "Light Frame",
+        filterName: String? = nil,
+        stacked: Bool = false,
+        to path: String
+    ) throws {
+        var pixels = pixelData
+        var statusOut: Int32 = 0
+        path.withCString { cPath in
+        pipelineID.withCString { cPipeline in
+        imageType.withCString { cType in
+        (filterName ?? "").withCString { cFilter in
+            pixels.withUnsafeMutableBufferPointer { buf in
+                _ = writeResultFrameFITSC(
+                    cPath, buf.baseAddress!,
+                    Int32(width), Int32(height),
+                    cPipeline, cType, cFilter,
+                    stacked ? 1 : 0,
+                    &statusOut
+                )
+            }
+        }}}}
+        if statusOut != 0 {
+            var errText = [CChar](repeating: 0, count: 81)
+            getFITSErrorStatus(statusOut, &errText)
+            errText[80] = 0
+            throw FITSTableWriterError.writeFailed(String(cString: errText))
+        }
+        Logger.swiftfitsio.info("Wrote result frame FITS to \(path)")
     }
 
     /// Write any DataFrame as CSV using TabularData's built-in exporter.

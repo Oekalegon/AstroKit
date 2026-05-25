@@ -94,6 +94,26 @@ actor ArchiveDatabase {
         ALTER TABLE frame_sets ADD COLUMN position_angle REAL;
         UPDATE frame_sets SET temperature_mean = temperature WHERE temperature IS NOT NULL;
         """,
+        // v8: processing runs — provenance for pipeline-produced frames.
+        """
+        CREATE TABLE IF NOT EXISTS processing_runs (
+            id          TEXT PRIMARY KEY,
+            pipeline_id TEXT NOT NULL,
+            parameters  TEXT,
+            created_at  TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS processing_run_inputs (
+            run_id     TEXT NOT NULL REFERENCES processing_runs(id) ON DELETE CASCADE,
+            input_name TEXT NOT NULL,
+            frame_id   TEXT REFERENCES frames(id) ON DELETE SET NULL,
+            file_path  TEXT,
+            position   INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_run_inputs_run   ON processing_run_inputs(run_id);
+        CREATE INDEX IF NOT EXISTS idx_run_inputs_frame ON processing_run_inputs(frame_id);
+        ALTER TABLE frames ADD COLUMN processing_run_id TEXT REFERENCES processing_runs(id) ON DELETE SET NULL;
+        CREATE INDEX IF NOT EXISTS idx_frames_run ON frames(processing_run_id);
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -179,8 +199,8 @@ actor ArchiveDatabase {
          filter, camera, focal_length, pixel_scale, temperature, timestamp,
          exposure_time, gain, offset, width, height, bitpix,
          calibrated, stacked, stretched, processing_level, added_at, thumbnail,
-         frame_signature, rejected, rejected_reason, position_angle)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         frame_signature, rejected, rejected_reason, position_angle, processing_run_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -220,6 +240,7 @@ actor ArchiveDatabase {
         sqlite3_bind_int(stmt, 27, frame.rejected ? 1 : 0)
         bind(stmt, 28, frame.rejectedReason)
         bind(stmt, 29, frame.positionAngle)
+        bind(stmt, 30, frame.processingRunID?.uuidString)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -534,6 +555,72 @@ actor ArchiveDatabase {
         )
     }
 
+    // MARK: - Processing runs
+
+    func insertProcessingRun(_ run: ArchivedProcessingRun, inputs: [ProcessingRunInputRef]) throws {
+        let iso = ISO8601DateFormatter()
+        try exec("BEGIN")
+
+        let paramsJSON: String
+        if run.parameters.isEmpty {
+            paramsJSON = "{}"
+        } else {
+            let pairs = run.parameters.sorted(by: { $0.key < $1.key })
+                .map { "\"\($0.key)\":\"\($0.value)\"" }
+                .joined(separator: ",")
+            paramsJSON = "{\(pairs)}"
+        }
+
+        let runSQL = "INSERT INTO processing_runs (id, pipeline_id, parameters, created_at) VALUES (?,?,?,?)"
+        let rstmt = try prepare(runSQL)
+        defer { sqlite3_finalize(rstmt) }
+        bind(rstmt, 1, run.id.uuidString)
+        bind(rstmt, 2, run.pipelineID)
+        bind(rstmt, 3, paramsJSON)
+        bind(rstmt, 4, iso.string(from: run.createdAt))
+        guard sqlite3_step(rstmt) == SQLITE_DONE else {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+
+        let inputSQL = """
+            INSERT INTO processing_run_inputs (run_id, input_name, frame_id, file_path, position)
+            VALUES (?,?,?,?,?)
+            """
+        for ref in inputs {
+            let istmt = try prepare(inputSQL)
+            defer { sqlite3_finalize(istmt) }
+            bind(istmt, 1, run.id.uuidString)
+            bind(istmt, 2, ref.inputName)
+            bind(istmt, 3, ref.frameID?.uuidString)
+            bind(istmt, 4, ref.filePath)
+            sqlite3_bind_int(istmt, 5, Int32(ref.position))
+            guard sqlite3_step(istmt) == SQLITE_DONE else {
+                sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                throw ArchiveError.databaseError(dbErrorMessage())
+            }
+        }
+
+        try exec("COMMIT")
+    }
+
+    func frameByFilePath(_ path: String) throws -> ArchivedFrame? {
+        let stmt = try prepare("SELECT * FROM frames WHERE file_path = ? LIMIT 1")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, path, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
+    }
+
+    func updateFrameRunID(id: UUID, processingRunID: UUID) throws {
+        let stmt = try prepare("UPDATE frames SET processing_run_id = ? WHERE id = ?")
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, processingRunID.uuidString)
+        bind(stmt, 2, id.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
     // MARK: - Statistics
 
     func statistics(archiveRoot: URL) throws -> ArchiveStatistics {
@@ -614,7 +701,8 @@ actor ArchiveDatabase {
             thumbnail: columnBlob(stmt, 24),
             rejected: sqlite3_column_int(stmt, 26) != 0,
             rejectedReason: columnText(stmt, 27),
-            positionAngle: columnDouble(stmt, 28)
+            positionAngle: columnDouble(stmt, 28),
+            processingRunID: columnText(stmt, 29).flatMap { UUID(uuidString: $0) }
         )
     }
 

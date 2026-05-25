@@ -335,6 +335,52 @@ int write_stacked_fits(
     return status;
 }
 
+// ---------------------------------------------------------------------------
+// Write a float image as a minimal FITS primary HDU.
+// Used for auto-archiving result frames produced by any pipeline.
+// ---------------------------------------------------------------------------
+int write_result_frame_fits(
+    const char *filename,
+    float      *pixels,
+    int         width,
+    int         height,
+    const char *pipeline_id,
+    const char *imagetyp,
+    const char *filter_name,
+    int         stacked,
+    int        *status_out
+) {
+    int status = 0;
+    fitsfile *fptr;
+
+    remove(filename);
+
+    fits_create_file(&fptr, filename, &status);
+    if (status) { *status_out = status; return status; }
+
+    long naxes[2] = { (long)width, (long)height };
+    fits_create_img(fptr, FLOAT_IMG, 2, naxes, &status);
+
+    if (pipeline_id && pipeline_id[0])
+        fits_update_key(fptr, TSTRING, "PIPELINE", (char *)pipeline_id, "AstrophotoKit pipeline ID", &status);
+    if (imagetyp && imagetyp[0])
+        fits_update_key(fptr, TSTRING, "IMAGETYP", (char *)imagetyp, "Frame type", &status);
+    if (filter_name && filter_name[0])
+        fits_update_key(fptr, TSTRING, "FILTER", (char *)filter_name, "Filter", &status);
+    if (stacked) {
+        int one = 1;
+        fits_update_key(fptr, TLOGICAL, "STACKED", &one, "Frame is a stack", &status);
+    }
+
+    long fpixel[2] = {1, 1};
+    long nelements = (long)width * (long)height;
+    fits_write_pix(fptr, TFLOAT, fpixel, nelements, pixels, &status);
+
+    fits_close_file(fptr, &status);
+    *status_out = status;
+    return status;
+}
+
 int fits_read_img_wrapper(fitsfile *fptr, int dataType, int naxis, LONGLONG *firstPixel, LONGLONG *numElements, float *nullValue, float *array, int *anyNull, int *status) {
     // Convert LONGLONG arrays to long arrays for fits_read_pix
     // fits_read_pix expects long* (32-bit), but we receive LONGLONG* (64-bit) from Swift
