@@ -66,3 +66,6 @@ fastlane/test_output
 /Tests/AstrophotoKitTests/Resources/*
 /Tests/Test-FIT/
 Version.generated*
+
+# Claude Code local settings
+.claude/settings.json
