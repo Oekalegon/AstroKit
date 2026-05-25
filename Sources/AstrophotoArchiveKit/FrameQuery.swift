@@ -11,6 +11,7 @@ public enum RejectionFilter: Sendable {
 
 public struct FrameQuery: Sendable {
     public var objectName: String?
+    public var camera: String?
     public var coneSearch: ConeSearch?
     public var frameTypes: [String]?
     public var filters: [String]?

@@ -73,7 +73,8 @@ public actor Archive {
             stacked: meta.stacked,
             stretched: meta.stretched,
             processingLevel: meta.processingLevel,
-            addedAt: Date()
+            addedAt: Date(),
+            positionAngle: meta.positionAngle
         )
         let isNew = try await database.insertFrame(frame)
         if !isNew {
@@ -160,6 +161,241 @@ public actor Archive {
     /// Clears the rejected flag from a frame.
     public func unreject(id: UUID) async throws {
         try await database.updateRejected(id: id, rejected: false, reason: nil)
+    }
+
+    // MARK: - Frame sets
+
+    /// Inspects which frames would be included in a frame set matching `query`,
+    /// reporting property distributions and any validation issues — without writing
+    /// anything to the database.
+    public func inspectFrameSet(query: FrameQuery) async throws -> FrameSetInspection {
+        var q = query
+        q.rejectionFilter = .excludeRejected
+        q.limit = nil
+        let matchedFrames = try await frames(matching: q)
+        return buildInspection(from: matchedFrames)
+    }
+
+    /// Creates a frame set from all non-rejected frames matching `query`.
+    ///
+    /// - Parameters:
+    ///   - name: Display name for the set.
+    ///   - query: Frame filter — rejected frames are always excluded.
+    ///   - force: When `true`, allows mixed optical filters (stored as a comma-separated
+    ///     list). Mixed frame types and processing levels are always fatal.
+    /// - Returns: The persisted frame set together with its inspection report.
+    @discardableResult
+    public func createFrameSet(
+        name: String,
+        query: FrameQuery,
+        force: Bool = false
+    ) async throws -> (frameSet: ArchivedFrameSet, inspection: FrameSetInspection) {
+        var q = query
+        q.rejectionFilter = .excludeRejected
+        q.limit = nil
+        let matchedFrames = try await frames(matching: q)
+        let inspection = buildInspection(from: matchedFrames)
+
+        guard !matchedFrames.isEmpty else {
+            throw ArchiveError.frameSetError("No frames match the query.")
+        }
+        guard inspection.frameTypes.count == 1 else {
+            let names = inspection.frameTypes.map { $0.label }.joined(separator: ", ")
+            throw ArchiveError.frameSetError(
+                "All frames must have the same type. Found: \(names)."
+            )
+        }
+        guard inspection.processingLevels.count == 1 else {
+            let names = inspection.processingLevels.map { $0.label }.joined(separator: ", ")
+            throw ArchiveError.frameSetError(
+                "All frames must have the same processing level. Found: \(names)."
+            )
+        }
+        if !force && inspection.filters.count > 1 {
+            let names = inspection.filters.map { $0.label }.joined(separator: ", ")
+            throw ArchiveError.frameSetError(
+                "Frames have mixed filters (\(names)). Use --force to create anyway."
+            )
+        }
+
+        let frameType        = inspection.frameTypes[0].label
+        let processingLevel  = ProcessingLevel(rawValue: inspection.processingLevels[0].label) ?? .raw
+        let filterValue: String? = {
+            if inspection.filters.count == 1 { return inspection.filters[0].label == "(none)" ? nil : inspection.filters[0].label }
+            if force {
+                let real = inspection.filters.map { $0.label }.filter { $0 != "(none)" }.sorted()
+                return real.isEmpty ? nil : real.joined(separator: ",")
+            }
+            return nil
+        }()
+
+        let frameSet = ArchivedFrameSet(
+            id: UUID(), name: name, frameType: frameType, processingLevel: processingLevel,
+            createdAt: Date(), frameCount: matchedFrames.count,
+            objectName:   sharedString(matchedFrames.map { $0.objectName }),
+            filter:       filterValue,
+            camera:       sharedString(matchedFrames.map { $0.camera }),
+            exposureTime: sharedDouble(matchedFrames.map { $0.exposureTime }),
+            gain:         sharedDouble(matchedFrames.map { $0.gain }),
+            offset:       sharedDouble(matchedFrames.map { $0.offset }),
+            width:        sharedInt(matchedFrames.map    { $0.width }),
+            height:       sharedInt(matchedFrames.map    { $0.height }),
+            pixelScale:   sharedDouble(matchedFrames.map { $0.pixelScale }),
+            focalLength:  sharedDouble(matchedFrames.map { $0.focalLength }),
+            positionAngle: sharedDouble(matchedFrames.map { $0.positionAngle }),
+            dateFrom: inspection.dateFrom,
+            dateTo:   inspection.dateTo,
+            temperatureMean: inspection.temperatureMean,
+            temperatureMin:  inspection.temperatureMin,
+            temperatureMax:  inspection.temperatureMax
+        )
+        try await database.insertFrameSet(frameSet, frameIDs: matchedFrames.map { $0.id })
+        return (frameSet, inspection)
+    }
+
+    /// Returns all frame sets ordered by creation date (newest first).
+    public func frameSets() async throws -> [ArchivedFrameSet] {
+        try await database.queryFrameSets()
+    }
+
+    /// Returns a single frame set by its ID.
+    public func frameSet(id: UUID) async throws -> ArchivedFrameSet? {
+        try await database.frameSetByID(id)
+    }
+
+    /// Returns the member frames of a frame set in their stored order.
+    public func frames(inFrameSet id: UUID) async throws -> [ArchivedFrame] {
+        let frameIDs = try await database.frameIDsForSet(id)
+        var result: [ArchivedFrame] = []
+        for fid in frameIDs {
+            if let f = try await database.frameByID(fid) { result.append(f) }
+        }
+        return result
+    }
+
+    /// Deletes a frame set. Member frames are not affected.
+    public func deleteFrameSet(id: UUID) async throws {
+        try await database.deleteFrameSet(id: id)
+    }
+
+    // MARK: - Inspection builder
+
+    private func buildInspection(from matchedFrames: [ArchivedFrame]) -> FrameSetInspection {
+        func dist<T: Hashable>(_ values: [T?], nilLabel: String) -> [FrameSetInspection.Entry] {
+            var counts: [String: Int] = [:]
+            for v in values {
+                let key = v.map { "\($0)" } ?? nilLabel
+                counts[key, default: 0] += 1
+            }
+            return counts.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+                         .map { FrameSetInspection.Entry(label: $0.key, count: $0.value) }
+        }
+
+        let frameTypes       = dist(matchedFrames.map { Optional($0.frameType) },          nilLabel: "(unknown)")
+        let filters          = dist(matchedFrames.map { $0.filter },                        nilLabel: "(none)")
+        let processingLevels = dist(matchedFrames.map { Optional($0.processingLevel.rawValue) }, nilLabel: "(unknown)")
+        let objectNames      = dist(matchedFrames.map { $0.objectName },                    nilLabel: "(unknown)")
+        let cameras          = dist(matchedFrames.map { $0.camera },                        nilLabel: "(unknown)")
+
+        // Pixel scales grouped to 3 decimal places
+        var pixelScaleCounts: [String: Int] = [:]
+        for f in matchedFrames {
+            if let ps = f.pixelScale {
+                pixelScaleCounts[String(format: "%.3f \"/px", ps), default: 0] += 1
+            }
+        }
+        let pixelScales = pixelScaleCounts.sorted { $0.key < $1.key }
+            .map { FrameSetInspection.Entry(label: $0.key, count: $0.value) }
+
+        // Focal lengths grouped to nearest mm
+        var focalLengthCounts: [String: Int] = [:]
+        for f in matchedFrames {
+            if let fl = f.focalLength {
+                focalLengthCounts[String(format: "%.0f mm", fl), default: 0] += 1
+            }
+        }
+        let focalLengths = focalLengthCounts.sorted { $0.key < $1.key }
+            .map { FrameSetInspection.Entry(label: $0.key, count: $0.value) }
+
+        // Position angles grouped to 1 decimal place
+        var posAngleCounts: [String: Int] = [:]
+        for f in matchedFrames {
+            if let pa = f.positionAngle {
+                posAngleCounts[String(format: "%.1f°", pa), default: 0] += 1
+            }
+        }
+        let positionAngles = posAngleCounts.sorted { $0.key < $1.key }
+            .map { FrameSetInspection.Entry(label: $0.key, count: $0.value) }
+
+        // Date span
+        let timestamps = matchedFrames.compactMap { $0.timestamp }
+        let dateFrom = timestamps.min()
+        let dateTo   = timestamps.max()
+
+        // Temperature stats
+        let temps = matchedFrames.compactMap { $0.temperature }
+        let temperatureMin  = temps.isEmpty ? nil : temps.min()
+        let temperatureMax  = temps.isEmpty ? nil : temps.max()
+        let temperatureMean = temps.isEmpty ? nil : temps.reduce(0, +) / Double(temps.count)
+
+        // Validation
+        var issues: [String] = []
+        var canCreate = !matchedFrames.isEmpty
+        var needsForce = false
+
+        if matchedFrames.isEmpty {
+            issues.append("No frames match the query.")
+        }
+        if frameTypes.count > 1 {
+            let names = frameTypes.map { $0.label }.joined(separator: ", ")
+            issues.append("Mixed frame types (\(names)) — fatal, cannot create.")
+            canCreate = false
+        }
+        if processingLevels.count > 1 {
+            let names = processingLevels.map { $0.label }.joined(separator: ", ")
+            issues.append("Mixed processing levels (\(names)) — fatal, cannot create.")
+            canCreate = false
+        }
+        if filters.count > 1 {
+            let names = filters.map { $0.label }.joined(separator: ", ")
+            issues.append("Mixed filters (\(names)) — use --force to override.")
+            needsForce = true
+        }
+
+        return FrameSetInspection(
+            matchedFrameCount: matchedFrames.count,
+            frameTypes: frameTypes, filters: filters,
+            processingLevels: processingLevels, objectNames: objectNames,
+            cameras: cameras, pixelScales: pixelScales,
+            focalLengths: focalLengths, positionAngles: positionAngles,
+            dateFrom: dateFrom, dateTo: dateTo,
+            temperatureMin: temperatureMin, temperatureMax: temperatureMax,
+            temperatureMean: temperatureMean,
+            canCreate: canCreate, needsForce: needsForce, issues: issues,
+            frames: matchedFrames
+        )
+    }
+
+    // MARK: - Shared property helpers
+
+    private func sharedString(_ values: [String?]) -> String? {
+        let nonNil = values.compactMap { $0 }
+        guard nonNil.count == values.count else { return nil }
+        let unique = Set(nonNil)
+        return unique.count == 1 ? unique.first : nil
+    }
+
+    private func sharedDouble(_ values: [Double?]) -> Double? {
+        let nonNil = values.compactMap { $0 }
+        guard nonNil.count == values.count, let first = nonNil.first else { return nil }
+        return nonNil.allSatisfy { abs($0 - first) < 0.001 } ? first : nil
+    }
+
+    private func sharedInt(_ values: [Int?]) -> Int? {
+        let nonNil = values.compactMap { $0 }
+        guard nonNil.count == values.count else { return nil }
+        let unique = Set(nonNil)
+        return unique.count == 1 ? unique.first : nil
     }
 
     // MARK: - Removal
