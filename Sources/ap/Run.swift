@@ -20,6 +20,9 @@ extension AP {
             Multi-frame (FrameSet) pipeline — repeat the same name:
               ap run frame_registration --input input_frames:frame1.fits --input input_frames:frame2.fits
 
+            Archive frame input (by UUID):
+              ap run star_detection --input input_frame:@frame:3F7A1234-…
+
             Archive FrameSet input (by UUID or name):
               ap run frame_stacking --input input_frames:@frameset:3F7A1234-…
               ap run frame_stacking --input "input_frames:@frameset:M51 Ha lights"
@@ -36,7 +39,7 @@ extension AP {
         @Argument(help: "Pipeline ID to execute.")
         var pipelineID: String
 
-        @Option(name: .shortAndLong, help: "Input FITS file or archive FrameSet. Use name:path.fits or name:@frameset:UUID. Repeat with the same name to build a FrameSet.")
+        @Option(name: .shortAndLong, help: "Input FITS file or archive reference. Use name:path.fits, name:@frame:UUID, or name:@frameset:UUID. Repeat with the same name to build a FrameSet.")
         var input: [String] = []
 
         @Option(name: .shortAndLong, help: "Pipeline parameter as key=value.")
@@ -94,14 +97,14 @@ extension AP {
             }
 
             // Parse --input args: collect multiple paths per named input.
-            // A path may be a directory (expanded to FITS files) or @frameset:UUID|name (archive lookup).
+            // A path may be a directory (expanded to FITS files), @frameset:UUID|name, or @frame:UUID.
             var inputPaths: [String: [String]] = [:]
             for raw in input {
                 let (name, token): (String, String)
-                if raw.hasPrefix("@frameset:") {
+                if raw.hasPrefix("@frameset:") || raw.hasPrefix("@frame:") {
                     guard expectedInputs.count == 1 else {
                         throw ValidationError(
-                            "Pipeline '\(pipelineID)' has multiple inputs. Use 'name:@frameset:ID' format.\n" +
+                            "Pipeline '\(pipelineID)' has multiple inputs. Use 'name:@frameset:ID' or 'name:@frame:ID' format.\n" +
                             "Expected inputs: \(expectedInputs.joined(separator: ", "))"
                         )
                     }
@@ -124,6 +127,10 @@ extension AP {
                     let ref = String(token.dropFirst("@frameset:".count))
                     let paths = try await archiveFrameSetPaths(ref: ref)
                     inputPaths[name, default: []].append(contentsOf: paths)
+                } else if token.hasPrefix("@frame:") {
+                    let ref = String(token.dropFirst("@frame:".count))
+                    let path = try await archiveFramePath(ref: ref)
+                    inputPaths[name, default: []].append(path)
                 } else {
                     inputPaths[name, default: []].append(contentsOf: try fitsFiles(at: token))
                 }
@@ -245,6 +252,18 @@ extension AP {
                     printTable(table, index: i + 1)
                 }
             }
+        }
+
+        private func archiveFramePath(ref: String) async throws -> String {
+            guard let uuid = UUID(uuidString: ref) else {
+                throw ValidationError("@frame: reference must be a valid UUID: '\(ref)'.")
+            }
+            let config = try ArchiveConfiguration.fromEnvironment()
+            let archive = try Archive(configuration: config)
+            guard let frame = try await archive.frame(id: uuid) else {
+                throw ValidationError("No archive frame found with id '\(ref)'.")
+            }
+            return frame.filePath
         }
 
         private func archiveFrameSetPaths(ref: String) async throws -> [String] {

@@ -55,6 +55,10 @@ struct Tools {
                         "type": "string",
                         "description": "UUID of an archive FrameSet to use as input (from archive_frameset_list or archive_frameset_create). Takes precedence over input_dir, input_paths, and input_path.",
                     ],
+                    "input_frame_id": [
+                        "type": "string",
+                        "description": "UUID of a single archive frame to use as input (from archive_find or archive_get). For single-frame pipelines such as star_detection, optical_quality, and collimation. Takes precedence over input_path.",
+                    ],
                     "input_path": [
                         "type": "string",
                         "description": "Absolute path to a single input FITS file (single-frame pipelines).",
@@ -193,8 +197,9 @@ struct Tools {
             }
         }
 
-        // Build pipeline inputs — support archive frameset, directory, array, or single path
+        // Build pipeline inputs — support archive frame/frameset, directory, array, or single path
         let inputFrameSetID = arguments["input_frameset_id"] as? String
+        let inputFrameID    = arguments["input_frame_id"]    as? String
         let inputDir        = arguments["input_dir"]         as? String
         let inputPaths      = arguments["input_paths"]       as? [String]
         let inputPath       = arguments["input_path"]        as? String
@@ -254,6 +259,32 @@ struct Tools {
                 frames.append(frame)
             }
             pipelineInputs[resolvedName] = FrameSet(frames: frames, outputProcess: nil, inputProcesses: [])
+        } else if let frameID = inputFrameID {
+            guard let uuid = UUID(uuidString: frameID) else {
+                throw ToolError("input_frame_id must be a valid UUID: \(frameID)")
+            }
+            let config = try ArchiveConfiguration.fromEnvironment()
+            let archive = try Archive(configuration: config)
+            guard let af = try await archive.frame(id: uuid) else {
+                throw ToolError("No frame with id '\(frameID)' found in archive.")
+            }
+            guard FileManager.default.fileExists(atPath: af.filePath) else {
+                throw ToolError("Archive frame file not found on disk: \(af.filePath)")
+            }
+            let resolvedName: String
+            if let name = inputName {
+                resolvedName = name
+            } else if expectedInputs.count == 1 {
+                resolvedName = expectedInputs[0]
+            } else {
+                throw ToolError(
+                    "Pipeline '\(pipelineID)' has multiple inputs: \(expectedInputs.sorted().joined(separator: ", ")). " +
+                    "Specify input_name."
+                )
+            }
+            let fitsFile = try FITSFile(path: af.filePath)
+            let img = try fitsFile.readFITSImage()
+            pipelineInputs[resolvedName] = try Frame(fitsImage: img, device: device, filePath: af.filePath)
         } else if let paths = resolvedPaths ?? inputPaths, !paths.isEmpty {
             // Multi-frame input → FrameSet
             let resolvedName: String
@@ -296,8 +327,8 @@ struct Tools {
             pipelineInputs[resolvedName] = try fitsFile.readFITSImage()
         } else {
             throw ToolError(
-                "Provide input_frameset_id (archive), input_path (single file), input_paths (array), " +
-                "or input_dir (directory) for pipeline '\(pipelineID)'."
+                "Provide input_frameset_id (archive FrameSet), input_frame_id (archive frame), " +
+                "input_path (single file), input_paths (array), or input_dir (directory) for pipeline '\(pipelineID)'."
             )
         }
 
