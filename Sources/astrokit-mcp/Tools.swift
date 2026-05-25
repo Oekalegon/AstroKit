@@ -1,4 +1,5 @@
 import Foundation
+import AstrophotoArchiveKit
 import AstrophotoKit
 import Metal
 import TabularData
@@ -42,13 +43,17 @@ struct Tools {
         ],
         [
             "name": "run_pipeline",
-            "description": "Execute an astrophoto pipeline on one or more FITS files and return the analysis results. Use input_paths (array) for multi-frame pipelines such as frame_registration.",
+            "description": "Execute an astrophoto pipeline on one or more FITS files and return the analysis results. Frames can be supplied from the archive via input_frameset_id. Use input_paths (array) for ad-hoc multi-frame pipelines such as frame_registration.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "pipeline_id": [
                         "type": "string",
                         "description": "Pipeline ID to run (e.g. 'star_detection', 'frame_registration').",
+                    ],
+                    "input_frameset_id": [
+                        "type": "string",
+                        "description": "UUID of an archive FrameSet to use as input (from archive_frameset_list or archive_frameset_create). Takes precedence over input_dir, input_paths, and input_path.",
                     ],
                     "input_path": [
                         "type": "string",
@@ -188,11 +193,12 @@ struct Tools {
             }
         }
 
-        // Build pipeline inputs — support directory, array, or single path
-        let inputDir    = arguments["input_dir"]   as? String
-        let inputPaths  = arguments["input_paths"] as? [String]
-        let inputPath   = arguments["input_path"]  as? String
-        let inputName   = arguments["input_name"]  as? String
+        // Build pipeline inputs — support archive frameset, directory, array, or single path
+        let inputFrameSetID = arguments["input_frameset_id"] as? String
+        let inputDir        = arguments["input_dir"]         as? String
+        let inputPaths      = arguments["input_paths"]       as? [String]
+        let inputPath       = arguments["input_path"]        as? String
+        let inputName       = arguments["input_name"]        as? String
 
         // Resolve input_dir → sorted list of FITS paths
         let resolvedPaths: [String]? = try {
@@ -216,7 +222,39 @@ struct Tools {
 
         var pipelineInputs: [String: Any] = [:]
 
-        if let paths = resolvedPaths ?? inputPaths, !paths.isEmpty {
+        if let frameSetID = inputFrameSetID {
+            guard let uuid = UUID(uuidString: frameSetID) else {
+                throw ToolError("input_frameset_id must be a valid UUID: \(frameSetID)")
+            }
+            let config = try ArchiveConfiguration.fromEnvironment()
+            let archive = try Archive(configuration: config)
+            guard try await archive.frameSet(id: uuid) != nil else {
+                throw ToolError("No frame set with id '\(frameSetID)' found in archive.")
+            }
+            let archivedFrames = try await archive.frames(inFrameSet: uuid)
+            guard !archivedFrames.isEmpty else {
+                throw ToolError("Frame set '\(frameSetID)' contains no frames.")
+            }
+            let resolvedName: String
+            if let name = inputName {
+                resolvedName = name
+            } else if expectedInputs.count == 1 {
+                resolvedName = expectedInputs[0]
+            } else {
+                throw ToolError("Multiple pipeline inputs detected; specify input_name.")
+            }
+            var frames: [Frame] = []
+            for af in archivedFrames {
+                guard FileManager.default.fileExists(atPath: af.filePath) else {
+                    throw ToolError("Archive frame file not found on disk: \(af.filePath)")
+                }
+                let fitsFile = try FITSFile(path: af.filePath)
+                let img = try fitsFile.readFITSImage()
+                let frame = try Frame(fitsImage: img, device: device, filePath: af.filePath)
+                frames.append(frame)
+            }
+            pipelineInputs[resolvedName] = FrameSet(frames: frames, outputProcess: nil, inputProcesses: [])
+        } else if let paths = resolvedPaths ?? inputPaths, !paths.isEmpty {
             // Multi-frame input → FrameSet
             let resolvedName: String
             if let name = inputName {
@@ -257,7 +295,10 @@ struct Tools {
             let fitsFile = try FITSFile(path: expanded)
             pipelineInputs[resolvedName] = try fitsFile.readFITSImage()
         } else {
-            throw ToolError("Provide input_path (single file) or input_paths (array) for pipeline '\(pipelineID)'.")
+            throw ToolError(
+                "Provide input_frameset_id (archive), input_path (single file), input_paths (array), " +
+                "or input_dir (directory) for pipeline '\(pipelineID)'."
+            )
         }
 
         let start = Date()

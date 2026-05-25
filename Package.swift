@@ -73,6 +73,7 @@ let package = Package(
             name: "ap",
             dependencies: [
                 "AstrophotoKit",
+                "AstrophotoArchiveKit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/ap"
