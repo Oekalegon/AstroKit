@@ -78,7 +78,9 @@ public actor Archive {
             processingLevel: meta.processingLevel,
             addedAt: Date(),
             positionAngle: meta.positionAngle,
-            processingRunID: processingRunID
+            processingRunID: processingRunID,
+            sessionBeg: meta.sessionBeg,
+            sessionEnd: meta.sessionEnd
         )
         let isNew = try await database.insertFrame(frame)
         if !isNew {

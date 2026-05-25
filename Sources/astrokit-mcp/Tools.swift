@@ -441,11 +441,17 @@ struct Tools {
             var runInputs: [ProcessingRunInputRef] = []
             var objectNamesSet: Set<String> = []
             var filterNamesSet: Set<String> = []
+            var camerasSet: Set<String> = []
+            var pixelScalesSet: Set<Double> = []
+            var focalLengthsSet: Set<Double> = []
             var totalExposure = 0.0
             var inputCount = 0
             var gainsSet: Set<Double> = []
             var offsetsSet: Set<Double> = []
             var temperatures: [Double] = []
+            var timestamps: [Date] = []
+            var refRA: Double? = nil
+            var refDec: Double? = nil
 
             for (name, value) in pipelineInputs.sorted(by: { $0.key < $1.key }) {
                 let pathsAndFrames: [(String, Frame?)]
@@ -461,6 +467,11 @@ struct Tools {
                     runInputs.append(ProcessingRunInputRef(
                         inputName: name, frameID: af?.id, filePath: path, position: pos
                     ))
+                    // Reference frame (pos 0) provides pointing and observation date.
+                    if pos == 0 {
+                        refRA  = af?.ra
+                        refDec = af?.dec
+                    }
                     inputCount += 1
                     if let v = af?.objectName { objectNamesSet.insert(v) }
                     let fn = af?.filter ?? inputFrame?.filterName
@@ -470,15 +481,30 @@ struct Tools {
                     if let g = af?.gain ?? inputFrame?.gain { gainsSet.insert(g) }
                     if let o = af?.offset ?? inputFrame?.offset { offsetsSet.insert(o) }
                     if let t = af?.temperature { temperatures.append(t) }
+                    if let ts = af?.timestamp ?? inputFrame?.timestamp { timestamps.append(ts) }
+                    if let c = af?.camera { camerasSet.insert(c) }
+                    if let ps = af?.pixelScale { pixelScalesSet.insert(ps) }
+                    if let fl = af?.focalLength { focalLengthsSet.insert(fl) }
                 }
             }
 
             let stackObjectName  = objectNamesSet.count == 1 ? objectNamesSet.first : nil
             let stackFilter      = filterNamesSet.count == 1 ? filterNamesSet.first : nil
+            let stackCamera      = camerasSet.count == 1 ? camerasSet.first : nil
+            let stackPixelScale  = pixelScalesSet.count == 1 ? pixelScalesSet.first : nil
+            let stackFocalLength = focalLengthsSet.count == 1 ? focalLengthsSet.first : nil
             let stackExposure    = inputCount > 0 && totalExposure > 0 ? totalExposure : nil as Double?
             let stackGain        = gainsSet.count == 1 ? gainsSet.first : nil
             let stackOffset      = offsetsSet.count == 1 ? offsetsSet.first : nil
-            let stackTemperature = temperatures.isEmpty ? nil : temperatures.reduce(0, +) / Double(temperatures.count) as Double?
+            let stackTempMean    = temperatures.isEmpty ? nil : temperatures.reduce(0, +) / Double(temperatures.count) as Double?
+            let stackTempMin     = temperatures.isEmpty ? nil : temperatures.min()
+            let stackTempMax     = temperatures.isEmpty ? nil : temperatures.max()
+
+            let iso8601 = ISO8601DateFormatter()
+            iso8601.formatOptions = [.withInternetDateTime]
+            let refDate  = timestamps.max().flatMap { iso8601.string(from: $0) }   // newest = reference frame
+            let dateBeg  = timestamps.min().flatMap { iso8601.string(from: $0) }
+            let dateEnd  = timestamps.max().flatMap { iso8601.string(from: $0) }
 
             let paramMap = parameters.reduce(into: [String: String]()) { $0[$1.key] = $1.value.stringValue }
             let run = try await archive.recordProcessingRun(
@@ -513,8 +539,18 @@ struct Tools {
                         totalExposure: stackExposure,
                         gain: stackGain,
                         offset: stackOffset,
-                        temperature: stackTemperature,
+                        temperature: stackTempMean,
                         objectName: stackObjectName,
+                        camera: stackCamera,
+                        ra: refRA,
+                        dec: refDec,
+                        pixelScale: stackPixelScale,
+                        focalLength: stackFocalLength,
+                        tempMin: stackTempMin,
+                        tempMax: stackTempMax,
+                        dateObs: refDate,
+                        dateBeg: dateBeg,
+                        dateEnd: dateEnd,
                         to: tmp.path
                     )
                     fileToArchive = tmp

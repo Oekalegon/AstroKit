@@ -114,6 +114,11 @@ actor ArchiveDatabase {
         ALTER TABLE frames ADD COLUMN processing_run_id TEXT REFERENCES processing_runs(id) ON DELETE SET NULL;
         CREATE INDEX IF NOT EXISTS idx_frames_run ON frames(processing_run_id);
         """,
+        // v9: session date range for stacked frames (DATE-BEG / DATE-END).
+        """
+        ALTER TABLE frames ADD COLUMN session_beg TEXT;
+        ALTER TABLE frames ADD COLUMN session_end TEXT;
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -199,8 +204,9 @@ actor ArchiveDatabase {
          filter, camera, focal_length, pixel_scale, temperature, timestamp,
          exposure_time, gain, offset, width, height, bitpix,
          calibrated, stacked, stretched, processing_level, added_at, thumbnail,
-         frame_signature, rejected, rejected_reason, position_angle, processing_run_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         frame_signature, rejected, rejected_reason, position_angle, processing_run_id,
+         session_beg, session_end)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -241,6 +247,8 @@ actor ArchiveDatabase {
         bind(stmt, 28, frame.rejectedReason)
         bind(stmt, 29, frame.positionAngle)
         bind(stmt, 30, frame.processingRunID?.uuidString)
+        bind(stmt, 31, frame.sessionBeg.map { iso.string(from: $0) })
+        bind(stmt, 32, frame.sessionEnd.map { iso.string(from: $0) })
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -770,7 +778,9 @@ actor ArchiveDatabase {
             rejected: sqlite3_column_int(stmt, 26) != 0,
             rejectedReason: columnText(stmt, 27),
             positionAngle: columnDouble(stmt, 28),
-            processingRunID: columnText(stmt, 29).flatMap { UUID(uuidString: $0) }
+            processingRunID: columnText(stmt, 29).flatMap { UUID(uuidString: $0) },
+            sessionBeg: columnText(stmt, 30).flatMap { iso.date(from: $0) },
+            sessionEnd: columnText(stmt, 31).flatMap { iso.date(from: $0) }
         )
     }
 

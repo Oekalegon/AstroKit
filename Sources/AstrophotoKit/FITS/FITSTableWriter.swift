@@ -66,6 +66,16 @@ private func writeResultFrameFITSC(
     _ offsetVal: Double,
     _ temperature: Double,
     _ objectName: UnsafePointer<CChar>,
+    _ camera: UnsafePointer<CChar>,
+    _ ra: Double,
+    _ dec: Double,
+    _ pixelScale: Double,
+    _ focalLength: Double,
+    _ tempMin: Double,
+    _ tempMax: Double,
+    _ dateObs: UnsafePointer<CChar>,
+    _ dateBeg: UnsafePointer<CChar>,
+    _ dateEnd: UnsafePointer<CChar>,
     _ statusOut: UnsafeMutablePointer<Int32>
 ) -> Int32
 
@@ -342,6 +352,16 @@ public struct FITSTableWriter {
         offset: Double? = nil,
         temperature: Double? = nil,
         objectName: String? = nil,
+        camera: String? = nil,
+        ra: Double? = nil,
+        dec: Double? = nil,
+        pixelScale: Double? = nil,
+        focalLength: Double? = nil,
+        tempMin: Double? = nil,
+        tempMax: Double? = nil,
+        dateObs: String? = nil,
+        dateBeg: String? = nil,
+        dateEnd: String? = nil,
         to path: String
     ) throws {
         var pixels = pixelData
@@ -351,6 +371,10 @@ public struct FITSTableWriter {
         imageType.withCString { cType in
         (filterName ?? "").withCString { cFilter in
         (objectName ?? "").withCString { cObject in
+        (camera ?? "").withCString { cCamera in
+        (dateObs ?? "").withCString { cDateObs in
+        (dateBeg ?? "").withCString { cDateBeg in
+        (dateEnd ?? "").withCString { cDateEnd in
             pixels.withUnsafeMutableBufferPointer { buf in
                 _ = writeResultFrameFITSC(
                     cPath, buf.baseAddress!,
@@ -362,11 +386,15 @@ public struct FITSTableWriter {
                     gain ?? .nan,
                     offset ?? .nan,
                     temperature ?? .nan,
-                    cObject,
+                    cObject, cCamera,
+                    ra ?? .nan, dec ?? .nan,
+                    pixelScale ?? .nan, focalLength ?? .nan,
+                    tempMin ?? .nan, tempMax ?? .nan,
+                    cDateObs, cDateBeg, cDateEnd,
                     &statusOut
                 )
             }
-        }}}}}
+        }}}}}}}}}
         if statusOut != 0 {
             var errText = [CChar](repeating: 0, count: 81)
             getFITSErrorStatus(statusOut, &errText)

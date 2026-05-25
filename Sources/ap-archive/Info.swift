@@ -52,7 +52,12 @@ struct Info: AsyncParsableCommand {
         if let v = f.objectName   { lines.append(row("Object",       v)) }
         if let v = f.filter       { lines.append(row("Filter",       v)) }
         if let v = f.exposureTime { lines.append(row("Exposure",     String(format: "%.0f s", v))) }
-        if let v = f.timestamp    { lines.append(row("Date",         iso.string(from: v))) }
+        if let beg = f.sessionBeg, let end = f.sessionEnd {
+            let fmt = { (d: Date) -> String in String(iso.string(from: d).prefix(19)) }
+            lines.append(row("Session",      "\(fmt(beg)) → \(fmt(end)) UTC"))
+        } else if let v = f.timestamp {
+            lines.append(row("Date",         iso.string(from: v)))
+        }
 
         lines.append("")
         var hasCameraSection = false

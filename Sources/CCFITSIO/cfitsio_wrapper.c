@@ -354,8 +354,18 @@ int write_result_frame_fits(
     double      total_exposure, // NaN = skip
     double      gain,           // NaN = skip
     double      offset_val,     // NaN = skip
-    double      temperature,    // NaN = skip
+    double      temperature,    // NaN = skip (mean)
     const char *object_name,    // NULL or empty = skip
+    const char *camera,         // NULL or empty = skip
+    double      ra,             // NaN = skip (degrees)
+    double      dec,            // NaN = skip (degrees)
+    double      pixel_scale,    // NaN = skip (arcsec/px)
+    double      focal_length,   // NaN = skip (mm)
+    double      temp_min,       // NaN = skip
+    double      temp_max,       // NaN = skip
+    const char *date_obs,       // observation date; falls back to current UTC if empty
+    const char *date_beg,       // session start; NULL or empty = skip
+    const char *date_end,       // session end; NULL or empty = skip
     int        *status_out
 ) {
     int status = 0;
@@ -371,6 +381,8 @@ int write_result_frame_fits(
 
     if (object_name && object_name[0])
         fits_update_key(fptr, TSTRING, "OBJECT",   (char *)object_name, "Target object", &status);
+    if (camera && camera[0])
+        fits_update_key(fptr, TSTRING, "INSTRUME", (char *)camera,      "Camera / instrument", &status);
     if (pipeline_id && pipeline_id[0])
         fits_update_key(fptr, TSTRING, "PIPELINE", (char *)pipeline_id, "AstrophotoKit pipeline ID", &status);
     if (imagetyp && imagetyp[0])
@@ -390,10 +402,24 @@ int write_result_frame_fits(
     if (!isnan(offset_val))
         fits_update_key(fptr, TDOUBLE, "OFFSET",   &offset_val,     "Camera offset (pedestal)", &status);
     if (!isnan(temperature))
-        fits_update_key(fptr, TDOUBLE, "CCD-TEMP", &temperature,    "[C] CCD temperature", &status);
+        fits_update_key(fptr, TDOUBLE, "CCD-TEMP", &temperature,    "[C] CCD temperature (mean)", &status);
+    if (!isnan(temp_min))
+        fits_update_key(fptr, TDOUBLE, "CCD-TMIN", &temp_min,       "[C] CCD temperature (min)", &status);
+    if (!isnan(temp_max))
+        fits_update_key(fptr, TDOUBLE, "CCD-TMAX", &temp_max,       "[C] CCD temperature (max)", &status);
+    if (!isnan(ra))
+        fits_update_key(fptr, TDOUBLE, "RA",       &ra,             "[deg] Reference frame RA (J2000)", &status);
+    if (!isnan(dec))
+        fits_update_key(fptr, TDOUBLE, "DEC",      &dec,            "[deg] Reference frame Dec (J2000)", &status);
+    if (!isnan(pixel_scale))
+        fits_update_key(fptr, TDOUBLE, "PIXSCALE", &pixel_scale,    "[arcsec/px] Pixel scale", &status);
+    if (!isnan(focal_length))
+        fits_update_key(fptr, TDOUBLE, "FOCALLEN", &focal_length,   "[mm] Focal length", &status);
 
-    // Write current UTC time as DATE-OBS so each result frame gets a unique signature.
-    {
+    // DATE-OBS: use reference-frame observation date if provided, else current UTC.
+    if (date_obs && date_obs[0]) {
+        fits_update_key(fptr, TSTRING, "DATE-OBS", (char *)date_obs, "Reference frame observation date (UTC)", &status);
+    } else {
         struct timespec ts;
         clock_gettime(CLOCK_REALTIME, &ts);
         struct tm *utc = gmtime(&ts.tv_sec);
@@ -403,6 +429,10 @@ int write_result_frame_fits(
                  utc->tm_hour, utc->tm_min, utc->tm_sec);
         fits_update_key(fptr, TSTRING, "DATE-OBS", date_buf, "Processing timestamp (UTC)", &status);
     }
+    if (date_beg && date_beg[0])
+        fits_update_key(fptr, TSTRING, "DATE-BEG", (char *)date_beg, "Session start (UTC)", &status);
+    if (date_end && date_end[0])
+        fits_update_key(fptr, TSTRING, "DATE-END", (char *)date_end, "Session end (UTC)", &status);
 
     long fpixel[2] = {1, 1};
     long nelements = (long)width * (long)height;
