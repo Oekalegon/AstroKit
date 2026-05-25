@@ -168,8 +168,9 @@ struct Frameset: AsyncParsableCommand {
             }
 
             print("Frame sets (\(sets.count)):\n")
-            let header = String(format: "%-36s  %-5s  %-8s  %-12s  %-8s  %s",
-                "ID", "Count", "Type", "Level", "Filter", "Name")
+            let header = String(format: "%-36@  %-5@  %-8@  %-12@  %-8@  %@",
+                "ID" as NSString, "Count" as NSString, "Type" as NSString,
+                "Level" as NSString, "Filter" as NSString, "Name" as NSString)
             print(header)
             print(String(repeating: "-", count: header.count))
             for fs in sets {
@@ -179,13 +180,13 @@ struct Frameset: AsyncParsableCommand {
                 } else {
                     filterLabel = "-"
                 }
-                print(String(format: "%-36s  %-5d  %-8s  %-12s  %-8s  %s",
-                    fs.id.uuidString,
+                print(String(format: "%-36@  %-5d  %-8@  %-12@  %-8@  %@",
+                    fs.id.uuidString as NSString,
                     fs.frameCount,
-                    fs.frameType,
-                    fs.processingLevel.rawValue,
-                    filterLabel,
-                    fs.name))
+                    fs.frameType as NSString,
+                    fs.processingLevel.rawValue as NSString,
+                    filterLabel as NSString,
+                    fs.name as NSString))
             }
         }
     }

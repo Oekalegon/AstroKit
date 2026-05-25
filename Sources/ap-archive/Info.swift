@@ -37,7 +37,7 @@ struct Info: AsyncParsableCommand {
     private func formatted(_ f: ArchivedFrame) -> String {
         let iso = ISO8601DateFormatter()
         func row(_ label: String, _ value: String) -> String {
-            String(format: "  %-18s %@", (label + ":") as NSString, value)
+            String(format: "  %-18@ %@", (label + ":") as NSString, value)
         }
         func opt(_ label: String, _ value: String?) -> String? {
             value.map { row(label, $0) }

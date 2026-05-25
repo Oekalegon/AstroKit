@@ -107,8 +107,9 @@ struct Find: AsyncParsableCommand {
             return
         }
         print("Found \(frames.count) frame(s):\n")
-        let header = String(format: "%-36s  %-14s  %-8s  %-8s  %8s  %-4s  %s",
-            "ID", "Object", "Type", "Filter", "Exposure", "Rej", "File")
+        let header = String(format: "%-36@  %-14@  %-8@  %-8@  %8@  %-4@  %@",
+            "ID" as NSString, "Object" as NSString, "Type" as NSString,
+            "Filter" as NSString, "Exposure" as NSString, "Rej" as NSString, "File" as NSString)
         print(header)
         print(String(repeating: "-", count: header.count))
         for f in frames {
@@ -117,8 +118,9 @@ struct Find: AsyncParsableCommand {
             let exp  = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
             let rej  = f.rejected ? "✗" : ""
             let file = (f.filePath as NSString).lastPathComponent
-            print(String(format: "%-36s  %-14s  %-8s  %-8s  %8s  %-4s  %s",
-                f.id.uuidString, obj, f.frameType, filt, exp, rej, file))
+            print(String(format: "%-36@  %-14@  %-8@  %-8@  %8@  %-4@  %@",
+                f.id.uuidString as NSString, obj as NSString, f.frameType as NSString,
+                filt as NSString, exp as NSString, rej as NSString, file as NSString))
         }
     }
 
