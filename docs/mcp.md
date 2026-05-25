@@ -12,7 +12,7 @@ cp .build/release/astrokit-mcp /usr/local/bin/astrokit-mcp
 Or use the installer (installs `ap`, `ap-archive`, and `astrokit-mcp` in one step):
 
 ```bash
-./install.sh
+python3 install.py
 ```
 
 ## Connecting to Claude Desktop
