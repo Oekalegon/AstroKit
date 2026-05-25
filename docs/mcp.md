@@ -157,6 +157,8 @@ The stacked FITS output includes these header keywords:
 | `STCKREJO` | Pixel rejection method |
 | `STCKRJLO` / `STCKRJHI` | Rejection sigma thresholds |
 
+**Auto-archiving:** When `ASTROARCHIVE_PATH` is set and the pipeline produces Frame outputs, result frames are automatically archived with a provenance record (pipeline ID, parameters, input file paths). A note such as `Archived result → <UUID>` is appended to the response.
+
 **Single-frame response example:**
 ```
 Pipeline 'star_detection' completed in 1.43s.
@@ -220,26 +222,32 @@ Response:
 ```
 Frame  A3F2B1C0-1234-5678-ABCD-EF0123456789
 ────────────────────────────────────────────────────────────
-  Type:              light
-  Object:            DWB 111
-  Filter:            Hα
-  Exposure:          300 s
-  Date:              2025-03-25T08:25:40Z
+  Type:              stacked
+  Object:            M51
+  Filter:            Ha
+  Exposure:          5400 s
 
-  Camera:            ZWO ASI2600MM Pro
+  Camera:            ZWO ASI294MC Pro
   Gain:              100
-  Offset:            50
-  Temperature:       -10.0 °C
 
-  RA / Dec:          83.8221° / -5.3911°  (J2000)
-  Pixel scale:       1.240 "/px
-  Focal length:      800 mm
-  Size:              6248 × 4176  (16-bit)
+  Size:              6248 × 4176
 
-  Processing:        raw  [calibrated: ✗  stacked: ✗  stretched: ✗]
-  Added at:          2026-05-24T10:23:00Z
-  File:              /Users/…/AstroArchive/DWB 111/light/Hα/frame.fits
+  Processing:        stacked  [calibrated: ✗  stacked: ✓  stretched: ✗]
+  Added at:          2026-05-25T10:00:00Z
+  File:              /Users/…/AstroArchive/M51/stacked/Ha/stacked.fits
+
+Provenance
+────────────────────────────────────────────────────────────
+  Run ID:            D1E2F3A4-5678-9ABC-DEF0-123456789ABC
+  Pipeline:          frame_stacking
+  Run at:            2026-05-25T10:00:00Z
+  Parameters:        method=average  normalisation=multiplicative
+  Inputs:
+    input_frames[0]  /Users/…/lights/M51_Ha_001.fits  [archive: B4E3D2F1-...]
+    input_frames[1]  /Users/…/lights/M51_Ha_002.fits  [archive: C5F4E3A2-...]
 ```
+
+The Provenance section is shown only for frames archived automatically by `run_pipeline`. Frames added manually with `archive_add` have no provenance record.
 
 ---
 

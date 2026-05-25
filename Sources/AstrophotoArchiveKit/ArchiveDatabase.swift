@@ -621,6 +621,67 @@ actor ArchiveDatabase {
         }
     }
 
+    func processingRunByID(_ id: UUID) throws -> ArchivedProcessingRun? {
+        let stmt = try prepare(
+            "SELECT id, pipeline_id, parameters, created_at FROM processing_runs WHERE id = ? LIMIT 1"
+        )
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return rowToProcessingRun(stmt)
+    }
+
+    func inputsForRun(_ id: UUID) throws -> [ProcessingRunInputRef] {
+        let stmt = try prepare("""
+            SELECT input_name, frame_id, file_path, position
+            FROM processing_run_inputs WHERE run_id = ? ORDER BY input_name, position
+            """)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        var results: [ProcessingRunInputRef] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            let inputName = columnText(stmt, 0) ?? ""
+            let frameID   = columnText(stmt, 1).flatMap { UUID(uuidString: $0) }
+            let filePath  = columnText(stmt, 2)
+            let position  = Int(sqlite3_column_int(stmt, 3))
+            results.append(ProcessingRunInputRef(
+                inputName: inputName, frameID: frameID, filePath: filePath, position: position
+            ))
+        }
+        return results
+    }
+
+    private func rowToProcessingRun(_ stmt: OpaquePointer?) -> ArchivedProcessingRun? {
+        guard let stmt,
+              let idStr = columnText(stmt, 0), let id = UUID(uuidString: idStr),
+              let pipelineID = columnText(stmt, 1),
+              let createdAtStr = columnText(stmt, 3)
+        else { return nil }
+
+        let iso = ISO8601DateFormatter()
+        let createdAt = iso.date(from: createdAtStr) ?? Date()
+
+        // Parse simple JSON object {"key":"value",...} — no external dep needed.
+        var parameters: [String: String] = [:]
+        if let json = columnText(stmt, 2) {
+            let stripped = json.trimmingCharacters(in: CharacterSet(charactersIn: "{}"))
+            if !stripped.isEmpty {
+                for pair in stripped.components(separatedBy: ",") {
+                    let kv = pair.components(separatedBy: "\":\"")
+                    if kv.count == 2 {
+                        let k = kv[0].trimmingCharacters(in: CharacterSet(charactersIn: " \""))
+                        let v = kv[1].trimmingCharacters(in: CharacterSet(charactersIn: " \""))
+                        parameters[k] = v
+                    }
+                }
+            }
+        }
+
+        return ArchivedProcessingRun(
+            id: id, pipelineID: pipelineID, parameters: parameters, createdAt: createdAt
+        )
+    }
+
     // MARK: - Statistics
 
     func statistics(archiveRoot: URL) throws -> ArchiveStatistics {

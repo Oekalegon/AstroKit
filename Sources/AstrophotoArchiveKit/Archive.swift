@@ -118,6 +118,15 @@ public actor Archive {
         try await database.frameByFilePath(filePath)
     }
 
+    /// Returns the processing run that produced a frame, together with its input references.
+    /// Returns `nil` if the frame has no associated processing run.
+    public func processingRun(for frame: ArchivedFrame) async throws -> (run: ArchivedProcessingRun, inputs: [ProcessingRunInputRef])? {
+        guard let runID = frame.processingRunID else { return nil }
+        guard let run = try await database.processingRunByID(runID) else { return nil }
+        let inputs = try await database.inputsForRun(runID)
+        return (run, inputs)
+    }
+
     /// Adds all FITS files in a directory, copying each into the archive folder hierarchy.
     /// - Parameters:
     ///   - directory: Directory to scan.

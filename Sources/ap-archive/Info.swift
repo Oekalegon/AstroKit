@@ -24,17 +24,18 @@ struct Info: AsyncParsableCommand {
         guard let frame = try await archive.frame(id: uuid) else {
             throw ValidationError("No frame with id \(id) found in the archive.")
         }
+        let provenance = try await archive.processingRun(for: frame)
 
         if json {
-            printJSON(frame)
+            printJSON(frame, provenance: provenance)
         } else {
-            print(formatted(frame))
+            print(formatted(frame, provenance: provenance))
         }
     }
 
     // MARK: - Formatting
 
-    private func formatted(_ f: ArchivedFrame) -> String {
+    private func formatted(_ f: ArchivedFrame, provenance: (run: ArchivedProcessingRun, inputs: [ProcessingRunInputRef])?) -> String {
         let iso = ISO8601DateFormatter()
         func row(_ label: String, _ value: String) -> String {
             String(format: "  %-18@ %@", (label + ":") as NSString, value)
@@ -86,10 +87,36 @@ struct Info: AsyncParsableCommand {
         lines.append(row("Added at",   iso.string(from: f.addedAt)))
         lines.append(row("File",       f.filePath))
 
+        if let (run, inputs) = provenance {
+            lines.append("")
+            lines.append("Provenance")
+            lines.append(String(repeating: "─", count: 60))
+            lines.append(row("Run ID",   run.id.uuidString))
+            lines.append(row("Pipeline", run.pipelineID))
+            lines.append(row("Run at",   iso.string(from: run.createdAt)))
+            if !run.parameters.isEmpty {
+                let paramsStr = run.parameters.sorted { $0.key < $1.key }
+                    .map { "\($0.key)=\($0.value)" }.joined(separator: "  ")
+                lines.append(row("Parameters", paramsStr))
+            }
+            if !inputs.isEmpty {
+                lines.append(row("Inputs", ""))
+                let grouped = Dictionary(grouping: inputs, by: { $0.inputName })
+                for name in grouped.keys.sorted() {
+                    let refs = grouped[name]!.sorted { $0.position < $1.position }
+                    for ref in refs {
+                        let archiveTag = ref.frameID.map { "  [archive: \($0.uuidString)]" } ?? ""
+                        let display = ref.filePath ?? "(unknown)"
+                        lines.append("    \(name)[\(ref.position)]  \(display)\(archiveTag)")
+                    }
+                }
+            }
+        }
+
         return lines.joined(separator: "\n")
     }
 
-    private func printJSON(_ f: ArchivedFrame) {
+    private func printJSON(_ f: ArchivedFrame, provenance: (run: ArchivedProcessingRun, inputs: [ProcessingRunInputRef])?) {
         let iso = ISO8601DateFormatter()
         var d: [String: Any] = [
             "id":               f.id.uuidString,
@@ -119,6 +146,27 @@ struct Info: AsyncParsableCommand {
         if let v = f.bitpix       { d["bitpix"]         = v }
         d["rejected"] = f.rejected
         if let v = f.rejectedReason { d["rejected_reason"] = v }
+
+        if let (run, inputs) = provenance {
+            var runDict: [String: Any] = [
+                "id":          run.id.uuidString,
+                "pipeline_id": run.pipelineID,
+                "created_at":  iso.string(from: run.createdAt),
+            ]
+            if !run.parameters.isEmpty { runDict["parameters"] = run.parameters }
+            if !inputs.isEmpty {
+                runDict["inputs"] = inputs.map { ref -> [String: Any] in
+                    var r: [String: Any] = [
+                        "input_name": ref.inputName,
+                        "position":   ref.position,
+                    ]
+                    if let v = ref.frameID  { r["frame_id"]  = v.uuidString }
+                    if let v = ref.filePath { r["file_path"] = v }
+                    return r
+                }
+            }
+            d["processing_run"] = runDict
+        }
 
         if let data = try? JSONSerialization.data(withJSONObject: d, options: .prettyPrinted),
            let str = String(data: data, encoding: .utf8) {
