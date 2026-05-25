@@ -1,4 +1,5 @@
 import ArgumentParser
+import AstrophotoArchiveKit
 import AstrophotoKit
 import Foundation
 import Metal
@@ -19,6 +20,13 @@ extension AP {
             Multi-frame (FrameSet) pipeline — repeat the same name:
               ap run frame_registration --input input_frames:frame1.fits --input input_frames:frame2.fits
 
+            Archive frame input (by UUID):
+              ap run star_detection --input input_frame:@frame:3F7A1234-…
+
+            Archive FrameSet input (by UUID or name):
+              ap run frame_stacking --input input_frames:@frameset:3F7A1234-…
+              ap run frame_stacking --input "input_frames:@frameset:M51 Ha lights"
+
             With parameters:
               ap run star-detection --input image.fits --param threshold_value=4.0
 
@@ -31,7 +39,7 @@ extension AP {
         @Argument(help: "Pipeline ID to execute.")
         var pipelineID: String
 
-        @Option(name: .shortAndLong, help: "Input FITS file. Use name:path.fits. Repeat with the same name to build a FrameSet.")
+        @Option(name: .shortAndLong, help: "Input FITS file or archive reference. Use name:path.fits, name:@frame:UUID, or name:@frameset:UUID. Repeat with the same name to build a FrameSet.")
         var input: [String] = []
 
         @Option(name: .shortAndLong, help: "Pipeline parameter as key=value.")
@@ -89,20 +97,42 @@ extension AP {
             }
 
             // Parse --input args: collect multiple paths per named input.
-            // A path may be a directory — fitsFiles(at:) expands it to all FITS files inside.
+            // A path may be a directory (expanded to FITS files), @frameset:UUID|name, or @frame:UUID.
             var inputPaths: [String: [String]] = [:]
             for raw in input {
-                if let colonIdx = raw.firstIndex(of: ":") {
-                    let name = String(raw[..<colonIdx])
-                    let path = String(raw[raw.index(after: colonIdx)...])
-                    inputPaths[name, default: []].append(contentsOf: try fitsFiles(at: path))
+                let (name, token): (String, String)
+                if raw.hasPrefix("@frameset:") || raw.hasPrefix("@frame:") {
+                    guard expectedInputs.count == 1 else {
+                        throw ValidationError(
+                            "Pipeline '\(pipelineID)' has multiple inputs. Use 'name:@frameset:ID' or 'name:@frame:ID' format.\n" +
+                            "Expected inputs: \(expectedInputs.joined(separator: ", "))"
+                        )
+                    }
+                    name = expectedInputs[0]
+                    token = raw
+                } else if let colonIdx = raw.firstIndex(of: ":") {
+                    name = String(raw[..<colonIdx])
+                    token = String(raw[raw.index(after: colonIdx)...])
                 } else if expectedInputs.count == 1 {
-                    inputPaths[expectedInputs[0], default: []].append(contentsOf: try fitsFiles(at: raw))
+                    name = expectedInputs[0]
+                    token = raw
                 } else {
                     throw ValidationError(
                         "Pipeline '\(pipelineID)' has multiple inputs. Use --input name:path.fits format.\n" +
                         "Expected inputs: \(expectedInputs.joined(separator: ", "))"
                     )
+                }
+
+                if token.hasPrefix("@frameset:") {
+                    let ref = String(token.dropFirst("@frameset:".count))
+                    let paths = try await archiveFrameSetPaths(ref: ref)
+                    inputPaths[name, default: []].append(contentsOf: paths)
+                } else if token.hasPrefix("@frame:") {
+                    let ref = String(token.dropFirst("@frame:".count))
+                    let path = try await archiveFramePath(ref: ref)
+                    inputPaths[name, default: []].append(path)
+                } else {
+                    inputPaths[name, default: []].append(contentsOf: try fitsFiles(at: token))
                 }
             }
             for name in expectedInputs where inputPaths[name] == nil {
@@ -222,6 +252,46 @@ extension AP {
                     printTable(table, index: i + 1)
                 }
             }
+        }
+
+        private func archiveFramePath(ref: String) async throws -> String {
+            guard let uuid = UUID(uuidString: ref) else {
+                throw ValidationError("@frame: reference must be a valid UUID: '\(ref)'.")
+            }
+            let config = try ArchiveConfiguration.fromEnvironment()
+            let archive = try Archive(configuration: config)
+            guard let frame = try await archive.frame(id: uuid) else {
+                throw ValidationError("No archive frame found with id '\(ref)'.")
+            }
+            return frame.filePath
+        }
+
+        private func archiveFrameSetPaths(ref: String) async throws -> [String] {
+            let config = try ArchiveConfiguration.fromEnvironment()
+            let archive = try Archive(configuration: config)
+
+            let uuid: UUID
+            if let u = UUID(uuidString: ref) {
+                uuid = u
+                guard try await archive.frameSet(id: uuid) != nil else {
+                    throw ValidationError("No archive frame set found with id '\(ref)'.")
+                }
+            } else {
+                let allSets = try await archive.frameSets()
+                guard let match = allSets.first(where: { $0.name.lowercased() == ref.lowercased() }) else {
+                    throw ValidationError(
+                        "No archive frame set named '\(ref)'. " +
+                        "Use 'ap-archive frameset list' to see available sets."
+                    )
+                }
+                uuid = match.id
+            }
+
+            let frames = try await archive.frames(inFrameSet: uuid)
+            guard !frames.isEmpty else {
+                throw ValidationError("Archive frame set '\(ref)' contains no frames.")
+            }
+            return frames.map { $0.filePath }
         }
 
         private func tableToDict(_ table: TableData) -> [String: Any]? {
