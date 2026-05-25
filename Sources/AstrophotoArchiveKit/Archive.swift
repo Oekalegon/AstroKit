@@ -80,7 +80,9 @@ public actor Archive {
             positionAngle: meta.positionAngle,
             processingRunID: processingRunID,
             sessionBeg: meta.sessionBeg,
-            sessionEnd: meta.sessionEnd
+            sessionEnd: meta.sessionEnd,
+            temperatureMin: meta.temperatureMin,
+            temperatureMax: meta.temperatureMax
         )
         let isNew = try await database.insertFrame(frame)
         if !isNew {

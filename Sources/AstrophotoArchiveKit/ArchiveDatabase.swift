@@ -119,6 +119,11 @@ actor ArchiveDatabase {
         ALTER TABLE frames ADD COLUMN session_beg TEXT;
         ALTER TABLE frames ADD COLUMN session_end TEXT;
         """,
+        // v10: temperature range for stacked frames.
+        """
+        ALTER TABLE frames ADD COLUMN temperature_min REAL;
+        ALTER TABLE frames ADD COLUMN temperature_max REAL;
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -205,8 +210,8 @@ actor ArchiveDatabase {
          exposure_time, gain, offset, width, height, bitpix,
          calibrated, stacked, stretched, processing_level, added_at, thumbnail,
          frame_signature, rejected, rejected_reason, position_angle, processing_run_id,
-         session_beg, session_end)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         session_beg, session_end, temperature_min, temperature_max)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -249,6 +254,8 @@ actor ArchiveDatabase {
         bind(stmt, 30, frame.processingRunID?.uuidString)
         bind(stmt, 31, frame.sessionBeg.map { iso.string(from: $0) })
         bind(stmt, 32, frame.sessionEnd.map { iso.string(from: $0) })
+        bind(stmt, 33, frame.temperatureMin)
+        bind(stmt, 34, frame.temperatureMax)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -780,7 +787,9 @@ actor ArchiveDatabase {
             positionAngle: columnDouble(stmt, 28),
             processingRunID: columnText(stmt, 29).flatMap { UUID(uuidString: $0) },
             sessionBeg: columnText(stmt, 30).flatMap { iso.date(from: $0) },
-            sessionEnd: columnText(stmt, 31).flatMap { iso.date(from: $0) }
+            sessionEnd: columnText(stmt, 31).flatMap { iso.date(from: $0) },
+            temperatureMin: columnDouble(stmt, 32),
+            temperatureMax: columnDouble(stmt, 33)
         )
     }
 

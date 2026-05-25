@@ -39,6 +39,10 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var sessionBeg: Date?
     /// Latest input-frame timestamp for stacked frames (DATE-END).
     public var sessionEnd: Date?
+    /// Minimum CCD temperature across input frames (stacked frames only).
+    public var temperatureMin: Double?
+    /// Maximum CCD temperature across input frames (stacked frames only).
+    public var temperatureMax: Double?
 
     public init(
         id: UUID, filePath: String, objectName: String?, ra: Double?, dec: Double?,
@@ -53,7 +57,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
         positionAngle: Double? = nil,
         processingRunID: UUID? = nil,
         sessionBeg: Date? = nil,
-        sessionEnd: Date? = nil
+        sessionEnd: Date? = nil,
+        temperatureMin: Double? = nil,
+        temperatureMax: Double? = nil
     ) {
         self.id = id
         self.filePath = filePath
@@ -86,5 +92,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.processingRunID = processingRunID
         self.sessionBeg = sessionBeg
         self.sessionEnd = sessionEnd
+        self.temperatureMin = temperatureMin
+        self.temperatureMax = temperatureMax
     }
 }

@@ -26,6 +26,8 @@ struct FrameArchiveMetadata {
     var positionAngle: Double?   // degrees east of north; from POSANGLE / PA / ROTATANG
     var sessionBeg: Date?        // DATE-BEG: earliest input frame (stacked frames only)
     var sessionEnd: Date?        // DATE-END: latest input frame (stacked frames only)
+    var temperatureMin: Double?  // CCD-TMIN: coldest input frame (stacked frames only)
+    var temperatureMax: Double?  // CCD-TMAX: warmest input frame (stacked frames only)
 }
 
 enum FITSHeaderReader {
@@ -82,8 +84,10 @@ enum FITSHeaderReader {
         else               { processingLevel = .raw }
 
         let iso = ISO8601DateFormatter()
-        let sessionBeg = (headers["DATE-BEG"]?.stringValue).flatMap { iso.date(from: $0) }
-        let sessionEnd = (headers["DATE-END"]?.stringValue).flatMap { iso.date(from: $0) }
+        let sessionBeg    = (headers["DATE-BEG"]?.stringValue).flatMap { iso.date(from: $0) }
+        let sessionEnd    = (headers["DATE-END"]?.stringValue).flatMap { iso.date(from: $0) }
+        let temperatureMin = doubleValue(headers, keys: ["CCD-TMIN"])
+        let temperatureMax = doubleValue(headers, keys: ["CCD-TMAX"])
 
         return FrameArchiveMetadata(
             objectName: objectName,
@@ -105,7 +109,9 @@ enum FITSHeaderReader {
             processingLevel: processingLevel,
             positionAngle: positionAngle,
             sessionBeg: sessionBeg,
-            sessionEnd: sessionEnd
+            sessionEnd: sessionEnd,
+            temperatureMin: temperatureMin,
+            temperatureMax: temperatureMax
         )
     }
 

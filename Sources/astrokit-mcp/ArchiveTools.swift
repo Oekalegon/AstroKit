@@ -295,7 +295,11 @@ struct ArchiveTools {
         if let v = f.camera      { lines.append(row("Camera",       v));                              hasCameraSection = true }
         if let v = f.gain        { lines.append(row("Gain",         String(format: "%.0f", v)));       hasCameraSection = true }
         if let v = f.offset      { lines.append(row("Offset",       String(format: "%.0f", v)));       hasCameraSection = true }
-        if let v = f.temperature { lines.append(row("Temperature",  String(format: "%.1f °C", v)));    hasCameraSection = true }
+        if let lo = f.temperatureMin, let hi = f.temperatureMax, abs(hi - lo) > 0.05 {
+            lines.append(row("Temperature",  String(format: "%.1f … %.1f °C", lo, hi)));    hasCameraSection = true
+        } else if let v = f.temperature {
+            lines.append(row("Temperature",  String(format: "%.1f °C", v)));                hasCameraSection = true
+        }
         if !hasCameraSection     { lines.removeLast() }
 
         lines.append("")
