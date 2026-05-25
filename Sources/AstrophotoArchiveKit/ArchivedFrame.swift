@@ -31,6 +31,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
     /// True if the frame has been flagged as unusable and should be excluded from processing.
     public var rejected: Bool
     public var rejectedReason: String?
+    /// Camera rotation in degrees east of north (POSANGLE / PA / ROTATANG FITS keyword).
+    public var positionAngle: Double?
 
     public init(
         id: UUID, filePath: String, objectName: String?, ra: Double?, dec: Double?,
@@ -41,7 +43,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
         calibrated: Bool, stacked: Bool, stretched: Bool,
         processingLevel: ProcessingLevel, addedAt: Date,
         thumbnail: Data? = nil,
-        rejected: Bool = false, rejectedReason: String? = nil
+        rejected: Bool = false, rejectedReason: String? = nil,
+        positionAngle: Double? = nil
     ) {
         self.id = id
         self.filePath = filePath
@@ -70,5 +73,6 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.thumbnail = thumbnail
         self.rejected = rejected
         self.rejectedReason = rejectedReason
+        self.positionAngle = positionAngle
     }
 }

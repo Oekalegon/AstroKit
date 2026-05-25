@@ -97,6 +97,79 @@ struct ArchiveTools {
             ] as [String: Any],
         ],
         [
+            "name": "archive_frameset_inspect",
+            "description": "Dry-run: inspect which frames would be included in a frame set and report property distributions (cameras, filters, date span, temperature range, pixel scales, position angles, …) without writing to the database. Use this before archive_frameset_create to check frame compatibility.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "frame_type": ["type": "string", "enum": ["light", "dark", "flat", "bias"], "description": "Frame type to inspect."],
+                    "object_name": ["type": "string", "description": "Partial object name to match (e.g. 'M51')."],
+                    "filters": ["type": "array", "items": ["type": "string"], "description": "Optical filters to include (Ha, SII, OIII, R, G, B, L)."],
+                    "camera": ["type": "string", "description": "Camera name (exact match)."],
+                    "from_date": ["type": "string", "description": "Start date YYYY-MM-DD."],
+                    "to_date": ["type": "string", "description": "End date YYYY-MM-DD."],
+                    "processing_level": ["type": "string", "enum": ["raw", "calibrated", "stacked", "stretched"], "description": "Filter by processing level."],
+                    "calibrated": ["type": "boolean", "description": "Only calibrated frames."],
+                    "temp_center": ["type": "number", "description": "Centre temperature in °C for dark frame grouping."],
+                    "temp_tolerance": ["type": "number", "description": "Temperature tolerance ±°C (default 2.0)."],
+                ] as [String: Any],
+                "required": [],
+            ] as [String: Any],
+        ],
+        [
+            "name": "archive_frameset_create",
+            "description": "Create a named frame set by querying the archive. All matched frames must share the same frame type and processing level. Mixed optical filters are blocked by default — set force=true to allow them (stored as a comma-separated list). Rejected frames are automatically excluded. Always returns the inspection report alongside the new set.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "name": ["type": "string", "description": "Name for the frame set. Auto-generated from query parameters if omitted."],
+                    "frame_type": ["type": "string", "enum": ["light", "dark", "flat", "bias"], "description": "Frame type to include (required — a set is homogeneous)."],
+                    "object_name": ["type": "string", "description": "Partial object name to match (e.g. 'M51')."],
+                    "filters": ["type": "array", "items": ["type": "string"], "description": "Optical filters to include (Ha, SII, OIII, R, G, B, L)."],
+                    "camera": ["type": "string", "description": "Camera name (exact match)."],
+                    "from_date": ["type": "string", "description": "Start date YYYY-MM-DD."],
+                    "to_date": ["type": "string", "description": "End date YYYY-MM-DD."],
+                    "processing_level": ["type": "string", "enum": ["raw", "calibrated", "stacked", "stretched"], "description": "Filter by processing level."],
+                    "calibrated": ["type": "boolean", "description": "Only calibrated frames."],
+                    "temp_center": ["type": "number", "description": "Centre temperature in °C for dark frame grouping."],
+                    "temp_tolerance": ["type": "number", "description": "Temperature tolerance ±°C (default 2.0)."],
+                    "force": ["type": "boolean", "description": "Allow mixed optical filters; stored as comma-separated list on the frame set (default false)."],
+                ] as [String: Any],
+                "required": [],
+            ] as [String: Any],
+        ],
+        [
+            "name": "archive_frameset_list",
+            "description": "List all frame sets in the archive.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [String: Any](),
+                "required": [String](),
+            ] as [String: Any],
+        ],
+        [
+            "name": "archive_frameset_get",
+            "description": "Get details of a frame set, including its member frames.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "id": ["type": "string", "description": "Frame set UUID."],
+                ] as [String: Any],
+                "required": ["id"],
+            ] as [String: Any],
+        ],
+        [
+            "name": "archive_frameset_delete",
+            "description": "Delete a frame set. Member frames are not removed from the archive.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "id": ["type": "string", "description": "Frame set UUID."],
+                ] as [String: Any],
+                "required": ["id"],
+            ] as [String: Any],
+        ],
+        [
             "name": "archive_remove",
             "description": "Remove a frame from the archive by its UUID.",
             "inputSchema": [
@@ -127,13 +200,18 @@ struct ArchiveTools {
 
     func call(name: String, arguments: [String: Any]) async throws -> String {
         switch name {
-        case "archive_add":          return try await archiveAdd(arguments)
-        case "archive_get":          return try await archiveGet(arguments)
-        case "archive_find":         return try await archiveFind(arguments)
-        case "archive_list_objects": return try await archiveListObjects()
-        case "archive_stats":        return try await archiveStats()
-        case "archive_remove":       return try await archiveRemove(arguments)
-        case "archive_reject":       return try await archiveReject(arguments)
+        case "archive_add":              return try await archiveAdd(arguments)
+        case "archive_get":              return try await archiveGet(arguments)
+        case "archive_find":             return try await archiveFind(arguments)
+        case "archive_list_objects":     return try await archiveListObjects()
+        case "archive_stats":            return try await archiveStats()
+        case "archive_remove":           return try await archiveRemove(arguments)
+        case "archive_reject":           return try await archiveReject(arguments)
+        case "archive_frameset_inspect":  return try await archiveFrameSetInspect(arguments)
+        case "archive_frameset_create":  return try await archiveFrameSetCreate(arguments)
+        case "archive_frameset_list":    return try await archiveFrameSetList()
+        case "archive_frameset_get":     return try await archiveFrameSetGet(arguments)
+        case "archive_frameset_delete":  return try await archiveFrameSetDelete(arguments)
         default: throw ToolError("Unknown archive tool: \(name)")
         }
     }
@@ -279,7 +357,7 @@ struct ArchiveTools {
             if let v = f.objectName   { parts.append("object: \(v)") }
             if let v = f.filter       { parts.append("filter: \(v)") }
             if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
-            if let v = f.timestamp    { parts.append("date: \(iso.string(from: v).prefix(10))") }
+            if let v = f.timestamp    { parts.append("date: \(String(iso.string(from: v).prefix(16)).replacingOccurrences(of: "T", with: " "))") }
             parts.append("file: \((f.filePath as NSString).lastPathComponent)")
             lines.append("  { \(parts.joined(separator: ", ")) }")
         }
@@ -332,6 +410,171 @@ struct ArchiveTools {
             let suffix = reason.map { "  Reason: \($0)" } ?? ""
             return "Frame \(idStr) marked as rejected.\(suffix)"
         }
+    }
+
+    // MARK: - Frame set implementations
+
+    private func makeFrameSetQuery(_ args: [String: Any]) -> FrameQuery {
+        var query = FrameQuery()
+        query.objectName = args["object_name"] as? String
+        query.camera     = args["camera"]      as? String
+        query.filters    = args["filters"]     as? [String]
+        if let t = args["frame_type"] as? String { query.frameTypes = [t] }
+        if let lvl = args["processing_level"] as? String {
+            query.processingLevel = ProcessingLevel(rawValue: lvl)
+        }
+        if let cal = args["calibrated"] as? Bool { query.calibrated = cal }
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        df.timeZone = TimeZone(identifier: "UTC")
+        if let fromStr = args["from_date"] as? String,
+           let toStr   = args["to_date"]   as? String,
+           let fromDate = df.date(from: fromStr),
+           let toDate   = df.date(from: toStr) {
+            query.dateRange = DateInterval(start: fromDate, end: toDate)
+        }
+        if let center = args["temp_center"] as? Double {
+            let tol = args["temp_tolerance"] as? Double ?? 2.0
+            query.temperatureRange = (center - tol)...(center + tol)
+        }
+        return query
+    }
+
+    private func archiveFrameSetInspect(_ args: [String: Any]) async throws -> String {
+        let archive    = try makeArchive()
+        let query      = makeFrameSetQuery(args)
+        let inspection = try await archive.inspectFrameSet(query: query)
+        return inspection.formatted(isDryRun: true)
+    }
+
+    private func archiveFrameSetCreate(_ args: [String: Any]) async throws -> String {
+        let archive = try makeArchive()
+        let query   = makeFrameSetQuery(args)
+        let force   = args["force"] as? Bool ?? false
+
+        let objectName = args["object_name"] as? String
+        let frameType  = args["frame_type"]  as? String
+        let filters    = args["filters"]     as? [String]
+        let fromDate   = args["from_date"]   as? String
+        let toDate     = args["to_date"]     as? String
+
+        let setName: String
+        if let n = args["name"] as? String {
+            setName = n
+        } else {
+            var parts: [String] = []
+            if let v = objectName       { parts.append(v) }
+            if let v = frameType        { parts.append(v) }
+            if let v = filters?.first   { parts.append(v) }
+            if let f = fromDate, let t = toDate { parts.append("\(f)–\(t)") }
+            setName = parts.isEmpty ? "frameset" : parts.joined(separator: " ")
+        }
+
+        let (fs, inspection) = try await archive.createFrameSet(name: setName, query: query, force: force)
+        let iso = ISO8601DateFormatter()
+        var lines = [
+            "Created frame set '\(fs.name)'  [\(fs.id.uuidString)]",
+            "",
+        ]
+        lines.append(inspection.formatted(isDryRun: false))
+        lines.append("")
+        lines.append("  Created: \(iso.string(from: fs.createdAt))")
+        return lines.joined(separator: "\n")
+    }
+
+    private func archiveFrameSetList() async throws -> String {
+        let archive = try makeArchive()
+        let sets = try await archive.frameSets()
+        if sets.isEmpty { return "No frame sets in archive." }
+        var lines = ["Frame sets (\(sets.count)):"]
+        let iso = ISO8601DateFormatter()
+        for fs in sets {
+            var parts = [
+                "id: \(fs.id.uuidString)",
+                "name: \(fs.name)",
+                "type: \(fs.frameType)",
+                "frames: \(fs.frameCount)",
+                "level: \(fs.processingLevel.rawValue)",
+            ]
+            if let v = fs.objectName { parts.append("object: \(v)") }
+            if let v = fs.filter     { parts.append("filter: \(v)") }
+            parts.append("created: \(String(iso.string(from: fs.createdAt).prefix(16)).replacingOccurrences(of: "T", with: " "))")
+            lines.append("  { \(parts.joined(separator: ", ")) }")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func archiveFrameSetGet(_ args: [String: Any]) async throws -> String {
+        guard let idStr = args["id"] as? String, let uuid = UUID(uuidString: idStr) else {
+            throw ToolError("archive_frameset_get requires a valid 'id' UUID.")
+        }
+        let archive = try makeArchive()
+        guard let fs = try await archive.frameSet(id: uuid) else {
+            throw ToolError("No frame set with id \(idStr).")
+        }
+        let memberFrames = try await archive.frames(inFrameSet: uuid)
+
+        let iso = ISO8601DateFormatter()
+        func row(_ label: String, _ value: String) -> String {
+            String(format: "  %-14@ %@", (label + ":") as NSString, value as NSString)
+        }
+
+        var lines: [String] = []
+        lines.append("Frame Set  \(fs.id.uuidString)")
+        lines.append(String(repeating: "─", count: 60))
+        lines.append(row("Name",   fs.name))
+        lines.append(row("Type",   fs.frameType))
+        lines.append(row("Level",  fs.processingLevel.rawValue))
+        lines.append(row("Frames", "\(fs.frameCount)"))
+        if let v = fs.objectName   { lines.append(row("Object",   v)) }
+        if let v = fs.filter       {
+            let label = v.contains(",") ? "Filters" : "Filter"
+            lines.append(row(label, v))
+        }
+        if let v = fs.camera       { lines.append(row("Camera",   v)) }
+        if let v = fs.exposureTime { lines.append(row("Exposure", String(format: "%.0f s", v))) }
+        if let mn = fs.temperatureMin, let mx = fs.temperatureMax, let mean = fs.temperatureMean {
+            if abs(mx - mn) < 0.5 {
+                lines.append(row("Temperature", String(format: "%.1f °C", mean)))
+            } else {
+                lines.append(row("Temperature", String(format: "%.1f – %.1f °C (mean %.1f)", mn, mx, mean)))
+            }
+        }
+        if let v = fs.gain         { lines.append(row("Gain",        String(format: "%.0f", v))) }
+        if let v = fs.offset       { lines.append(row("Offset",      String(format: "%.0f", v))) }
+        if let w = fs.width, let h = fs.height { lines.append(row("Size", "\(w) × \(h)")) }
+        if let v = fs.pixelScale   { lines.append(row("Pixel scale", String(format: "%.3f \"/px", v))) }
+        if let v = fs.focalLength  { lines.append(row("Focal length",String(format: "%.0f mm", v))) }
+        if let v = fs.positionAngle { lines.append(row("Pos. angle", String(format: "%.1f°", v))) }
+        if let from = fs.dateFrom, let to = fs.dateTo {
+            let f = String(iso.string(from: from).prefix(10))
+            let t = String(iso.string(from: to).prefix(10))
+            lines.append(row("Date span", "\(f) – \(t)"))
+        }
+        lines.append(row("Created", iso.string(from: fs.createdAt)))
+
+        if !memberFrames.isEmpty {
+            lines.append("")
+            lines.append("Members:")
+            for f in memberFrames {
+                var parts = ["id: \(f.id.uuidString)", "type: \(f.frameType)"]
+                if let v = f.objectName   { parts.append("object: \(v)") }
+                if let v = f.filter       { parts.append("filter: \(v)") }
+                if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
+                if let v = f.timestamp    { parts.append("date: \(String(iso.string(from: v).prefix(16)).replacingOccurrences(of: "T", with: " "))") }
+                lines.append("  { \(parts.joined(separator: ", ")) }")
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func archiveFrameSetDelete(_ args: [String: Any]) async throws -> String {
+        guard let idStr = args["id"] as? String, let uuid = UUID(uuidString: idStr) else {
+            throw ToolError("archive_frameset_delete requires a valid 'id' UUID.")
+        }
+        let archive = try makeArchive()
+        try await archive.deleteFrameSet(id: uuid)
+        return "Deleted frame set \(idStr)."
     }
 
     private func archiveRemove(_ args: [String: Any]) async throws -> String {

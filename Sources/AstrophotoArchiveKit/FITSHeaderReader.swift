@@ -23,6 +23,7 @@ struct FrameArchiveMetadata {
     var stacked: Bool
     var stretched: Bool
     var processingLevel: ProcessingLevel
+    var positionAngle: Double?   // degrees east of north; from POSANGLE / PA / ROTATANG
 }
 
 enum FITSHeaderReader {
@@ -56,9 +57,10 @@ enum FITSHeaderReader {
         let camera = stringValue(headers, keys: ["INSTRUME"])?.trimmingCharacters(in: .whitespaces)
             .flatMap { $0.isEmpty ? nil : $0 }
 
-        let focalLength = doubleValue(headers, keys: ["FOCALLEN"])
-        let pixelScale  = doubleValue(headers, keys: ["PIXSCALE", "SCALE"])
-        let temperature = doubleValue(headers, keys: ["CCD-TEMP", "CCDTEMP"])
+        let focalLength   = doubleValue(headers, keys: ["FOCALLEN"])
+        let pixelScale    = doubleValue(headers, keys: ["PIXSCALE", "SCALE"])
+        let temperature   = doubleValue(headers, keys: ["CCD-TEMP", "CCDTEMP"])
+        let positionAngle = doubleValue(headers, keys: ["POSANGLE", "PA", "ROTATANG"])
 
         let timestamp = parseTimestamp(headers)
         let exposureTime = doubleValue(headers, keys: ["EXPTIME", "EXPOSURE"])
@@ -94,7 +96,8 @@ enum FITSHeaderReader {
             calibrated: calibrated,
             stacked: stacked,
             stretched: stretched,
-            processingLevel: processingLevel
+            processingLevel: processingLevel,
+            positionAngle: positionAngle
         )
     }
 

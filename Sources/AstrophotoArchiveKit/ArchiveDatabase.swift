@@ -18,6 +18,8 @@ actor ArchiveDatabase {
             throw ArchiveError.databaseError("Cannot open database at \(url.path)")
         }
         db = database
+        // Enforce referential integrity so ON DELETE CASCADE/SET NULL work correctly.
+        sqlite3_exec(database, "PRAGMA foreign_keys = ON", nil, nil, nil)
         // Apply migrations directly — init has exclusive access to self.
         try ArchiveDatabase.applyMigrations(db: database)
     }
@@ -51,6 +53,46 @@ actor ArchiveDatabase {
         ALTER TABLE frames ADD COLUMN rejected INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE frames ADD COLUMN rejected_reason TEXT;
         CREATE INDEX IF NOT EXISTS idx_frames_rejected ON frames(rejected);
+        """,
+        // v6: frame sets — named, homogeneous collections of archived frames.
+        """
+        CREATE TABLE IF NOT EXISTS frame_sets (
+            id               TEXT PRIMARY KEY,
+            name             TEXT NOT NULL,
+            frame_type       TEXT NOT NULL,
+            processing_level TEXT NOT NULL DEFAULT 'raw',
+            object_name      TEXT,
+            filter           TEXT,
+            camera           TEXT,
+            exposure_time    REAL,
+            temperature      REAL,
+            gain             REAL,
+            offset           REAL,
+            width            INTEGER,
+            height           INTEGER,
+            created_at       TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS frame_set_members (
+            frame_set_id TEXT NOT NULL REFERENCES frame_sets(id) ON DELETE CASCADE,
+            frame_id     TEXT NOT NULL REFERENCES frames(id) ON DELETE CASCADE,
+            position     INTEGER NOT NULL,
+            PRIMARY KEY (frame_set_id, frame_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_fsm_frameset ON frame_set_members(frame_set_id);
+        CREATE INDEX IF NOT EXISTS idx_fsm_frame    ON frame_set_members(frame_id);
+        """,
+        // v7: position angle on frames; richer aggregated stats on frame_sets.
+        """
+        ALTER TABLE frames ADD COLUMN position_angle REAL;
+        ALTER TABLE frame_sets ADD COLUMN date_from TEXT;
+        ALTER TABLE frame_sets ADD COLUMN date_to TEXT;
+        ALTER TABLE frame_sets ADD COLUMN temperature_mean REAL;
+        ALTER TABLE frame_sets ADD COLUMN temperature_min REAL;
+        ALTER TABLE frame_sets ADD COLUMN temperature_max REAL;
+        ALTER TABLE frame_sets ADD COLUMN pixel_scale REAL;
+        ALTER TABLE frame_sets ADD COLUMN focal_length REAL;
+        ALTER TABLE frame_sets ADD COLUMN position_angle REAL;
+        UPDATE frame_sets SET temperature_mean = temperature WHERE temperature IS NOT NULL;
         """,
     ]
 
@@ -137,8 +179,8 @@ actor ArchiveDatabase {
          filter, camera, focal_length, pixel_scale, temperature, timestamp,
          exposure_time, gain, offset, width, height, bitpix,
          calibrated, stacked, stretched, processing_level, added_at, thumbnail,
-         frame_signature, rejected, rejected_reason)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         frame_signature, rejected, rejected_reason, position_angle)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -177,6 +219,7 @@ actor ArchiveDatabase {
         ))
         sqlite3_bind_int(stmt, 27, frame.rejected ? 1 : 0)
         bind(stmt, 28, frame.rejectedReason)
+        bind(stmt, 29, frame.positionAngle)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -229,6 +272,10 @@ actor ArchiveDatabase {
         if let name = query.objectName {
             conditions.append("object_name LIKE ?")
             bindings.append("%\(name)%")
+        }
+        if let cam = query.camera {
+            conditions.append("camera = ?")
+            bindings.append(cam)
         }
         if let pixels = healpixPixels, !pixels.isEmpty {
             conditions.append("healpix_pixel IN (\(pixels.map { _ in "?" }.joined(separator: ",")))")
@@ -330,6 +377,163 @@ actor ArchiveDatabase {
         }
     }
 
+    // MARK: - Frame sets
+
+    // Shared SELECT columns for both list and single-item queries.
+    // Indices: 0–13 = v6 core, 14–21 = v7 extras, 22 = frame_count.
+    private static let frameSetSelectSQL = """
+        SELECT fs.id, fs.name, fs.frame_type, fs.processing_level,
+               fs.object_name, fs.filter, fs.camera, fs.exposure_time, fs.temperature,
+               fs.gain, fs.offset, fs.width, fs.height, fs.created_at,
+               fs.date_from, fs.date_to,
+               fs.temperature_mean, fs.temperature_min, fs.temperature_max,
+               fs.pixel_scale, fs.focal_length, fs.position_angle,
+               COUNT(fsm.frame_id) AS frame_count
+        FROM frame_sets fs
+        LEFT JOIN frame_set_members fsm ON fsm.frame_set_id = fs.id
+        """
+
+    func insertFrameSet(_ fs: ArchivedFrameSet, frameIDs: [UUID]) throws {
+        let iso = ISO8601DateFormatter()
+        try exec("BEGIN")
+        let sql = """
+        INSERT INTO frame_sets
+        (id, name, frame_type, processing_level, object_name, filter, camera,
+         exposure_time, temperature, gain, offset, width, height, created_at,
+         date_from, date_to, temperature_mean, temperature_min, temperature_max,
+         pixel_scale, focal_length, position_angle)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1,  fs.id.uuidString)
+        bind(stmt, 2,  fs.name)
+        bind(stmt, 3,  fs.frameType)
+        bind(stmt, 4,  fs.processingLevel.rawValue)
+        bind(stmt, 5,  fs.objectName)
+        bind(stmt, 6,  fs.filter)
+        bind(stmt, 7,  fs.camera)
+        bind(stmt, 8,  fs.exposureTime)
+        bind(stmt, 9,  fs.temperatureMean)   // legacy `temperature` column = mean
+        bind(stmt, 10, fs.gain)
+        bind(stmt, 11, fs.offset)
+        bind(stmt, 12, fs.width.map { Int64($0) })
+        bind(stmt, 13, fs.height.map { Int64($0) })
+        bind(stmt, 14, iso.string(from: fs.createdAt))
+        bind(stmt, 15, fs.dateFrom.map { iso.string(from: $0) })
+        bind(stmt, 16, fs.dateTo.map   { iso.string(from: $0) })
+        bind(stmt, 17, fs.temperatureMean)
+        bind(stmt, 18, fs.temperatureMin)
+        bind(stmt, 19, fs.temperatureMax)
+        bind(stmt, 20, fs.pixelScale)
+        bind(stmt, 21, fs.focalLength)
+        bind(stmt, 22, fs.positionAngle)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+
+        let memberSQL = "INSERT INTO frame_set_members (frame_set_id, frame_id, position) VALUES (?,?,?)"
+        for (position, frameID) in frameIDs.enumerated() {
+            let mstmt = try prepare(memberSQL)
+            defer { sqlite3_finalize(mstmt) }
+            bind(mstmt, 1, fs.id.uuidString)
+            bind(mstmt, 2, frameID.uuidString)
+            sqlite3_bind_int(mstmt, 3, Int32(position))
+            guard sqlite3_step(mstmt) == SQLITE_DONE else {
+                sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                throw ArchiveError.databaseError(dbErrorMessage())
+            }
+        }
+        try exec("COMMIT")
+    }
+
+    func queryFrameSets() throws -> [ArchivedFrameSet] {
+        let sql = ArchiveDatabase.frameSetSelectSQL + " GROUP BY fs.id ORDER BY fs.created_at DESC"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        var results: [ArchivedFrameSet] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let fs = rowToFrameSet(stmt) { results.append(fs) }
+        }
+        return results
+    }
+
+    func frameSetByID(_ id: UUID) throws -> ArchivedFrameSet? {
+        let sql = ArchiveDatabase.frameSetSelectSQL + " WHERE fs.id = ? GROUP BY fs.id"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrameSet(stmt) : nil
+    }
+
+    func frameIDsForSet(_ id: UUID) throws -> [UUID] {
+        let stmt = try prepare(
+            "SELECT frame_id FROM frame_set_members WHERE frame_set_id = ? ORDER BY position"
+        )
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        var ids: [UUID] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let s = columnText(stmt, 0), let uuid = UUID(uuidString: s) {
+                ids.append(uuid)
+            }
+        }
+        return ids
+    }
+
+    func deleteFrameSet(id: UUID) throws {
+        let stmt = try prepare("DELETE FROM frame_sets WHERE id = ?")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
+    private func rowToFrameSet(_ stmt: OpaquePointer?) -> ArchivedFrameSet? {
+        // Column map — see frameSetSelectSQL for ordering.
+        // 0–13: v6 core, 14–21: v7 extras, 22: frame_count
+        guard let stmt,
+              let idStr = columnText(stmt, 0), let id = UUID(uuidString: idStr),
+              let name = columnText(stmt, 1),
+              let frameType = columnText(stmt, 2),
+              let levelStr = columnText(stmt, 3),
+              let createdAtStr = columnText(stmt, 13)
+        else { return nil }
+
+        let iso = ISO8601DateFormatter()
+        let processingLevel = ProcessingLevel(rawValue: levelStr) ?? .raw
+        let createdAt = iso.date(from: createdAtStr) ?? Date()
+        // temperature_mean (col 16) preferred; fall back to legacy temperature (col 8) for pre-v7 rows.
+        let tempMean = columnDouble(stmt, 16) ?? columnDouble(stmt, 8)
+
+        return ArchivedFrameSet(
+            id: id,
+            name: name,
+            frameType: frameType,
+            processingLevel: processingLevel,
+            createdAt: createdAt,
+            frameCount: Int(sqlite3_column_int(stmt, 22)),
+            objectName:   columnText(stmt, 4),
+            filter:       columnText(stmt, 5),
+            camera:       columnText(stmt, 6),
+            exposureTime: columnDouble(stmt, 7),
+            gain:         columnDouble(stmt, 9),
+            offset:       columnDouble(stmt, 10),
+            width:  sqlite3_column_type(stmt, 11) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 11)) : nil,
+            height: sqlite3_column_type(stmt, 12) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 12)) : nil,
+            pixelScale:    columnDouble(stmt, 19),
+            focalLength:   columnDouble(stmt, 20),
+            positionAngle: columnDouble(stmt, 21),
+            dateFrom: columnText(stmt, 14).flatMap { iso.date(from: $0) },
+            dateTo:   columnText(stmt, 15).flatMap { iso.date(from: $0) },
+            temperatureMean: tempMean,
+            temperatureMin:  columnDouble(stmt, 17),
+            temperatureMax:  columnDouble(stmt, 18)
+        )
+    }
+
     // MARK: - Statistics
 
     func statistics(archiveRoot: URL) throws -> ArchiveStatistics {
@@ -409,7 +613,8 @@ actor ArchiveDatabase {
             addedAt: columnText(stmt, 23).flatMap { iso.date(from: $0) } ?? Date(),
             thumbnail: columnBlob(stmt, 24),
             rejected: sqlite3_column_int(stmt, 26) != 0,
-            rejectedReason: columnText(stmt, 27)
+            rejectedReason: columnText(stmt, 27),
+            positionAngle: columnDouble(stmt, 28)
         )
     }
 

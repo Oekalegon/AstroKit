@@ -84,6 +84,7 @@ ap-archive find [options]
 | Option | Description |
 |--------|-------------|
 | `--object <name>` | Partial object name match (e.g. `M51`) |
+| `--camera <name>` | Camera name (exact match) |
 | `--type <types>` | Comma-separated frame types: `light,dark,flat,bias` |
 | `--filter <filters>` | Comma-separated filters: `Ha,SII,OIII,R,G,B,L` |
 | `--from <date>` | Start date in `YYYY-MM-DD` format |
@@ -202,6 +203,139 @@ Archive Statistics
 
   Disk used:      24.3 GB
   Disk available: 1.2 TB
+```
+
+---
+
+### `ap-archive frameset`
+
+Manages frame sets — named, homogeneous collections of archived frames used as inputs to processing pipelines.
+
+A frame set requires all member frames to share the same **type** (light, dark, flat, or bias) and the same **processing level**. Optical filter must also be uniform — use `--force` to allow mixed filters. Shared properties (object, camera, exposure, temperature, date span, pixel scale, position angle) are recorded automatically; any property that differs across members is left blank.
+
+After creation the command always prints an inspection report so you can verify the result.
+
+#### `ap-archive frameset create`
+
+Creates a frame set from frames matching a query. Rejected frames are always excluded.
+
+```
+ap-archive frameset create [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--name <name>` | Name for the frame set (auto-generated if omitted) |
+| `--type <type>` | Frame type: `light`, `dark`, `flat`, `bias` |
+| `--object <name>` | Partial object name match |
+| `--filter <filter>` | Optical filter |
+| `--camera <name>` | Camera name (exact match) |
+| `--from <date>` | Start date `YYYY-MM-DD` |
+| `--to <date>` | End date `YYYY-MM-DD` |
+| `--level <level>` | Processing level: `raw`, `calibrated`, `stacked`, `stretched` |
+| `--calibrated` | Only calibrated frames |
+| `--temp-center <°C>` | Centre temperature for dark frame grouping |
+| `--temp-tolerance <°C>` | Temperature tolerance ±°C (default 2.0) |
+| `--force` | Allow mixed optical filters (stored as comma-separated list) |
+| `--dry-run` | Show the inspection report without creating the frame set |
+| `--json` | Print result as JSON |
+
+**Examples:**
+
+```bash
+# Preview which frames would be included (dry-run):
+ap-archive frameset create --type light --object M51 --filter Ha --dry-run
+
+# All Ha light frames of M51:
+ap-archive frameset create --type light --object M51 --filter Ha
+
+# Named frameset with a specific camera and date range:
+ap-archive frameset create --name "M51 Ha 2024" \
+  --type light --object M51 --filter Ha \
+  --from 2024-01-01 --to 2024-12-31 \
+  --camera "ZWO ASI294MC Pro"
+
+# Dark frames within ±2°C of -10°C:
+ap-archive frameset create --type dark --temp-center -10 --temp-tolerance 2
+
+# Allow frames from multiple filters (e.g. broadband LRGB):
+ap-archive frameset create --type light --object M51 --force
+```
+
+**Example output (dry-run):**
+
+```
+Dry-run inspection — 18 frame(s) matched
+────────────────────────────────────────────────────
+  Frame type:    ✓ light (18)
+  Filter:        ✓ Ha (18)
+  Processing:    ✓ raw (18)
+  Object:        ✓ M51 (18)
+  Camera:        ✓ ZWO ASI294MC Pro (18)
+  Pixel scale:   ✓ 1.240 "/px (18)
+  Focal length:  ✓ 800 mm (18)
+  Pos. angle:    ✓ 0.0° (18)
+  Date span:     2024-03-15 – 2024-11-22 (252 day(s))
+  Temperature:   -10.0 – -9.8 °C (mean -9.9)
+
+  ✓ Ready to create.
+
+Frames (18):
+  UUID                                  Object          Filter    Exposure  Date
+  ────────────────────────────────────────────────────────────────────────
+  a1b2c3d4-...                          M51             Ha            300s  2024-03-15
+  …
+```
+
+#### `ap-archive frameset list`
+
+Lists all frame sets with their member counts.
+
+```
+ap-archive frameset list [--json]
+```
+
+#### `ap-archive frameset show`
+
+Shows full details of a frame set and a table of all member frames with their key properties.
+
+```
+ap-archive frameset show <id> [--json]
+```
+
+**Example output:**
+
+```
+Frame Set  A3F2B1C0-1234-5678-ABCD-EF0123456789
+────────────────────────────────────────────────────────────
+  Name:          M51 Ha 2024
+  Type:          light
+  Level:         raw
+  Frames:        18
+  Object:        M51
+  Filter:        Ha
+  Camera:        ZWO ASI294MC Pro
+  Exposure:      300 s
+  Temperature:   -10.0 – -9.8 °C (mean -9.9)
+  Pixel scale:   1.240 "/px
+  Focal length:  800 mm
+  Date span:     2024-03-15 – 2024-11-22
+  Created:       2026-05-25T10:00:00Z
+
+Members (18):
+  UUID                                  Object          Filter    Exposure  Date
+  ────────────────────────────────────────────────────────────────────────────────
+  a1b2c3d4-xxxx-xxxx-xxxx-xxxxxxxxxxxx  M51             Ha            300s  2024-03-15
+  b2c3d4e5-xxxx-xxxx-xxxx-xxxxxxxxxxxx  M51             Ha            300s  2024-03-16
+  …
+```
+
+#### `ap-archive frameset delete`
+
+Deletes a frame set. Member frames are **not** removed from the archive.
+
+```
+ap-archive frameset delete <id>
 ```
 
 ---

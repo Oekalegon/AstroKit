@@ -32,7 +32,7 @@ Add the following to your `claude_desktop_config.json` (usually at `~/Library/Ap
 }
 ```
 
-Restart Claude Desktop. The ten tools below will be available in every conversation.
+Restart Claude Desktop. The fifteen tools below will be available in every conversation.
 
 > **Archive tools** (`archive_*`) require `ASTROARCHIVE_PATH` to be set — either in the MCP server `env` block above or as a system environment variable.
 
@@ -250,6 +250,7 @@ Searches the archive and returns matching frames.
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
 | `object_name` | string | | Partial object name match (e.g. `"M51"`) |
+| `camera` | string | | Camera name (exact match) |
 | `frame_types` | array | | Frame types: `["light"]`, `["dark","flat"]`, etc. |
 | `filters` | array | | Filters: `["Ha","SII"]`, `["R","G","B"]`, etc. |
 | `processing_level` | string | | `"raw"`, `"calibrated"`, `"stacked"`, or `"stretched"` |
@@ -341,6 +342,169 @@ Examples:
 archive_reject(id="A3F2B1C0-...", reason="telescope moved mid-exposure")
 archive_reject(id="A3F2B1C0-...", undo=true)
 ```
+
+---
+
+## Frame set tools
+
+Frame sets are named, homogeneous collections of archived frames. All members share the same frame type, processing level, and optical filter. They serve as inputs to processing pipelines and as calibration references for future processed frames.
+
+### `archive_frameset_inspect`
+
+Dry-run: shows which frames would form a frame set and reports property distributions (cameras, filters, date span, temperature range, pixel scales, position angles) **without writing anything**. Use this before `archive_frameset_create` to verify frame compatibility.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `frame_type` | string | | Frame type: `"light"`, `"dark"`, `"flat"`, `"bias"` |
+| `object_name` | string | | Partial object name match |
+| `filters` | array | | Optical filters to include |
+| `camera` | string | | Camera name (exact match) |
+| `from_date` | string | | Start date `YYYY-MM-DD` |
+| `to_date` | string | | End date `YYYY-MM-DD` |
+| `processing_level` | string | | `"raw"`, `"calibrated"`, `"stacked"`, or `"stretched"` |
+| `calibrated` | boolean | | Only calibrated frames |
+| `temp_center` | number | | Centre temperature in °C for dark frame grouping |
+| `temp_tolerance` | number | | Temperature tolerance ±°C (default `2.0`) |
+
+Example:
+```
+archive_frameset_inspect(frame_type="light", object_name="M51", filters=["Ha"])
+```
+
+Response:
+```
+Dry-run inspection — 18 frame(s) matched
+────────────────────────────────────────────────────────────
+  Frame type:    ✓ light (18)
+  Filter:        ✓ Ha (18)
+  Processing:    ✓ raw (18)
+  Object:        ✓ M51 (18)
+  Camera:        ✓ ZWO ASI294MC Pro (18)
+  Pixel scale:   ✓ 1.240 "/px (18)
+  Focal length:  ✓ 800 mm (18)
+  Pos. angle:    ✓ 0.0° (18)
+  Date span:     2024-03-15 – 2024-11-22 (252 day(s))
+  Temperature:   -10.0 – -9.8 °C (mean -9.9)
+
+  ✓ Ready to create.
+
+Frames (18):
+  UUID                                  Object          Filter    Exposure  Date
+  ────────────────────────────────────────────────────────────────────────
+  a1b2c3d4-...                          M51             Ha            300s  2024-03-15
+  …
+```
+
+---
+
+### `archive_frameset_create`
+
+Creates a frame set from all non-rejected frames matching a query. Errors if the query returns frames with mixed types or mixed processing levels. Mixed optical filters are blocked by default — set `force=true` to allow them (stored as a comma-separated list). Always returns the inspection report alongside the new frame set.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `name` | string | | Name for the frame set (auto-generated from query if omitted) |
+| `frame_type` | string | | Frame type: `"light"`, `"dark"`, `"flat"`, `"bias"` |
+| `object_name` | string | | Partial object name match |
+| `filters` | array | | Optical filters to include |
+| `camera` | string | | Camera name (exact match) |
+| `from_date` | string | | Start date `YYYY-MM-DD` |
+| `to_date` | string | | End date `YYYY-MM-DD` |
+| `processing_level` | string | | `"raw"`, `"calibrated"`, `"stacked"`, or `"stretched"` |
+| `calibrated` | boolean | | Only calibrated frames |
+| `temp_center` | number | | Centre temperature in °C for dark frame grouping |
+| `temp_tolerance` | number | | Temperature tolerance ±°C (default `2.0`) |
+| `force` | boolean | | Allow mixed optical filters; stored as comma-separated list (default `false`) |
+
+Shared properties (object, filter, camera, exposure, temperature range, date span, pixel scale, focal length, position angle) are recorded automatically on the set; any property that differs across members is left blank.
+
+Examples:
+```
+archive_frameset_create(frame_type="light", object_name="M51", filters=["Ha"])
+archive_frameset_create(name="M51 Ha 2024", frame_type="light", object_name="M51",
+                        filters=["Ha"], from_date="2024-01-01", to_date="2024-12-31")
+archive_frameset_create(frame_type="dark", temp_center=-10.0, temp_tolerance=2.0)
+archive_frameset_create(frame_type="light", object_name="M51", force=true)
+```
+
+Response:
+```
+Created frame set 'M51 Ha'  [A3F2B1C0-...]
+
+Frame set properties:
+────────────────────────────────────────────────────────────
+  Frame type:    ✓ light (18)
+  Filter:        ✓ Ha (18)
+  Processing:    ✓ raw (18)
+  Object:        ✓ M51 (18)
+  Camera:        ✓ ZWO ASI294MC Pro (18)
+  …
+
+  Created: 2026-05-25T10:00:00Z
+```
+
+---
+
+### `archive_frameset_list`
+
+Lists all frame sets with their member counts. No arguments.
+
+Response:
+```
+Frame sets (3):
+  { id: A3F2B1C0-..., name: M51 Ha, type: light, frames: 18, level: raw, object: M51, filter: Ha, created: 2026-05-25 }
+  { id: B4E3D2F1-..., name: Darks -10°C, type: dark, frames: 20, level: raw, created: 2026-05-25 }
+  { id: C5F4E3D2-..., name: Flats Ha, type: flat, frames: 10, level: raw, created: 2026-05-25 }
+```
+
+---
+
+### `archive_frameset_get`
+
+Returns full details of a frame set, including all member frames.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `id` | string | ✓ | Frame set UUID (from `archive_frameset_list`) |
+
+Example:
+```
+archive_frameset_get(id="A3F2B1C0-...")
+```
+
+Response:
+```
+Frame Set  A3F2B1C0-...
+────────────────────────────────────────────────────────────
+  Name:          M51 Ha
+  Type:          light
+  Level:         raw
+  Frames:        18
+  Object:        M51
+  Filter:        Ha
+  Camera:        ZWO ASI294MC Pro
+  Exposure:      300 s
+  Temperature:   -10.0 – -9.8 °C (mean -9.9)
+  Pixel scale:   1.240 "/px
+  Focal length:  800 mm
+  Date span:     2024-03-15 – 2024-11-22
+  Created:       2026-05-25T10:00:00Z
+
+Members:
+  { id: a1b2c3d4-..., type: light, object: M51, filter: Ha, exp: 300s, date: 2024-03-15 }
+  { id: b2c3d4e5-..., type: light, object: M51, filter: Ha, exp: 300s, date: 2024-03-16 }
+  …
+```
+
+---
+
+### `archive_frameset_delete`
+
+Deletes a frame set. Member frames are **not** removed from the archive.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `id` | string | ✓ | Frame set UUID |
 
 ---
 

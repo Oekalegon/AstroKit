@@ -12,6 +12,9 @@ struct Find: AsyncParsableCommand {
     @Option(name: .long, help: "Filter by object name (partial match).")
     var object: String?
 
+    @Option(name: .long, help: "Camera name (exact match).")
+    var camera: String?
+
     @Option(name: .long, help: "Frame types to include, comma-separated (light,dark,flat,bias).")
     var type: String?
 
@@ -60,6 +63,7 @@ struct Find: AsyncParsableCommand {
 
         var query = FrameQuery()
         query.objectName = object
+        query.camera = camera
         query.limit = limit
 
         if let t = type {
