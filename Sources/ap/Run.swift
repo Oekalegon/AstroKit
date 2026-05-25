@@ -243,7 +243,7 @@ extension AP {
                     frames: frames,
                     pipelineID: pipelineID,
                     parameters: parameters,
-                    inputPaths: inputPaths,
+                    pipelineInputs: pipelineInputs,
                     existingOutputPath: (output?.hasSuffix(".fits") == true || output?.hasSuffix(".fit") == true) ? output : nil
                 )
             }
@@ -269,26 +269,55 @@ extension AP {
             frames: [Frame],
             pipelineID: String,
             parameters: [String: Parameter],
-            inputPaths: [String: [String]],
+            pipelineInputs: [String: Any],
             existingOutputPath: String?
         ) async {
             guard let config = try? ArchiveConfiguration.fromEnvironment() else { return }
             guard let archive = try? Archive(configuration: config) else { return }
 
             do {
-                // Build provenance: for each input file path, look up its archive frame ID.
+                // Collect provenance and input frame metadata in one pass.
                 var runInputs: [ProcessingRunInputRef] = []
-                for (name, paths) in inputPaths.sorted(by: { $0.key < $1.key }) {
-                    for (pos, path) in paths.enumerated() {
-                        let archivedFrame = try? await archive.frame(filePath: path)
+                var objectNamesSet: Set<String> = []
+                var filterNamesSet: Set<String> = []
+                var totalExposure = 0.0
+                var inputCount = 0
+                var gainsSet: Set<Double> = []
+                var offsetsSet: Set<Double> = []
+                var temperatures: [Double] = []
+
+                for (name, value) in pipelineInputs.sorted(by: { $0.key < $1.key }) {
+                    let pathsAndFrames: [(String, Frame?)]
+                    if let frameSet = value as? FrameSet {
+                        pathsAndFrames = frameSet.frames.compactMap { f in f.filePath.map { ($0, f) } }
+                    } else if let frame = value as? Frame {
+                        pathsAndFrames = frame.filePath.map { [($0, frame as Frame?)] } ?? []
+                    } else {
+                        pathsAndFrames = []
+                    }
+                    for (pos, (path, inputFrame)) in pathsAndFrames.enumerated() {
+                        let af = try? await archive.frame(filePath: path)
                         runInputs.append(ProcessingRunInputRef(
-                            inputName: name,
-                            frameID: archivedFrame?.id,
-                            filePath: path,
-                            position: pos
+                            inputName: name, frameID: af?.id, filePath: path, position: pos
                         ))
+                        inputCount += 1
+                        if let v = af?.objectName { objectNamesSet.insert(v) }
+                        let fn = af?.filter ?? inputFrame?.filterName
+                        if let fn { filterNamesSet.insert(fn) }
+                        let exp = af?.exposureTime ?? inputFrame?.exposureTime
+                        if let exp { totalExposure += exp }
+                        if let g = af?.gain ?? inputFrame?.gain { gainsSet.insert(g) }
+                        if let o = af?.offset ?? inputFrame?.offset { offsetsSet.insert(o) }
+                        if let t = af?.temperature { temperatures.append(t) }
                     }
                 }
+
+                let stackObjectName  = objectNamesSet.count == 1 ? objectNamesSet.first : nil
+                let stackFilter      = filterNamesSet.count == 1 ? filterNamesSet.first : nil
+                let stackExposure    = inputCount > 0 && totalExposure > 0 ? totalExposure : nil as Double?
+                let stackGain        = gainsSet.count == 1 ? gainsSet.first : nil
+                let stackOffset      = offsetsSet.count == 1 ? offsetsSet.first : nil
+                let stackTemperature = temperatures.isEmpty ? nil : temperatures.reduce(0, +) / Double(temperatures.count) as Double?
 
                 let paramMap = parameters.reduce(into: [String: String]()) { $0[$1.key] = $1.value.stringValue }
                 let run = try await archive.recordProcessingRun(
@@ -317,8 +346,14 @@ extension AP {
                             pixelData: pixels, width: w, height: h,
                             pipelineID: pipelineID,
                             imageType: "Light Frame",
-                            filterName: frame.filterName,
-                            stacked: frame.type == .processedLight,
+                            filterName: stackFilter ?? frame.filterName,
+                            stacked: pipelineID == "frame_stacking",
+                            nframes: inputCount > 0 ? inputCount : nil,
+                            totalExposure: stackExposure,
+                            gain: stackGain,
+                            offset: stackOffset,
+                            temperature: stackTemperature,
+                            objectName: stackObjectName,
                             to: tmp.path
                         )
                         fileToArchive = tmp

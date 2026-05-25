@@ -1,4 +1,6 @@
 #include "shim.h"
+#include <math.h>
+#include <time.h>
 
 // Wrapper functions for cfitsio to bridge Swift and C
 // These functions are called from Swift using @_silgen_name
@@ -348,6 +350,12 @@ int write_result_frame_fits(
     const char *imagetyp,
     const char *filter_name,
     int         stacked,
+    int         nframes,        // 0 = skip
+    double      total_exposure, // NaN = skip
+    double      gain,           // NaN = skip
+    double      offset_val,     // NaN = skip
+    double      temperature,    // NaN = skip
+    const char *object_name,    // NULL or empty = skip
     int        *status_out
 ) {
     int status = 0;
@@ -361,15 +369,39 @@ int write_result_frame_fits(
     long naxes[2] = { (long)width, (long)height };
     fits_create_img(fptr, FLOAT_IMG, 2, naxes, &status);
 
+    if (object_name && object_name[0])
+        fits_update_key(fptr, TSTRING, "OBJECT",   (char *)object_name, "Target object", &status);
     if (pipeline_id && pipeline_id[0])
         fits_update_key(fptr, TSTRING, "PIPELINE", (char *)pipeline_id, "AstrophotoKit pipeline ID", &status);
     if (imagetyp && imagetyp[0])
         fits_update_key(fptr, TSTRING, "IMAGETYP", (char *)imagetyp, "Frame type", &status);
     if (filter_name && filter_name[0])
-        fits_update_key(fptr, TSTRING, "FILTER", (char *)filter_name, "Filter", &status);
+        fits_update_key(fptr, TSTRING, "FILTER",   (char *)filter_name, "Filter", &status);
     if (stacked) {
         int one = 1;
         fits_update_key(fptr, TLOGICAL, "STACKED", &one, "Frame is a stack", &status);
+    }
+    if (nframes > 0)
+        fits_update_key(fptr, TINT,    "NFRAMES",  &nframes,        "Number of stacked frames", &status);
+    if (!isnan(total_exposure))
+        fits_update_key(fptr, TDOUBLE, "EXPTIME",  &total_exposure, "[s] Total integration time", &status);
+    if (!isnan(gain))
+        fits_update_key(fptr, TDOUBLE, "GAIN",     &gain,           "Camera gain (e-/ADU)", &status);
+    if (!isnan(offset_val))
+        fits_update_key(fptr, TDOUBLE, "OFFSET",   &offset_val,     "Camera offset (pedestal)", &status);
+    if (!isnan(temperature))
+        fits_update_key(fptr, TDOUBLE, "CCD-TEMP", &temperature,    "[C] CCD temperature", &status);
+
+    // Write current UTC time as DATE-OBS so each result frame gets a unique signature.
+    {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        struct tm *utc = gmtime(&ts.tv_sec);
+        char date_buf[32];
+        snprintf(date_buf, sizeof(date_buf), "%04d-%02d-%02dT%02d:%02d:%02d",
+                 utc->tm_year + 1900, utc->tm_mon + 1, utc->tm_mday,
+                 utc->tm_hour, utc->tm_min, utc->tm_sec);
+        fits_update_key(fptr, TSTRING, "DATE-OBS", date_buf, "Processing timestamp (UTC)", &status);
     }
 
     long fpixel[2] = {1, 1};

@@ -611,6 +611,13 @@ actor ArchiveDatabase {
         return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
     }
 
+    func frameBySignature(_ signature: String) throws -> ArchivedFrame? {
+        let stmt = try prepare("SELECT * FROM frames WHERE frame_signature = ? LIMIT 1")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, signature, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
+    }
+
     func updateFrameRunID(id: UUID, processingRunID: UUID) throws {
         let stmt = try prepare("UPDATE frames SET processing_run_id = ? WHERE id = ?")
         defer { sqlite3_finalize(stmt) }

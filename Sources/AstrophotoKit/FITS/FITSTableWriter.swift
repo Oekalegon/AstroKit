@@ -60,6 +60,12 @@ private func writeResultFrameFITSC(
     _ imageType: UnsafePointer<CChar>,
     _ filterName: UnsafePointer<CChar>,
     _ stacked: Int32,
+    _ nframes: Int32,
+    _ totalExposure: Double,
+    _ gain: Double,
+    _ offsetVal: Double,
+    _ temperature: Double,
+    _ objectName: UnsafePointer<CChar>,
     _ statusOut: UnsafeMutablePointer<Int32>
 ) -> Int32
 
@@ -330,6 +336,12 @@ public struct FITSTableWriter {
         imageType: String = "Light Frame",
         filterName: String? = nil,
         stacked: Bool = false,
+        nframes: Int? = nil,
+        totalExposure: Double? = nil,
+        gain: Double? = nil,
+        offset: Double? = nil,
+        temperature: Double? = nil,
+        objectName: String? = nil,
         to path: String
     ) throws {
         var pixels = pixelData
@@ -338,16 +350,23 @@ public struct FITSTableWriter {
         pipelineID.withCString { cPipeline in
         imageType.withCString { cType in
         (filterName ?? "").withCString { cFilter in
+        (objectName ?? "").withCString { cObject in
             pixels.withUnsafeMutableBufferPointer { buf in
                 _ = writeResultFrameFITSC(
                     cPath, buf.baseAddress!,
                     Int32(width), Int32(height),
                     cPipeline, cType, cFilter,
                     stacked ? 1 : 0,
+                    Int32(nframes ?? 0),
+                    totalExposure ?? .nan,
+                    gain ?? .nan,
+                    offset ?? .nan,
+                    temperature ?? .nan,
+                    cObject,
                     &statusOut
                 )
             }
-        }}}}
+        }}}}}
         if statusOut != 0 {
             var errText = [CChar](repeating: 0, count: 81)
             getFITSErrorStatus(statusOut, &errText)

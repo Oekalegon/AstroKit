@@ -83,6 +83,16 @@ public actor Archive {
         let isNew = try await database.insertFrame(frame)
         if !isNew {
             try? FileManager.default.removeItem(at: dest)
+            // Return the existing frame so the caller gets a valid, stored ID.
+            let sig = ArchiveDatabase.frameSignature(
+                timestamp: meta.timestamp,
+                frameType: meta.frameType,
+                filter: meta.filter,
+                exposureTime: meta.exposureTime
+            )
+            if let existing = try await database.frameBySignature(sig) {
+                return (existing, false)
+            }
         }
         return (frame, isNew)
     }
