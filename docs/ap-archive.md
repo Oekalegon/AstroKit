@@ -12,7 +12,7 @@ cp .build/release/ap-archive /usr/local/bin/ap-archive
 Or use the installer (installs `ap`, `ap-archive`, and `astrokit-mcp` in one step):
 
 ```bash
-./install.sh
+python3 install.py
 ```
 
 ## Archive location
