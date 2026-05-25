@@ -79,6 +79,10 @@ struct Info: AsyncParsableCommand {
         lines.append("")
         let flags = "calibrated: \(f.calibrated ? "✓" : "✗")  stacked: \(f.stacked ? "✓" : "✗")  stretched: \(f.stretched ? "✓" : "✗")"
         lines.append(row("Processing", "\(f.processingLevel.rawValue)  [\(flags)]"))
+        if f.rejected {
+            let reasonStr = f.rejectedReason.map { "  (\($0))" } ?? ""
+            lines.append(row("Rejected", "yes\(reasonStr)"))
+        }
         lines.append(row("Added at",   iso.string(from: f.addedAt)))
         lines.append(row("File",       f.filePath))
 
@@ -113,6 +117,8 @@ struct Info: AsyncParsableCommand {
         if let v = f.width        { d["width"]          = v }
         if let v = f.height       { d["height"]         = v }
         if let v = f.bitpix       { d["bitpix"]         = v }
+        d["rejected"] = f.rejected
+        if let v = f.rejectedReason { d["rejected_reason"] = v }
 
         if let data = try? JSONSerialization.data(withJSONObject: d, options: .prettyPrinted),
            let str = String(data: data, encoding: .utf8) {

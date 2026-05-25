@@ -150,6 +150,18 @@ public actor Archive {
         try await database.statistics(archiveRoot: configuration.rootURL)
     }
 
+    // MARK: - Rejection
+
+    /// Marks a frame as rejected so it is excluded from processing queries.
+    public func reject(id: UUID, reason: String? = nil) async throws {
+        try await database.updateRejected(id: id, rejected: true, reason: reason)
+    }
+
+    /// Clears the rejected flag from a frame.
+    public func unreject(id: UUID) async throws {
+        try await database.updateRejected(id: id, rejected: false, reason: nil)
+    }
+
     // MARK: - Removal
 
     /// Removes a frame from the archive index.

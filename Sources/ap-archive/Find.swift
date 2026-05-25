@@ -45,6 +45,12 @@ struct Find: AsyncParsableCommand {
     @Option(name: .long, help: "Maximum number of results.")
     var limit: Int?
 
+    @Flag(name: .long, help: "Include rejected frames in results.")
+    var includeRejected: Bool = false
+
+    @Flag(name: .long, help: "Show only rejected frames.")
+    var rejectedOnly: Bool = false
+
     @Flag(name: .long, help: "Output as JSON.")
     var json: Bool = false
 
@@ -67,6 +73,8 @@ struct Find: AsyncParsableCommand {
         }
         if calibrated { query.calibrated = true }
         if stacked    { query.stacked    = true }
+        if rejectedOnly        { query.rejectionFilter = .onlyRejected }
+        else if includeRejected { query.rejectionFilter = .includeAll }
 
         let df = DateFormatter()
         df.dateFormat = "yyyy-MM-dd"
@@ -95,18 +103,18 @@ struct Find: AsyncParsableCommand {
             return
         }
         print("Found \(frames.count) frame(s):\n")
-        let header = String(format: "%-36s  %-14s  %-8s  %-8s  %8s  %s",
-            "ID", "Object", "Type", "Filter", "Exposure", "File")
+        let header = String(format: "%-36s  %-14s  %-8s  %-8s  %8s  %-4s  %s",
+            "ID", "Object", "Type", "Filter", "Exposure", "Rej", "File")
         print(header)
         print(String(repeating: "-", count: header.count))
         for f in frames {
-            let obj      = f.objectName ?? "-"
-            let type_    = f.frameType
-            let filt     = f.filter ?? "-"
-            let exp      = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
-            let file     = (f.filePath as NSString).lastPathComponent
-            print(String(format: "%-36s  %-14s  %-8s  %-8s  %8s  %s",
-                f.id.uuidString, obj, type_, filt, exp, file))
+            let obj  = f.objectName ?? "-"
+            let filt = f.filter ?? "-"
+            let exp  = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
+            let rej  = f.rejected ? "✗" : ""
+            let file = (f.filePath as NSString).lastPathComponent
+            print(String(format: "%-36s  %-14s  %-8s  %-8s  %8s  %-4s  %s",
+                f.id.uuidString, obj, f.frameType, filt, exp, rej, file))
         }
     }
 

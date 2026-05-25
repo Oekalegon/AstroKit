@@ -1,6 +1,6 @@
 # ap-archive — AstrophotoKit Archive CLI
 
-`ap-archive` manages a local FITS archive: ingests frames, indexes their metadata in SQLite, and lets you query by object, coordinates, frame type, filter, date, and processing level.
+`ap-archive` manages a local FITS archive: ingests frames, indexes their metadata in SQLite, and lets you query by object, coordinates, frame type, filter, date, processing level, and rejection status.
 
 ## Installation
 
@@ -25,7 +25,7 @@ export ASTROARCHIVE_PATH=~/AstroArchive
 
 The archive root contains:
 - `archive.db` — SQLite database with frame metadata and spatial index
-- Optionally, FITS files organised into subfolders when `--copy` is used
+- FITS files organised into subfolders by object, date, type, and filter
 
 ---
 
@@ -36,26 +36,27 @@ The archive root contains:
 Adds one or more FITS files to the archive. Reads metadata automatically from FITS headers (`OBJECT`, `RA`, `DEC`, `IMAGETYP`, `FILTER`, `INSTRUME`, `DATE-OBS`, `EXPTIME`, `GAIN`, `CCD-TEMP`, …).
 
 ```
-ap-archive add <path> [--recursive] [--copy] [--json]
+ap-archive add <path> [--recursive] [--json]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--recursive` | Recurse into subdirectories (when path is a directory) |
-| `--copy` | Copy files into the archive folder hierarchy (`<root>/<object>/<date>/<type>/<filter>/`) |
 | `--json` | Print results as JSON |
+
+Files are always copied into the archive folder hierarchy (`<root>/<object>/<date>/<type>/<filter>/`). The original file is left untouched.
 
 **Examples:**
 
 ```bash
-# Index a single file in place (no copy):
+# Add a single file:
 ap-archive add ~/lights/M51_Ha_300s.fits
 
-# Index an entire directory in place:
+# Add an entire directory:
 ap-archive add ~/lights/
 
-# Copy all FITS files in a directory tree into the archive:
-ap-archive add ~/lights/ --recursive --copy
+# Add all FITS files in a directory tree:
+ap-archive add ~/lights/ --recursive
 
 # JSON output for scripting:
 ap-archive add ~/lights/ --json
@@ -94,6 +95,8 @@ ap-archive find [options]
 | `--dec <deg>` | Cone search centre Dec (degrees) |
 | `--radius <deg>` | Cone search radius (degrees) |
 | `--limit <n>` | Maximum number of results |
+| `--include-rejected` | Include rejected frames in results (by default they are hidden) |
+| `--rejected-only` | Show only rejected frames |
 | `--json` | Print results as JSON |
 
 **Examples:**
@@ -110,6 +113,42 @@ ap-archive find --ra 202.47 --dec 47.20 --radius 1.0
 
 # Most recent 20 stacked frames:
 ap-archive find --stacked --limit 20
+
+# Review all rejected frames:
+ap-archive find --rejected-only
+```
+
+---
+
+### `ap-archive reject`
+
+Marks a frame as rejected so it is excluded from all processing queries, or clears that flag.
+
+```
+ap-archive reject <id> [--reason "..."] [--undo]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--reason <text>` | Optional description of why the frame was rejected |
+| `--undo` | Clear the rejection flag (un-reject the frame) |
+
+Rejected frames are **silently excluded** from `find` results and from any processing pipeline that queries the archive. They remain in the database and can be reviewed at any time with `find --rejected-only`.
+
+**Examples:**
+
+```bash
+# Reject a frame due to telescope movement:
+ap-archive reject A3F2B1C0-... --reason "telescope moved mid-exposure"
+
+# Review all rejected frames:
+ap-archive find --rejected-only
+
+# Review all frames including rejected ones:
+ap-archive find --include-rejected
+
+# Un-reject a frame:
+ap-archive reject A3F2B1C0-... --undo
 ```
 
 ---
@@ -216,7 +255,7 @@ Right ascension and declination are indexed using [HEALPix](https://healpix.sour
 
 ### Folder structure
 
-When `--copy` is used, files are placed under:
+Files are placed under:
 
 ```
 <archive-root>/<object>/<YYYY-MM-DD>/<frame-type>/<filter>/<filename>.fits

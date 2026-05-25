@@ -32,7 +32,7 @@ Add the following to your `claude_desktop_config.json` (usually at `~/Library/Ap
 }
 ```
 
-Restart Claude Desktop. The eight tools below will be available in every conversation.
+Restart Claude Desktop. The ten tools below will be available in every conversation.
 
 > **Archive tools** (`archive_*`) require `ASTROARCHIVE_PATH` to be set — either in the MCP server `env` block above or as a system environment variable.
 
@@ -186,7 +186,7 @@ Adds a FITS file or directory of FITS files to the archive. Reads metadata autom
 | `path` | string | ✓ | Absolute path to a FITS file or directory |
 | `recursive` | boolean | | Recurse into subdirectories (default `false`) |
 
-Files are always copied into the archive folder hierarchy.
+Files are always copied into the archive folder hierarchy (`<root>/<object>/<date>/<type>/<filter>/`). The original file is left untouched.
 
 Example:
 ```
@@ -259,12 +259,17 @@ Searches the archive and returns matching frames.
 | `dec` | number | | Cone search centre Dec (degrees) |
 | `radius_deg` | number | | Cone search radius (degrees) |
 | `limit` | integer | | Maximum number of results |
+| `include_rejected` | boolean | | Include rejected frames in results (default `false`) |
+| `rejected_only` | boolean | | Return only rejected frames |
+
+By default, rejected frames are excluded from results — safe for pipeline use. Use `include_rejected` or `rejected_only` to surface them.
 
 Examples:
 ```
 archive_find(object_name="M51", frame_types=["light"], filters=["Ha"])
 archive_find(ra=202.47, dec=47.20, radius_deg=1.0)
 archive_find(stacked=true, limit=20)
+archive_find(rejected_only=true)
 ```
 
 ---
@@ -315,6 +320,26 @@ Removes a frame from the archive by its UUID.
 Example:
 ```
 archive_remove(id="A3F2B1C0-...", delete_file=false)
+```
+
+---
+
+### `archive_reject`
+
+Marks a frame as rejected so it is excluded from processing queries, or clears that flag.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `id` | string | ✓ | Archive frame UUID (from `archive_find`) |
+| `reason` | string | | Optional description of why the frame was rejected |
+| `undo` | boolean | | Set to `true` to clear the rejection flag (default `false`) |
+
+Rejected frames are excluded from all `archive_find` calls by default. They stay in the database and can be reviewed with `archive_find(rejected_only=true)`.
+
+Examples:
+```
+archive_reject(id="A3F2B1C0-...", reason="telescope moved mid-exposure")
+archive_reject(id="A3F2B1C0-...", undo=true)
 ```
 
 ---
