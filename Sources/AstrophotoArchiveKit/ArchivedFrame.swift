@@ -43,6 +43,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var temperatureMin: Double?
     /// Maximum CCD temperature across input frames (stacked frames only).
     public var temperatureMax: Double?
+    /// File creation date used for archive deduplication (DATE header → DATE-OBS → filesystem).
+    public var fileDate: Date?
 
     public init(
         id: UUID, filePath: String, objectName: String?, ra: Double?, dec: Double?,
@@ -59,7 +61,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
         sessionBeg: Date? = nil,
         sessionEnd: Date? = nil,
         temperatureMin: Double? = nil,
-        temperatureMax: Double? = nil
+        temperatureMax: Double? = nil,
+        fileDate: Date? = nil
     ) {
         self.id = id
         self.filePath = filePath
@@ -94,5 +97,6 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.sessionEnd = sessionEnd
         self.temperatureMin = temperatureMin
         self.temperatureMax = temperatureMax
+        self.fileDate = fileDate
     }
 }

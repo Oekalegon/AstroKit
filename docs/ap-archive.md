@@ -66,8 +66,8 @@ ap-archive add ~/lights/ --json
 
 ```
 Added 5 frame(s) to the archive.
-  light [Ha] 300s M51  /path/to/M51_Ha_001.fits
-  light [Ha] 300s M51  /path/to/M51_Ha_002.fits
+  light [Hɑ] 300s M51  /path/to/M51_Ha_001.fits
+  light [Hɑ] 300s M51  /path/to/M51_Ha_002.fits
   ...
 ```
 
@@ -86,7 +86,7 @@ ap-archive find [options]
 | `--object <name>` | Partial object name match (e.g. `M51`) |
 | `--camera <name>` | Camera name (exact match) |
 | `--type <types>` | Comma-separated frame types: `light,dark,flat,bias` |
-| `--filter <filters>` | Comma-separated filters: `Ha,SII,OIII,R,G,B,L` |
+| `--filter <filters>` | Comma-separated filters: `Hɑ,SII,OIII,R,G,B,L` |
 | `--from <date>` | Start date in `YYYY-MM-DD` format |
 | `--to <date>` | End date in `YYYY-MM-DD` format |
 | `--level <level>` | Processing level: `raw`, `calibrated`, `stacked`, `stretched` |
@@ -106,8 +106,8 @@ ap-archive find [options]
 # All light frames of M51:
 ap-archive find --object M51 --type light
 
-# Hα and SII lights taken in 2024:
-ap-archive find --type light --filter Ha,SII --from 2024-01-01 --to 2024-12-31
+# Hɑ and SII lights taken in 2024:
+ap-archive find --type light --filter Hɑ,SII --from 2024-01-01 --to 2024-12-31
 
 # All frames within 1° of RA=202.47°, Dec=+47.20° (M51):
 ap-archive find --ra 202.47 --dec 47.20 --radius 1.0
@@ -197,7 +197,7 @@ Archive Statistics
     dark          8
     flat          4
     light         42
-      Ha          18
+      Hɑ          18
       OIII        12
       SII         12
 
@@ -244,14 +244,14 @@ ap-archive frameset create [options]
 
 ```bash
 # Preview which frames would be included (dry-run):
-ap-archive frameset create --type light --object M51 --filter Ha --dry-run
+ap-archive frameset create --type light --object M51 --filter Hɑ --dry-run
 
-# All Ha light frames of M51:
-ap-archive frameset create --type light --object M51 --filter Ha
+# All Hɑ light frames of M51:
+ap-archive frameset create --type light --object M51 --filter Hɑ
 
 # Named frameset with a specific camera and date range:
-ap-archive frameset create --name "M51 Ha 2024" \
-  --type light --object M51 --filter Ha \
+ap-archive frameset create --name "M51 Hɑ 2024" \
+  --type light --object M51 --filter Hɑ \
   --from 2024-01-01 --to 2024-12-31 \
   --camera "ZWO ASI294MC Pro"
 
@@ -268,7 +268,7 @@ ap-archive frameset create --type light --object M51 --force
 Dry-run inspection — 18 frame(s) matched
 ────────────────────────────────────────────────────
   Frame type:    ✓ light (18)
-  Filter:        ✓ Ha (18)
+  Filter:        ✓ Hɑ (18)
   Processing:    ✓ raw (18)
   Object:        ✓ M51 (18)
   Camera:        ✓ ZWO ASI294MC Pro (18)
@@ -283,7 +283,7 @@ Dry-run inspection — 18 frame(s) matched
 Frames (18):
   UUID                                  Object          Filter    Exposure  Date
   ────────────────────────────────────────────────────────────────────────
-  a1b2c3d4-...                          M51             Ha            300s  2024-03-15
+  a1b2c3d4-...                          M51             Hɑ            300s  2024-03-15
   …
 ```
 
@@ -308,12 +308,12 @@ ap-archive frameset show <id> [--json]
 ```
 Frame Set  A3F2B1C0-1234-5678-ABCD-EF0123456789
 ────────────────────────────────────────────────────────────
-  Name:          M51 Ha 2024
+  Name:          M51 Hɑ 2024
   Type:          light
   Level:         raw
   Frames:        18
   Object:        M51
-  Filter:        Ha
+  Filter:        Hɑ
   Camera:        ZWO ASI294MC Pro
   Exposure:      300 s
   Temperature:   -10.0 – -9.8 °C (mean -9.9)
@@ -325,8 +325,8 @@ Frame Set  A3F2B1C0-1234-5678-ABCD-EF0123456789
 Members (18):
   UUID                                  Object          Filter    Exposure  Date
   ────────────────────────────────────────────────────────────────────────────────
-  a1b2c3d4-xxxx-xxxx-xxxx-xxxxxxxxxxxx  M51             Ha            300s  2024-03-15
-  b2c3d4e5-xxxx-xxxx-xxxx-xxxxxxxxxxxx  M51             Ha            300s  2024-03-16
+  a1b2c3d4-xxxx-xxxx-xxxx-xxxxxxxxxxxx  M51             Hɑ            300s  2024-03-15
+  b2c3d4e5-xxxx-xxxx-xxxx-xxxxxxxxxxxx  M51             Hɑ            300s  2024-03-16
   …
 ```
 
@@ -359,7 +359,7 @@ Frame  A3F2B1C0-1234-5678-ABCD-EF0123456789
 ────────────────────────────────────────────────────────────
   Type:              stacked
   Object:            M51
-  Filter:            Ha
+  Filter:            Hɑ
   Exposure:          5400 s
 
   Camera:            ZWO ASI294MC Pro
@@ -369,7 +369,7 @@ Frame  A3F2B1C0-1234-5678-ABCD-EF0123456789
 
   Processing:        stacked  [calibrated: ✗  stacked: ✓  stretched: ✗]
   Added at:          2026-05-25T10:00:00Z
-  File:              /Users/…/AstroArchive/M51/stacked/Ha/stacked.fits
+  File:              /Users/…/AstroArchive/M51/stacked/Hɑ/stacked.fits
 
 Provenance
 ────────────────────────────────────────────────────────────
@@ -383,7 +383,7 @@ Provenance
     …
 ```
 
-The Provenance section is shown only for frames that were archived automatically by `ap run` or `run_pipeline` (not for frames added manually with `ap-archive add`).
+The Provenance section is shown only for frames that were archived automatically by `ap run` or `run_pipeline` (MCP). Frames added manually with `ap-archive add` have no provenance record.
 
 ---
 
@@ -428,7 +428,7 @@ Copied A3F2B1C0-1234-5678-ABCD-EF0123456789  →  /Users/don/Desktop/exports/M51
 **Example output (frame set):**
 
 ```
-Copied 18 frame(s) from 'M51 Ha 2024' to /Users/don/Desktop/M51_Ha_lights.
+Copied 18 frame(s) from 'M51 Hɑ 2024' to /Users/don/Desktop/M51_Ha_lights.
 ```
 
 ---
@@ -469,12 +469,25 @@ When a file is added, `ap-archive` reads its FITS header to extract:
 | `INSTRUME` | Camera |
 | `FOCALLEN` | Focal length (mm) |
 | `CCD-TEMP`, `CCDTEMP` | Sensor temperature (°C) |
+| `DATE` | File creation timestamp (used for deduplication) |
 | `DATE-OBS`, `DATE-BEG` | Observation timestamp |
 | `EXPTIME`, `EXPOSURE` | Exposure time (s) |
 | `GAIN` | Camera gain |
 | `OFFSET`, `PEDESTAL` | Camera offset |
 
 Processing level is inferred from `IMAGETYP` and custom keywords (`CALIBRAT`, `STACKED`, `STRETCHD`).
+
+### Deduplication
+
+Each frame is assigned a content signature based on its **file creation date** (`DATE` header), frame type, filter, and exposure time. Adding the same file twice is silently ignored — the second insert returns the existing record.
+
+The file creation date is resolved using a fallback chain:
+
+1. `DATE` FITS header — written by `ap run` / `run_pipeline` at the moment the output file is created
+2. `DATE-OBS` — used as a fallback for raw frames from capture software that do not write `DATE`
+3. Filesystem creation date — last resort when neither header is present
+
+Because each pipeline run writes a fresh `DATE` timestamp, re-running a stacking or processing pipeline with the same inputs produces a **new** archive entry rather than silently discarding the result. This lets you keep multiple processed versions of the same data (e.g. stacks with different parameters or updated algorithms).
 
 ### Coordinate search
 
@@ -488,7 +501,7 @@ Files are placed under:
 <archive-root>/<object>/<YYYY-MM-DD>/<frame-type>/<filter>/<filename>.fits
 ```
 
-For example: `~/AstroArchive/M51/2024-03-15/light/Ha/M51_Ha_300s_001.fits`
+For example: `~/AstroArchive/M51/2024-03-15/light/Hɑ/M51_Ha_300s_001.fits`
 
 ### Provenance
 

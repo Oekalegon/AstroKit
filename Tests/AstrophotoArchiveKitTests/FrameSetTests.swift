@@ -24,7 +24,8 @@ struct FrameSetTests {
         timestamp: Double = 1_740_000_000,
         processingLevel: ProcessingLevel = .raw
     ) -> ArchivedFrame {
-        ArchivedFrame(
+        let date = Date(timeIntervalSince1970: timestamp)
+        return ArchivedFrame(
             id: UUID(),
             filePath: "/tmp/mock-\(UUID().uuidString).fits",
             objectName: objectName,
@@ -35,7 +36,7 @@ struct FrameSetTests {
             camera: camera,
             focalLength: nil, pixelScale: nil,
             temperature: temperature,
-            timestamp: Date(timeIntervalSince1970: timestamp),
+            timestamp: date,
             exposureTime: exposureTime,
             gain: gain, offset: nil,
             width: width, height: height, bitpix: 16,
@@ -43,7 +44,8 @@ struct FrameSetTests {
             stacked: processingLevel == .stacked,
             stretched: processingLevel == .stretched,
             processingLevel: processingLevel,
-            addedAt: Date()
+            addedAt: Date(),
+            fileDate: date
         )
     }
 

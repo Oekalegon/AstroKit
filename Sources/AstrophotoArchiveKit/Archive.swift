@@ -82,14 +82,15 @@ public actor Archive {
             sessionBeg: meta.sessionBeg,
             sessionEnd: meta.sessionEnd,
             temperatureMin: meta.temperatureMin,
-            temperatureMax: meta.temperatureMax
+            temperatureMax: meta.temperatureMax,
+            fileDate: meta.fileDate
         )
         let isNew = try await database.insertFrame(frame)
         if !isNew {
             try? FileManager.default.removeItem(at: dest)
             // Return the existing frame so the caller gets a valid, stored ID.
             let sig = ArchiveDatabase.frameSignature(
-                timestamp: meta.timestamp,
+                fileDate: meta.fileDate,
                 frameType: meta.frameType,
                 filter: meta.filter,
                 exposureTime: meta.exposureTime

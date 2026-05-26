@@ -28,6 +28,8 @@ struct FrameArchiveMetadata {
     var sessionEnd: Date?        // DATE-END: latest input frame (stacked frames only)
     var temperatureMin: Double?  // CCD-TMIN: coldest input frame (stacked frames only)
     var temperatureMax: Double?  // CCD-TMAX: warmest input frame (stacked frames only)
+    /// File creation date for deduplication: DATE header → DATE-OBS → filesystem creation date.
+    var fileDate: Date?
 }
 
 enum FITSHeaderReader {
@@ -36,7 +38,27 @@ enum FITSHeaderReader {
         try file.moveToHDU(0)
         let headers = try file.readHeader()
         let dims = try file.readImageParameters()
-        return parse(headers: headers, width: dims.width, height: dims.height, bitpix: Int(dims.bitpix))
+        var meta = parse(headers: headers, width: dims.width, height: dims.height, bitpix: Int(dims.bitpix))
+        meta.fileDate = resolveFileDate(headers: headers, observationDate: meta.timestamp, path: path)
+        return meta
+    }
+
+    /// Returns the best available "file creation" date using the fallback chain:
+    /// DATE header → DATE-OBS (observationDate) → filesystem creation date.
+    private static func resolveFileDate(
+        headers: [String: FITSHeaderValue],
+        observationDate: Date?,
+        path: String
+    ) -> Date? {
+        let iso = ISO8601DateFormatter()
+        if let raw = headers["DATE"]?.stringValue, let d = iso.date(from: raw) {
+            return d
+        }
+        if let d = observationDate {
+            return d
+        }
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        return (attrs?[.creationDate] as? Date) ?? (attrs?[.modificationDate] as? Date)
     }
 
     // MARK: - Private

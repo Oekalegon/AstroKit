@@ -297,6 +297,18 @@ int write_stacked_fits(
     if (date_obs && date_obs[0] != '\0')
         fits_update_key(fptr, TSTRING, "DATE-OBS", (char *)date_obs, "Earliest frame observation date", &status);
 
+    // DATE: file creation timestamp (used as deduplication key in the archive).
+    {
+        struct timespec _ts;
+        clock_gettime(CLOCK_REALTIME, &_ts);
+        struct tm *_utc = gmtime(&_ts.tv_sec);
+        char _date_buf[32];
+        snprintf(_date_buf, sizeof(_date_buf), "%04d-%02d-%02dT%02d:%02d:%02d",
+                 _utc->tm_year + 1900, _utc->tm_mon + 1, _utc->tm_mday,
+                 _utc->tm_hour, _utc->tm_min, _utc->tm_sec);
+        fits_update_key(fptr, TSTRING, "DATE", _date_buf, "File creation timestamp (UTC)", &status);
+    }
+
     // --- Stacking process keywords ---
     char pipeline_val[] = "frame_stacking";
     fits_update_key(fptr, TSTRING, "PIPELINE",  pipeline_val,        "AstrophotoKit pipeline ID",  &status);
@@ -415,6 +427,18 @@ int write_result_frame_fits(
         fits_update_key(fptr, TDOUBLE, "PIXSCALE", &pixel_scale,    "[arcsec/px] Pixel scale", &status);
     if (!isnan(focal_length))
         fits_update_key(fptr, TDOUBLE, "FOCALLEN", &focal_length,   "[mm] Focal length", &status);
+
+    // DATE: file creation timestamp (used as deduplication key in the archive).
+    {
+        struct timespec _ts;
+        clock_gettime(CLOCK_REALTIME, &_ts);
+        struct tm *_utc = gmtime(&_ts.tv_sec);
+        char _date_buf[32];
+        snprintf(_date_buf, sizeof(_date_buf), "%04d-%02d-%02dT%02d:%02d:%02d",
+                 _utc->tm_year + 1900, _utc->tm_mon + 1, _utc->tm_mday,
+                 _utc->tm_hour, _utc->tm_min, _utc->tm_sec);
+        fits_update_key(fptr, TSTRING, "DATE", _date_buf, "File creation timestamp (UTC)", &status);
+    }
 
     // DATE-OBS: use reference-frame observation date if provided, else current UTC.
     if (date_obs && date_obs[0]) {
