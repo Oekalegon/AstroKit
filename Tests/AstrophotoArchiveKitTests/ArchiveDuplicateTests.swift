@@ -216,10 +216,10 @@ func testFilterComparisonIsCaseInsensitive() async throws {
 @Test("frameSignature produces consistent output")
 func testFrameSignatureIsStable() {
     let date = Date(timeIntervalSince1970: 1_740_000_000)
-    let sig1 = ArchiveDatabase.frameSignature(timestamp: date, frameType: "Light", filter: "Ha",  exposureTime: 300)
-    let sig2 = ArchiveDatabase.frameSignature(timestamp: date, frameType: "light", filter: "HA",  exposureTime: 300)
-    let sig3 = ArchiveDatabase.frameSignature(timestamp: date, frameType: "light", filter: "ha",  exposureTime: 300)
-    let sig4 = ArchiveDatabase.frameSignature(timestamp: date, frameType: "light", filter: "SII", exposureTime: 300)
+    let sig1 = ArchiveDatabase.frameSignature(fileDate: date, frameType: "Light", filter: "Ha",  exposureTime: 300)
+    let sig2 = ArchiveDatabase.frameSignature(fileDate: date, frameType: "light", filter: "HA",  exposureTime: 300)
+    let sig3 = ArchiveDatabase.frameSignature(fileDate: date, frameType: "light", filter: "ha",  exposureTime: 300)
+    let sig4 = ArchiveDatabase.frameSignature(fileDate: date, frameType: "light", filter: "SII", exposureTime: 300)
 
     #expect(sig1 == sig2, "Case differences in frameType/filter should produce identical signatures")
     #expect(sig2 == sig3, "All-caps and mixed-case filter should produce identical signatures")
