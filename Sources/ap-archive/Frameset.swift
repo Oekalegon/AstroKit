@@ -18,7 +18,7 @@ struct Frameset: AsyncParsableCommand {
         @Option(name: .long, help: "Filter by object name (partial match).")
         var object: String?
 
-        @Option(name: .long, help: "Optical filter (Ha, SII, OIII, R, G, B, L).")
+        @Option(name: .long, help: "Optical filter (Hɑ, SII, OIII, R, G, B, L).")
         var filter: String?
 
         @Option(name: .long, help: "Camera name (exact match).")

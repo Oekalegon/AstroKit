@@ -53,7 +53,7 @@ struct ArchiveTools {
                     "filters": [
                         "type": "array",
                         "items": ["type": "string"],
-                        "description": "Filters to include (Ha, SII, OIII, R, G, B, L).",
+                        "description": "Filters to include (Hɑ, SII, OIII, R, G, B, L).",
                     ],
                     "processing_level": [
                         "type": "string",
@@ -104,7 +104,7 @@ struct ArchiveTools {
                 "properties": [
                     "frame_type": ["type": "string", "enum": ["light", "dark", "flat", "bias"], "description": "Frame type to inspect."],
                     "object_name": ["type": "string", "description": "Partial object name to match (e.g. 'M51')."],
-                    "filters": ["type": "array", "items": ["type": "string"], "description": "Optical filters to include (Ha, SII, OIII, R, G, B, L)."],
+                    "filters": ["type": "array", "items": ["type": "string"], "description": "Optical filters to include (Hɑ, SII, OIII, R, G, B, L)."],
                     "camera": ["type": "string", "description": "Camera name (exact match)."],
                     "from_date": ["type": "string", "description": "Start date YYYY-MM-DD."],
                     "to_date": ["type": "string", "description": "End date YYYY-MM-DD."],
@@ -125,7 +125,7 @@ struct ArchiveTools {
                     "name": ["type": "string", "description": "Name for the frame set. Auto-generated from query parameters if omitted."],
                     "frame_type": ["type": "string", "enum": ["light", "dark", "flat", "bias"], "description": "Frame type to include (required — a set is homogeneous)."],
                     "object_name": ["type": "string", "description": "Partial object name to match (e.g. 'M51')."],
-                    "filters": ["type": "array", "items": ["type": "string"], "description": "Optical filters to include (Ha, SII, OIII, R, G, B, L)."],
+                    "filters": ["type": "array", "items": ["type": "string"], "description": "Optical filters to include (Hɑ, SII, OIII, R, G, B, L)."],
                     "camera": ["type": "string", "description": "Camera name (exact match)."],
                     "from_date": ["type": "string", "description": "Start date YYYY-MM-DD."],
                     "to_date": ["type": "string", "description": "End date YYYY-MM-DD."],

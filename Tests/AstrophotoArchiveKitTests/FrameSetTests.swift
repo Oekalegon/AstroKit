@@ -13,7 +13,7 @@ struct FrameSetTests {
 
     private func makeFrame(
         frameType: String = "light",
-        filter: String? = "Ha",
+        filter: String? = "Hɑ",
         objectName: String? = "M42",
         camera: String? = "ZWO ASI294MC",
         exposureTime: Double = 300,
@@ -57,9 +57,9 @@ struct FrameSetTests {
         _ = try await db.insertFrame(frame)
 
         let fs = ArchivedFrameSet(
-            id: UUID(), name: "M42 Ha lights", frameType: "light", processingLevel: .raw,
+            id: UUID(), name: "M42 Hɑ lights", frameType: "light", processingLevel: .raw,
             createdAt: Date(), frameCount: 1,
-            objectName: "M42", filter: "Ha", camera: "ZWO ASI294MC",
+            objectName: "M42", filter: "Hɑ", camera: "ZWO ASI294MC",
             exposureTime: 300, gain: 100, offset: nil,
             width: 4096, height: 2160,
             pixelScale: nil, focalLength: nil, positionAngle: nil,
@@ -71,11 +71,11 @@ struct FrameSetTests {
         let all = try await db.queryFrameSets()
         #expect(all.count == 1)
         #expect(all[0].id == fs.id)
-        #expect(all[0].name == "M42 Ha lights")
+        #expect(all[0].name == "M42 Hɑ lights")
         #expect(all[0].frameType == "light")
         #expect(all[0].frameCount == 1)
         #expect(all[0].objectName == "M42")
-        #expect(all[0].filter == "Ha")
+        #expect(all[0].filter == "Hɑ")
     }
 
     @Test func frameIDsForSetReturnsInOrder() async throws {
@@ -154,8 +154,8 @@ struct FrameSetTests {
         let (db, url) = try makeTestDatabase()
         defer { try? FileManager.default.removeItem(at: url) }
 
-        let f1 = makeFrame(filter: "Ha", camera: "ZWO ASI294MC", temperature: -10.0, gain: 100)
-        let f2 = makeFrame(filter: "Ha", camera: "ZWO ASI294MC", temperature: -10.2, gain: 100, timestamp: 1_740_001_000)
+        let f1 = makeFrame(filter: "Hɑ", camera: "ZWO ASI294MC", temperature: -10.0, gain: 100)
+        let f2 = makeFrame(filter: "Hɑ", camera: "ZWO ASI294MC", temperature: -10.2, gain: 100, timestamp: 1_740_001_000)
         _ = try await db.insertFrame(f1)
         _ = try await db.insertFrame(f2)
 

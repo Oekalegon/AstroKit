@@ -130,7 +130,7 @@ public struct Frame: ProcessData {
     }
 
     /// The canonical display name for the filter.
-    /// For recognised FITS filters this is the normalised name (e.g. "Ha", "SII", "OIII").
+    /// For recognised FITS filters this is the normalised name (e.g. "Hɑ", "SII", "OIII").
     /// For unrecognised filter strings it is the raw trimmed FITS value so nothing is lost.
     /// Nil when no filter information was available.
     public var filterName: String? {

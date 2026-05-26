@@ -18,7 +18,7 @@ struct Find: AsyncParsableCommand {
     @Option(name: .long, help: "Frame types to include, comma-separated (light,dark,flat,bias).")
     var type: String?
 
-    @Option(name: .long, help: "Filters to include, comma-separated (Ha,SII,OIII,R,G,B,L).")
+    @Option(name: .long, help: "Filters to include, comma-separated (Hɑ,SII,OIII,R,G,B,L).")
     var filter: String?
 
     @Option(name: .long, help: "Start date (ISO8601, e.g. 2024-01-01).")
