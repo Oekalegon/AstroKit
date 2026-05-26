@@ -13,9 +13,11 @@ struct ArchiveRejectionTests {
 
     private func makeFrame(
         frameType: String = "light",
-        filter: String? = "Hɑ"
+        filter: String? = "Hɑ",
+        timestamp: Double = 1_740_000_000
     ) -> ArchivedFrame {
-        ArchivedFrame(
+        let date = Date(timeIntervalSince1970: timestamp)
+        return ArchivedFrame(
             id: UUID(),
             filePath: "/tmp/mock-\(UUID().uuidString).fits",
             objectName: "M42",
@@ -25,13 +27,14 @@ struct ArchiveRejectionTests {
             filter: filter,
             camera: nil,
             focalLength: nil, pixelScale: nil, temperature: nil,
-            timestamp: Date(timeIntervalSince1970: 1_740_000_000),
+            timestamp: date,
             exposureTime: 300,
             gain: nil, offset: nil,
             width: 4096, height: 2160, bitpix: 16,
             calibrated: false, stacked: false, stretched: false,
             processingLevel: .raw,
-            addedAt: Date()
+            addedAt: Date(),
+            fileDate: date
         )
     }
 
@@ -84,7 +87,8 @@ struct ArchiveRejectionTests {
             width: 4096, height: 2160, bitpix: 16,
             calibrated: false, stacked: false, stretched: false,
             processingLevel: .raw,
-            addedAt: Date()
+            addedAt: Date(),
+            fileDate: Date(timeIntervalSince1970: 1_740_001_000)
         )
         _ = try await db.insertFrame(bad)
         _ = try await db.insertFrame(good)
@@ -134,7 +138,8 @@ struct ArchiveRejectionTests {
             width: 4096, height: 2160, bitpix: 16,
             calibrated: false, stacked: false, stretched: false,
             processingLevel: .raw,
-            addedAt: Date()
+            addedAt: Date(),
+            fileDate: Date(timeIntervalSince1970: 1_740_002_000)
         )
         _ = try await db.insertFrame(bad)
         _ = try await db.insertFrame(good)

@@ -104,7 +104,8 @@ private func makeFrame(
         width: 6248, height: 4176, bitpix: 16,
         calibrated: false, stacked: false, stretched: false,
         processingLevel: .raw,
-        addedAt: Date()
+        addedAt: Date(),
+        fileDate: timestamp
     )
 }
 
