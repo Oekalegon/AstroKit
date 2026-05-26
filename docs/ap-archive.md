@@ -387,6 +387,52 @@ The Provenance section is shown only for frames that were archived automatically
 
 ---
 
+### `ap-archive cp`
+
+Exports a copy of a frame or an entire frame set out of the archive to a local path. The original stays in the archive.
+
+```
+ap-archive cp <id> <destination>
+```
+
+`<id>` can be either a frame UUID or a frame set UUID — the command auto-detects which.
+
+**Destination path rules** (same as Unix `cp`):
+
+| Destination | Behaviour |
+|-------------|-----------|
+| Existing directory | Copy into it, preserving the original filename |
+| Non-existent path (single frame) | Write the file at exactly that path (parent directories are created automatically) |
+| Non-existent path (frame set) | Create that directory and copy all member frames into it |
+| Existing file | Error — remove the file first |
+
+**Examples:**
+
+```bash
+# Copy one frame into an existing directory:
+ap-archive cp A3F2B1C0-... ~/Desktop/exports/
+
+# Copy one frame with a new name:
+ap-archive cp A3F2B1C0-... ~/Desktop/M51_Ha_best.fits
+
+# Copy an entire frame set to a new directory:
+ap-archive cp B4E3D2F1-... ~/Desktop/M51_Ha_lights/
+```
+
+**Example output (single frame):**
+
+```
+Copied A3F2B1C0-1234-5678-ABCD-EF0123456789  →  /Users/don/Desktop/exports/M51_Ha_300s_001.fits
+```
+
+**Example output (frame set):**
+
+```
+Copied 18 frame(s) from 'M51 Ha 2024' to /Users/don/Desktop/M51_Ha_lights.
+```
+
+---
+
 ### `ap-archive remove`
 
 Removes a frame from the archive by its UUID. Optionally deletes the FITS file from disk.
