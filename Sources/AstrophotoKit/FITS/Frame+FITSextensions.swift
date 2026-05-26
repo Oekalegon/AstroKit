@@ -136,14 +136,14 @@ extension Frame {
     }
 
     /// Map a FITS FILTER string to a (Filter, displayName) pair.
-    /// The display name is the canonical ASCII name for known filters (e.g. "Ha", "SII", "OIII")
+    /// The display name is the canonical name for known filters (e.g. "Hɑ", "SII", "OIII")
     /// or the raw trimmed FITS string for unrecognised values (e.g. "NII", "H-beta").
     /// Returns nil for the display name when no filter is in use.
     static func filterAndName(from fitsString: String) -> (Filter, String?) {
         let raw = fitsString.trimmingCharacters(in: .whitespaces)
         let s   = raw.lowercased()
         switch s {
-        case "ha", "h-alpha", "h_alpha", "halpha", "hα", "hɑ":     return (.Hɑ,         "Ha")
+        case "ha", "h-alpha", "h_alpha", "halpha", "h alpha", "hα", "hɑ":  return (.Hɑ,         "Hɑ")
         case "oiii", "o3", "o-iii", "o_iii":                        return (.OIII,        "OIII")
         case "sii", "s2", "s-ii", "s_ii":                           return (.SII,         "SII")
         case "lum", "luminance", "luminosity", "l", "clear", "clr": return (.luminosity,  "Lum")

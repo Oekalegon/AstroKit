@@ -13,7 +13,7 @@ struct ArchiveRejectionTests {
 
     private func makeFrame(
         frameType: String = "light",
-        filter: String? = "Ha"
+        filter: String? = "Hɑ"
     ) -> ArchivedFrame {
         ArchivedFrame(
             id: UUID(),
@@ -75,7 +75,7 @@ struct ArchiveRejectionTests {
             ra: 83.8221, dec: -5.3911,
             healpixPixel: nil,
             frameType: "light",
-            filter: "Ha",
+            filter: "Hɑ",
             camera: nil,
             focalLength: nil, pixelScale: nil, temperature: nil,
             timestamp: Date(timeIntervalSince1970: 1_740_001_000),
@@ -125,7 +125,7 @@ struct ArchiveRejectionTests {
             ra: 83.8221, dec: -5.3911,
             healpixPixel: nil,
             frameType: "light",
-            filter: "Ha",
+            filter: "Hɑ",
             camera: nil,
             focalLength: nil, pixelScale: nil, temperature: nil,
             timestamp: Date(timeIntervalSince1970: 1_740_002_000),

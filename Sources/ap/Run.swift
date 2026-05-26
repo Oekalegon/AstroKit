@@ -25,7 +25,7 @@ extension AP {
 
             Archive FrameSet input (by UUID or name):
               ap run frame_stacking --input input_frames:@frameset:3F7A1234-…
-              ap run frame_stacking --input "input_frames:@frameset:M51 Ha lights"
+              ap run frame_stacking --input "input_frames:@frameset:M51 Hɑ lights"
 
             With parameters:
               ap run star-detection --input image.fits --param threshold_value=4.0

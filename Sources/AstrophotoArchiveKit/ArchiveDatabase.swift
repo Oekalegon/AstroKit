@@ -124,6 +124,16 @@ actor ArchiveDatabase {
         ALTER TABLE frames ADD COLUMN temperature_min REAL;
         ALTER TABLE frames ADD COLUMN temperature_max REAL;
         """,
+        // v11: normalize filter display name from "Ha" (and variants) to "Hɑ" everywhere.
+        // Also recomputes frame_signature so deduplication remains consistent for Hɑ frames.
+        """
+        UPDATE frames SET
+            filter = 'Hɑ',
+            frame_signature = COALESCE(timestamp, '') || '|' || LOWER(frame_type) || '|hɑ|' || COALESCE(PRINTF('%.3f', exposure_time), '')
+        WHERE LOWER(filter) IN ('ha', 'h-alpha', 'h_alpha', 'halpha', 'h alpha');
+        UPDATE frame_sets SET filter = 'Hɑ'
+        WHERE LOWER(filter) IN ('ha', 'h-alpha', 'h_alpha', 'halpha', 'h alpha');
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -263,9 +273,21 @@ actor ArchiveDatabase {
         return sqlite3_changes(db) > 0
     }
 
+    // Canonical lowercase token used in frame signatures and filter queries.
+    // Maps all Hɑ aliases to the same token so deduplication is consistent across
+    // frames ingested before and after the "Ha" → "Hɑ" rename.
+    static func normalizeFilterComponent(_ filter: String) -> String {
+        switch filter.lowercased() {
+        case "ha", "h-alpha", "h_alpha", "halpha", "h alpha", "hα", "hɑ":
+            return "hɑ"
+        default:
+            return filter.lowercased()
+        }
+    }
+
     // Stable string key used for content-based deduplication.
     // Components: ISO8601 timestamp (or ""), lowercased frame type,
-    // lowercased filter (or ""), exposure formatted to 3 decimal places (or "").
+    // normalised filter (or ""), exposure formatted to 3 decimal places (or "").
     static func frameSignature(
         timestamp: Date?,
         frameType: String,
@@ -275,7 +297,7 @@ actor ArchiveDatabase {
         let iso = ISO8601DateFormatter()
         let ts = timestamp.map { iso.string(from: $0) } ?? ""
         let ft = frameType.lowercased()
-        let fi = (filter ?? "").lowercased()
+        let fi = normalizeFilterComponent(filter ?? "")
         let ex = exposureTime.map { String(format: "%.3f", $0) } ?? ""
         return "\(ts)|\(ft)|\(fi)|\(ex)"
     }
@@ -322,8 +344,9 @@ actor ArchiveDatabase {
             for t in types { bindings.append(t) }
         }
         if let filters = query.filters, !filters.isEmpty {
-            conditions.append("filter IN (\(filters.map { _ in "?" }.joined(separator: ",")))")
-            for f in filters { bindings.append(f) }
+            let normalized = filters.map { ArchiveDatabase.normalizeFilterComponent($0) }
+            conditions.append("LOWER(filter) IN (\(normalized.map { _ in "?" }.joined(separator: ",")))")
+            for f in normalized { bindings.append(f) }
         }
         if let range = query.dateRange {
             let iso = ISO8601DateFormatter()

@@ -9,7 +9,7 @@ extension FrameArchiveMetadata {
         objectName: String? = "DWB 111",
         timestamp: Date?    = Date(timeIntervalSince1970: 1_740_000_000),
         frameType: String   = "light",
-        filter: String?     = "Ha",
+        filter: String?     = "Hɑ",
         exposureTime: Double? = 300
     ) -> FrameArchiveMetadata {
         FrameArchiveMetadata(
@@ -62,18 +62,18 @@ func testFolderStructure() {
         objectName: "M51",
         timestamp: Date(timeIntervalSince1970: 1_740_000_000), // 2025-02-19
         frameType: "light",
-        filter: "Ha"
+        filter: "Hɑ"
     )
     let id  = UUID()
     let url = FolderOrganizer.destinationURL(
         for: meta, in: URL(fileURLWithPath: "/archive"), filename: "f.fits", id: id
     )
     let components = url.pathComponents
-    // /archive/M51/2025-02-19/light/Ha/f_<uuid>.fits
+    // /archive/M51/2025-02-19/light/Hɑ/f_<uuid>.fits
     #expect(components.contains("M51"))
     #expect(components.contains("2025-02-19"))
     #expect(components.contains("light"))
-    #expect(components.contains("Ha"))
+    #expect(components.contains("Hɑ"))
 }
 
 // MARK: - Helpers
@@ -149,7 +149,7 @@ func testDifferentFiltersAreDistinct() async throws {
     let (db, url) = try makeTestDatabase()
     defer { try? FileManager.default.removeItem(at: url) }
 
-    let first  = try await db.insertFrame(makeFrame(filter: "Ha"))
+    let first  = try await db.insertFrame(makeFrame(filter: "Hɑ"))
     let second = try await db.insertFrame(makeFrame(filter: "SII"))
     let third  = try await db.insertFrame(makeFrame(filter: "OIII"))
 
