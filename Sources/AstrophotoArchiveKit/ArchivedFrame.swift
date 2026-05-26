@@ -33,6 +33,16 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var rejectedReason: String?
     /// Camera rotation in degrees east of north (POSANGLE / PA / ROTATANG FITS keyword).
     public var positionAngle: Double?
+    /// ID of the processing run that produced this frame, if it was the output of a pipeline.
+    public var processingRunID: UUID?
+    /// Earliest input-frame timestamp for stacked frames (DATE-BEG).
+    public var sessionBeg: Date?
+    /// Latest input-frame timestamp for stacked frames (DATE-END).
+    public var sessionEnd: Date?
+    /// Minimum CCD temperature across input frames (stacked frames only).
+    public var temperatureMin: Double?
+    /// Maximum CCD temperature across input frames (stacked frames only).
+    public var temperatureMax: Double?
 
     public init(
         id: UUID, filePath: String, objectName: String?, ra: Double?, dec: Double?,
@@ -44,7 +54,12 @@ public struct ArchivedFrame: Sendable, Identifiable {
         processingLevel: ProcessingLevel, addedAt: Date,
         thumbnail: Data? = nil,
         rejected: Bool = false, rejectedReason: String? = nil,
-        positionAngle: Double? = nil
+        positionAngle: Double? = nil,
+        processingRunID: UUID? = nil,
+        sessionBeg: Date? = nil,
+        sessionEnd: Date? = nil,
+        temperatureMin: Double? = nil,
+        temperatureMax: Double? = nil
     ) {
         self.id = id
         self.filePath = filePath
@@ -74,5 +89,10 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.rejected = rejected
         self.rejectedReason = rejectedReason
         self.positionAngle = positionAngle
+        self.processingRunID = processingRunID
+        self.sessionBeg = sessionBeg
+        self.sessionEnd = sessionEnd
+        self.temperatureMin = temperatureMin
+        self.temperatureMax = temperatureMax
     }
 }

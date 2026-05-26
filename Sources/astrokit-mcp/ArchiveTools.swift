@@ -268,6 +268,7 @@ struct ArchiveTools {
         guard let f = try await archive.frame(id: uuid) else {
             throw ToolError("No frame with id \(idStr) found in the archive.")
         }
+        let provenance = try await archive.processingRun(for: f)
 
         let iso = ISO8601DateFormatter()
         func row(_ label: String, _ value: String) -> String {
@@ -282,14 +283,23 @@ struct ArchiveTools {
         if let v = f.objectName   { lines.append(row("Object",       v)) }
         if let v = f.filter       { lines.append(row("Filter",       v)) }
         if let v = f.exposureTime { lines.append(row("Exposure",     String(format: "%.0f s", v))) }
-        if let v = f.timestamp    { lines.append(row("Date",         iso.string(from: v))) }
+        if let beg = f.sessionBeg, let end = f.sessionEnd {
+            let fmt = { (d: Date) -> String in String(iso.string(from: d).prefix(19)) }
+            lines.append(row("Session",      "\(fmt(beg)) → \(fmt(end)) UTC"))
+        } else if let v = f.timestamp {
+            lines.append(row("Date",         iso.string(from: v)))
+        }
 
         lines.append("")
         var hasCameraSection = false
         if let v = f.camera      { lines.append(row("Camera",       v));                              hasCameraSection = true }
         if let v = f.gain        { lines.append(row("Gain",         String(format: "%.0f", v)));       hasCameraSection = true }
         if let v = f.offset      { lines.append(row("Offset",       String(format: "%.0f", v)));       hasCameraSection = true }
-        if let v = f.temperature { lines.append(row("Temperature",  String(format: "%.1f °C", v)));    hasCameraSection = true }
+        if let lo = f.temperatureMin, let hi = f.temperatureMax, abs(hi - lo) > 0.05 {
+            lines.append(row("Temperature",  String(format: "%.1f … %.1f °C", lo, hi)));    hasCameraSection = true
+        } else if let v = f.temperature {
+            lines.append(row("Temperature",  String(format: "%.1f °C", v)));                hasCameraSection = true
+        }
         if !hasCameraSection     { lines.removeLast() }
 
         lines.append("")
@@ -316,6 +326,32 @@ struct ArchiveTools {
         }
         lines.append(row("Added at",   iso.string(from: f.addedAt)))
         lines.append(row("File",       f.filePath))
+
+        if let (run, inputs) = provenance {
+            lines.append("")
+            lines.append("Provenance")
+            lines.append(String(repeating: "─", count: 60))
+            lines.append(row("Run ID",   run.id.uuidString))
+            lines.append(row("Pipeline", run.pipelineID))
+            lines.append(row("Run at",   iso.string(from: run.createdAt)))
+            if !run.parameters.isEmpty {
+                let paramsStr = run.parameters.sorted { $0.key < $1.key }
+                    .map { "\($0.key)=\($0.value)" }.joined(separator: "  ")
+                lines.append(row("Parameters", paramsStr))
+            }
+            if !inputs.isEmpty {
+                lines.append(row("Inputs", ""))
+                let grouped = Dictionary(grouping: inputs, by: { $0.inputName })
+                for name in grouped.keys.sorted() {
+                    let refs = grouped[name]!.sorted { $0.position < $1.position }
+                    for ref in refs {
+                        let archiveTag = ref.frameID.map { "  [archive: \($0.uuidString)]" } ?? ""
+                        let display = ref.filePath ?? "(unknown)"
+                        lines.append("    \(name)[\(ref.position)]  \(display)\(archiveTag)")
+                    }
+                }
+            }
+        }
 
         return lines.joined(separator: "\n")
     }

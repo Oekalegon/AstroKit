@@ -340,6 +340,53 @@ ap-archive frameset delete <id>
 
 ---
 
+### `ap-archive info`
+
+Shows all stored information for a single archive frame, including provenance if the frame was produced by a pipeline run.
+
+```
+ap-archive info <id> [--json]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Print result as JSON |
+
+**Example output:**
+
+```
+Frame  A3F2B1C0-1234-5678-ABCD-EF0123456789
+────────────────────────────────────────────────────────────
+  Type:              stacked
+  Object:            M51
+  Filter:            Ha
+  Exposure:          5400 s
+
+  Camera:            ZWO ASI294MC Pro
+  Gain:              100
+
+  Size:              6248 × 4176
+
+  Processing:        stacked  [calibrated: ✗  stacked: ✓  stretched: ✗]
+  Added at:          2026-05-25T10:00:00Z
+  File:              /Users/…/AstroArchive/M51/stacked/Ha/stacked.fits
+
+Provenance
+────────────────────────────────────────────────────────────
+  Run ID:            D1E2F3A4-5678-9ABC-DEF0-123456789ABC
+  Pipeline:          frame_stacking
+  Run at:            2026-05-25T10:00:00Z
+  Parameters:        method=average  normalisation=multiplicative
+  Inputs:
+    input_frames[0]  /Users/…/lights/M51_Ha_001.fits  [archive: B4E3D2F1-...]
+    input_frames[1]  /Users/…/lights/M51_Ha_002.fits  [archive: C5F4E3A2-...]
+    …
+```
+
+The Provenance section is shown only for frames that were archived automatically by `ap run` or `run_pipeline` (not for frames added manually with `ap-archive add`).
+
+---
+
 ### `ap-archive remove`
 
 Removes a frame from the archive by its UUID. Optionally deletes the FITS file from disk.
@@ -396,6 +443,15 @@ Files are placed under:
 ```
 
 For example: `~/AstroArchive/M51/2024-03-15/light/Ha/M51_Ha_300s_001.fits`
+
+### Provenance
+
+When `ap run` or `run_pipeline` (MCP) produces frame outputs and `ASTROARCHIVE_PATH` is set, result frames are automatically archived with a provenance record linking them to their source run. The record captures:
+
+- The pipeline ID and all parameters used
+- Every input file path, and its archive UUID if the input was already in the archive
+
+View provenance with `ap-archive info <id>` or `archive_get` (MCP). Frames added manually with `ap-archive add` have no provenance record.
 
 ### Schema migrations
 

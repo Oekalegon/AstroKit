@@ -386,6 +386,18 @@ struct Tools {
             }
         }
 
+        // Auto-archive result frames when an archive is configured.
+        if !frames.isEmpty {
+            let archiveNote = await autoArchiveResults(
+                frames: frames,
+                pipelineID: pipelineID,
+                parameters: parameters,
+                pipelineInputs: pipelineInputs,
+                existingOutputPath: (outputPath?.hasSuffix(".fits") == true || outputPath?.hasSuffix(".fit") == true) ? outputPath : nil
+            )
+            if let note = archiveNote { savedNote += "\n\(note)" }
+        }
+
         var lines = [
             "Pipeline '\(pipelineID)' completed in \(String(format: "%.2f", elapsed))s.",
             "\(frames.count) frame(s) produced, \(tables.count) table(s) produced.\(savedNote)",
@@ -412,6 +424,150 @@ struct Tools {
     }
 
     // MARK: - Helpers
+
+    private func autoArchiveResults(
+        frames: [Frame],
+        pipelineID: String,
+        parameters: [String: Parameter],
+        pipelineInputs: [String: Any],
+        existingOutputPath: String?
+    ) async -> String? {
+        guard let config = try? ArchiveConfiguration.fromEnvironment() else { return nil }
+
+        do {
+            let archive = try Archive(configuration: config)
+
+            // Collect provenance and input frame metadata in one pass.
+            var runInputs: [ProcessingRunInputRef] = []
+            var objectNamesSet: Set<String> = []
+            var filterNamesSet: Set<String> = []
+            var camerasSet: Set<String> = []
+            var pixelScalesSet: Set<Double> = []
+            var focalLengthsSet: Set<Double> = []
+            var totalExposure = 0.0
+            var inputCount = 0
+            var gainsSet: Set<Double> = []
+            var offsetsSet: Set<Double> = []
+            var temperatures: [Double] = []
+            var timestamps: [Date] = []
+            var refRA: Double? = nil
+            var refDec: Double? = nil
+
+            for (name, value) in pipelineInputs.sorted(by: { $0.key < $1.key }) {
+                let pathsAndFrames: [(String, Frame?)]
+                if let frameSet = value as? FrameSet {
+                    pathsAndFrames = frameSet.frames.compactMap { f in f.filePath.map { ($0, f) } }
+                } else if let frame = value as? Frame {
+                    pathsAndFrames = frame.filePath.map { [($0, frame as Frame?)] } ?? []
+                } else {
+                    pathsAndFrames = []
+                }
+                for (pos, (path, inputFrame)) in pathsAndFrames.enumerated() {
+                    let af = try? await archive.frame(filePath: path)
+                    runInputs.append(ProcessingRunInputRef(
+                        inputName: name, frameID: af?.id, filePath: path, position: pos
+                    ))
+                    // Reference frame (pos 0) provides pointing and observation date.
+                    if pos == 0 {
+                        refRA  = af?.ra
+                        refDec = af?.dec
+                    }
+                    inputCount += 1
+                    if let v = af?.objectName { objectNamesSet.insert(v) }
+                    let fn = af?.filter ?? inputFrame?.filterName
+                    if let fn { filterNamesSet.insert(fn) }
+                    let exp = af?.exposureTime ?? inputFrame?.exposureTime
+                    if let exp { totalExposure += exp }
+                    if let g = af?.gain ?? inputFrame?.gain { gainsSet.insert(g) }
+                    if let o = af?.offset ?? inputFrame?.offset { offsetsSet.insert(o) }
+                    if let t = af?.temperature { temperatures.append(t) }
+                    if let ts = af?.timestamp ?? inputFrame?.timestamp { timestamps.append(ts) }
+                    if let c = af?.camera { camerasSet.insert(c) }
+                    if let ps = af?.pixelScale { pixelScalesSet.insert(ps) }
+                    if let fl = af?.focalLength { focalLengthsSet.insert(fl) }
+                }
+            }
+
+            let stackObjectName  = objectNamesSet.count == 1 ? objectNamesSet.first : nil
+            let stackFilter      = filterNamesSet.count == 1 ? filterNamesSet.first : nil
+            let stackCamera      = camerasSet.count == 1 ? camerasSet.first : nil
+            let stackPixelScale  = pixelScalesSet.count == 1 ? pixelScalesSet.first : nil
+            let stackFocalLength = focalLengthsSet.count == 1 ? focalLengthsSet.first : nil
+            let stackExposure    = inputCount > 0 && totalExposure > 0 ? totalExposure : nil as Double?
+            let stackGain        = gainsSet.count == 1 ? gainsSet.first : nil
+            let stackOffset      = offsetsSet.count == 1 ? offsetsSet.first : nil
+            let stackTempMean    = temperatures.isEmpty ? nil : temperatures.reduce(0, +) / Double(temperatures.count) as Double?
+            let stackTempMin     = temperatures.isEmpty ? nil : temperatures.min()
+            let stackTempMax     = temperatures.isEmpty ? nil : temperatures.max()
+
+            let iso8601 = ISO8601DateFormatter()
+            iso8601.formatOptions = [.withInternetDateTime]
+            let refDate  = timestamps.max().flatMap { iso8601.string(from: $0) }   // newest = reference frame
+            let dateBeg  = timestamps.min().flatMap { iso8601.string(from: $0) }
+            let dateEnd  = timestamps.max().flatMap { iso8601.string(from: $0) }
+
+            let paramMap = parameters.reduce(into: [String: String]()) { $0[$1.key] = $1.value.stringValue }
+            let run = try await archive.recordProcessingRun(
+                pipelineID: pipelineID, parameters: paramMap, inputs: runInputs
+            )
+
+            var archivedIDs: [String] = []
+            for frame in frames {
+                guard let texture = frame.texture else { continue }
+                let w = texture.width, h = texture.height
+                var pixels = [Float](repeating: 0, count: w * h)
+                texture.getBytes(&pixels,
+                                 bytesPerRow: w * MemoryLayout<Float>.size,
+                                 from: MTLRegionMake2D(0, 0, w, h),
+                                 mipmapLevel: 0)
+
+                let tempURL: URL?
+                let fileToArchive: URL
+                if let outPath = existingOutputPath, frames.count == 1 {
+                    fileToArchive = URL(fileURLWithPath: outPath)
+                    tempURL = nil
+                } else {
+                    let tmp = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("ap_result_\(UUID().uuidString).fits")
+                    try FITSTableWriter.writeResultFrame(
+                        pixelData: pixels, width: w, height: h,
+                        pipelineID: pipelineID,
+                        imageType: "Light Frame",
+                        filterName: stackFilter ?? frame.filterName,
+                        stacked: pipelineID == "frame_stacking",
+                        nframes: inputCount > 0 ? inputCount : nil,
+                        totalExposure: stackExposure,
+                        gain: stackGain,
+                        offset: stackOffset,
+                        temperature: stackTempMean,
+                        objectName: stackObjectName,
+                        camera: stackCamera,
+                        ra: refRA,
+                        dec: refDec,
+                        pixelScale: stackPixelScale,
+                        focalLength: stackFocalLength,
+                        tempMin: stackTempMin,
+                        tempMax: stackTempMax,
+                        dateObs: refDate,
+                        dateBeg: dateBeg,
+                        dateEnd: dateEnd,
+                        to: tmp.path
+                    )
+                    fileToArchive = tmp
+                    tempURL = tmp
+                }
+
+                let (archived, _) = try await archive.add(fitsFile: fileToArchive, processingRunID: run.id)
+                if let tmp = tempURL { try? FileManager.default.removeItem(at: tmp) }
+                archivedIDs.append(archived.id.uuidString)
+            }
+
+            if archivedIDs.isEmpty { return "Auto-archive: no frames could be read from GPU texture." }
+            return "Archived result frame(s): \(archivedIDs.joined(separator: ", ")) (run: \(run.id))"
+        } catch {
+            return "Auto-archive failed: \(error.localizedDescription)"
+        }
+    }
 
     private func stackSummaryLine(pixels: [Float], registrationTable df: DataFrame, inputFrameSet: FrameSet?) -> String? {
         let skyNoises = df.rows.compactMap { $0["sky_noise"] as? Double }.filter { !$0.isNaN && $0 > 0 }

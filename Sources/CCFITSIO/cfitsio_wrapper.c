@@ -1,4 +1,6 @@
 #include "shim.h"
+#include <math.h>
+#include <time.h>
 
 // Wrapper functions for cfitsio to bridge Swift and C
 // These functions are called from Swift using @_silgen_name
@@ -329,6 +331,112 @@ int write_stacked_fits(
             reference_frame_idx
         );
     }
+
+    fits_close_file(fptr, &status);
+    *status_out = status;
+    return status;
+}
+
+// ---------------------------------------------------------------------------
+// Write a float image as a minimal FITS primary HDU.
+// Used for auto-archiving result frames produced by any pipeline.
+// ---------------------------------------------------------------------------
+int write_result_frame_fits(
+    const char *filename,
+    float      *pixels,
+    int         width,
+    int         height,
+    const char *pipeline_id,
+    const char *imagetyp,
+    const char *filter_name,
+    int         stacked,
+    int         nframes,        // 0 = skip
+    double      total_exposure, // NaN = skip
+    double      gain,           // NaN = skip
+    double      offset_val,     // NaN = skip
+    double      temperature,    // NaN = skip (mean)
+    const char *object_name,    // NULL or empty = skip
+    const char *camera,         // NULL or empty = skip
+    double      ra,             // NaN = skip (degrees)
+    double      dec,            // NaN = skip (degrees)
+    double      pixel_scale,    // NaN = skip (arcsec/px)
+    double      focal_length,   // NaN = skip (mm)
+    double      temp_min,       // NaN = skip
+    double      temp_max,       // NaN = skip
+    const char *date_obs,       // observation date; falls back to current UTC if empty
+    const char *date_beg,       // session start; NULL or empty = skip
+    const char *date_end,       // session end; NULL or empty = skip
+    int        *status_out
+) {
+    int status = 0;
+    fitsfile *fptr;
+
+    remove(filename);
+
+    fits_create_file(&fptr, filename, &status);
+    if (status) { *status_out = status; return status; }
+
+    long naxes[2] = { (long)width, (long)height };
+    fits_create_img(fptr, FLOAT_IMG, 2, naxes, &status);
+
+    if (object_name && object_name[0])
+        fits_update_key(fptr, TSTRING, "OBJECT",   (char *)object_name, "Target object", &status);
+    if (camera && camera[0])
+        fits_update_key(fptr, TSTRING, "INSTRUME", (char *)camera,      "Camera / instrument", &status);
+    if (pipeline_id && pipeline_id[0])
+        fits_update_key(fptr, TSTRING, "PIPELINE", (char *)pipeline_id, "AstrophotoKit pipeline ID", &status);
+    if (imagetyp && imagetyp[0])
+        fits_update_key(fptr, TSTRING, "IMAGETYP", (char *)imagetyp, "Frame type", &status);
+    if (filter_name && filter_name[0])
+        fits_update_key(fptr, TSTRING, "FILTER",   (char *)filter_name, "Filter", &status);
+    if (stacked) {
+        int one = 1;
+        fits_update_key(fptr, TLOGICAL, "STACKED", &one, "Frame is a stack", &status);
+    }
+    if (nframes > 0)
+        fits_update_key(fptr, TINT,    "NFRAMES",  &nframes,        "Number of stacked frames", &status);
+    if (!isnan(total_exposure))
+        fits_update_key(fptr, TDOUBLE, "EXPTIME",  &total_exposure, "[s] Total integration time", &status);
+    if (!isnan(gain))
+        fits_update_key(fptr, TDOUBLE, "GAIN",     &gain,           "Camera gain (e-/ADU)", &status);
+    if (!isnan(offset_val))
+        fits_update_key(fptr, TDOUBLE, "OFFSET",   &offset_val,     "Camera offset (pedestal)", &status);
+    if (!isnan(temperature))
+        fits_update_key(fptr, TDOUBLE, "CCD-TEMP", &temperature,    "[C] CCD temperature (mean)", &status);
+    if (!isnan(temp_min))
+        fits_update_key(fptr, TDOUBLE, "CCD-TMIN", &temp_min,       "[C] CCD temperature (min)", &status);
+    if (!isnan(temp_max))
+        fits_update_key(fptr, TDOUBLE, "CCD-TMAX", &temp_max,       "[C] CCD temperature (max)", &status);
+    if (!isnan(ra))
+        fits_update_key(fptr, TDOUBLE, "RA",       &ra,             "[deg] Reference frame RA (J2000)", &status);
+    if (!isnan(dec))
+        fits_update_key(fptr, TDOUBLE, "DEC",      &dec,            "[deg] Reference frame Dec (J2000)", &status);
+    if (!isnan(pixel_scale))
+        fits_update_key(fptr, TDOUBLE, "PIXSCALE", &pixel_scale,    "[arcsec/px] Pixel scale", &status);
+    if (!isnan(focal_length))
+        fits_update_key(fptr, TDOUBLE, "FOCALLEN", &focal_length,   "[mm] Focal length", &status);
+
+    // DATE-OBS: use reference-frame observation date if provided, else current UTC.
+    if (date_obs && date_obs[0]) {
+        fits_update_key(fptr, TSTRING, "DATE-OBS", (char *)date_obs, "Reference frame observation date (UTC)", &status);
+    } else {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        struct tm *utc = gmtime(&ts.tv_sec);
+        char date_buf[32];
+        snprintf(date_buf, sizeof(date_buf), "%04d-%02d-%02dT%02d:%02d:%02d",
+                 utc->tm_year + 1900, utc->tm_mon + 1, utc->tm_mday,
+                 utc->tm_hour, utc->tm_min, utc->tm_sec);
+        fits_update_key(fptr, TSTRING, "DATE-OBS", date_buf, "Processing timestamp (UTC)", &status);
+    }
+    if (date_beg && date_beg[0])
+        fits_update_key(fptr, TSTRING, "DATE-BEG", (char *)date_beg, "Session start (UTC)", &status);
+    if (date_end && date_end[0])
+        fits_update_key(fptr, TSTRING, "DATE-END", (char *)date_end, "Session end (UTC)", &status);
+
+    long fpixel[2] = {1, 1};
+    long nelements = (long)width * (long)height;
+    fits_write_pix(fptr, TFLOAT, fpixel, nelements, pixels, &status);
 
     fits_close_file(fptr, &status);
     *status_out = status;

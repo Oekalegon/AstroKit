@@ -22,9 +22,12 @@ public actor Archive {
     // MARK: - Ingestion
 
     /// Adds a single FITS file to the archive, copying it into the archive folder hierarchy.
+    /// - Parameters:
+    ///   - url: The source FITS file to copy into the archive.
+    ///   - processingRunID: Optional ID of the processing run that produced this frame.
     /// - Returns: The frame record and `isNew: true` if it was inserted, `false` if already in archive.
     @discardableResult
-    public func add(fitsFile url: URL) async throws -> (frame: ArchivedFrame, isNew: Bool) {
+    public func add(fitsFile url: URL, processingRunID: UUID? = nil) async throws -> (frame: ArchivedFrame, isNew: Bool) {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw ArchiveError.fileNotFound(url.path)
         }
@@ -74,13 +77,68 @@ public actor Archive {
             stretched: meta.stretched,
             processingLevel: meta.processingLevel,
             addedAt: Date(),
-            positionAngle: meta.positionAngle
+            positionAngle: meta.positionAngle,
+            processingRunID: processingRunID,
+            sessionBeg: meta.sessionBeg,
+            sessionEnd: meta.sessionEnd,
+            temperatureMin: meta.temperatureMin,
+            temperatureMax: meta.temperatureMax
         )
         let isNew = try await database.insertFrame(frame)
         if !isNew {
             try? FileManager.default.removeItem(at: dest)
+            // Return the existing frame so the caller gets a valid, stored ID.
+            let sig = ArchiveDatabase.frameSignature(
+                timestamp: meta.timestamp,
+                frameType: meta.frameType,
+                filter: meta.filter,
+                exposureTime: meta.exposureTime
+            )
+            if let existing = try await database.frameBySignature(sig) {
+                return (existing, false)
+            }
         }
         return (frame, isNew)
+    }
+
+    // MARK: - Processing runs
+
+    /// Records a pipeline processing run and its input references for provenance tracking.
+    ///
+    /// Call this before archiving result frames so you have a run ID to link them to.
+    /// - Parameters:
+    ///   - pipelineID: The pipeline ID that was executed (e.g. "frame_stacking").
+    ///   - parameters: Pipeline parameters that were active for this run.
+    ///   - inputs: References to the input frames (archive IDs and/or file paths).
+    /// - Returns: The persisted processing run record.
+    @discardableResult
+    public func recordProcessingRun(
+        pipelineID: String,
+        parameters: [String: String],
+        inputs: [ProcessingRunInputRef]
+    ) async throws -> ArchivedProcessingRun {
+        let run = ArchivedProcessingRun(
+            id: UUID(),
+            pipelineID: pipelineID,
+            parameters: parameters,
+            createdAt: Date()
+        )
+        try await database.insertProcessingRun(run, inputs: inputs)
+        return run
+    }
+
+    /// Returns a single frame by its absolute file path on disk.
+    public func frame(filePath: String) async throws -> ArchivedFrame? {
+        try await database.frameByFilePath(filePath)
+    }
+
+    /// Returns the processing run that produced a frame, together with its input references.
+    /// Returns `nil` if the frame has no associated processing run.
+    public func processingRun(for frame: ArchivedFrame) async throws -> (run: ArchivedProcessingRun, inputs: [ProcessingRunInputRef])? {
+        guard let runID = frame.processingRunID else { return nil }
+        guard let run = try await database.processingRunByID(runID) else { return nil }
+        let inputs = try await database.inputsForRun(runID)
+        return (run, inputs)
     }
 
     /// Adds all FITS files in a directory, copying each into the archive folder hierarchy.

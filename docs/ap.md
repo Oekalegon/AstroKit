@@ -219,6 +219,23 @@ ap run frame_stacking \
 | `STCKRJLO` | Lower rejection sigma |
 | `STCKRJHI` | Upper rejection sigma |
 
+## Auto-archiving
+
+When `ASTROARCHIVE_PATH` is set (or `--archive-path` is passed), any pipeline run that produces Frame outputs automatically archives those results:
+
+```bash
+export ASTROARCHIVE_PATH=~/AstroArchive
+
+ap run frame_stacking \
+  --input input_frames:/path/to/lights/ \
+  --output stacked.fits
+# → Archived result → D1E2F3A4-5678-9ABC-DEF0-123456789ABC
+```
+
+A provenance record is written alongside the frame, capturing the pipeline ID, all parameters, and every input file path (with archive UUIDs for inputs that are already in the archive). Use `ap-archive info <uuid>` to view this data later.
+
+Auto-archiving is silent on success and prints a warning on failure — it never fails the pipeline run itself.
+
 ## Requirements
 
 - macOS 26+
