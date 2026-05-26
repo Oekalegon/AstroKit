@@ -253,7 +253,7 @@ actor ArchiveDatabase {
         bind(stmt, 24, iso.string(from: frame.addedAt))
         bind(stmt, 25, frame.thumbnail)
         bind(stmt, 26, ArchiveDatabase.frameSignature(
-            timestamp: frame.timestamp,
+            fileDate: frame.fileDate,
             frameType: frame.frameType,
             filter: frame.filter,
             exposureTime: frame.exposureTime
@@ -286,16 +286,16 @@ actor ArchiveDatabase {
     }
 
     // Stable string key used for content-based deduplication.
-    // Components: ISO8601 timestamp (or ""), lowercased frame type,
+    // Components: fileDate (DATE header → DATE-OBS → filesystem, or ""), lowercased frame type,
     // normalised filter (or ""), exposure formatted to 3 decimal places (or "").
     static func frameSignature(
-        timestamp: Date?,
+        fileDate: Date?,
         frameType: String,
         filter: String?,
         exposureTime: Double?
     ) -> String {
         let iso = ISO8601DateFormatter()
-        let ts = timestamp.map { iso.string(from: $0) } ?? ""
+        let ts = fileDate.map { iso.string(from: $0) } ?? ""
         let ft = frameType.lowercased()
         let fi = normalizeFilterComponent(filter ?? "")
         let ex = exposureTime.map { String(format: "%.3f", $0) } ?? ""
