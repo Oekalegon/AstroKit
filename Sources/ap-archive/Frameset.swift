@@ -109,8 +109,11 @@ struct Frameset: AsyncParsableCommand {
 
             if dryRun {
                 let inspection = try await archive.inspectFrameSet(query: query)
-                if !json && hasQualityFilter {
-                    try await printMissingQualityWarnings(archive: archive, inspection: inspection)
+                if !json {
+                    try await printRejectedWarnings(archive: archive, inspection: inspection, query: query)
+                    if hasQualityFilter {
+                        try await printMissingQualityWarnings(archive: archive, inspection: inspection)
+                    }
                 }
                 if json {
                     printInspectionJSON(inspection)
@@ -128,6 +131,7 @@ struct Frameset: AsyncParsableCommand {
             if json {
                 printJSON(frameSet, inspection: inspection)
             } else {
+                try await printRejectedWarnings(archive: archive, inspection: inspection, query: query)
                 if hasQualityFilter {
                     try await printMissingQualityWarnings(archive: archive, inspection: inspection)
                 }
@@ -135,6 +139,39 @@ struct Frameset: AsyncParsableCommand {
                 print("")
                 print(inspection.formatted(isDryRun: false))
             }
+        }
+
+        /// Queries for rejected frames that pass every other filter and prints an orange warning.
+        /// A frame appears here only if it would be in the frameset were it not rejected —
+        /// i.e., it satisfies the type, object, filter, date, quality, and all other criteria.
+        private func printRejectedWarnings(
+            archive: Archive,
+            inspection: FrameSetInspection,
+            query: FrameQuery
+        ) async throws {
+            // Same query as the main one but lift the rejection exclusion.
+            var rejQuery = query
+            rejQuery.rejectionFilter = .includeAll
+            let allFrames   = try await archive.frames(matching: rejQuery)
+            let includedIDs = Set(inspection.frames.map { $0.id })
+
+            let rejected = allFrames.filter { $0.rejected && !includedIDs.contains($0.id) }
+            guard !rejected.isEmpty else { return }
+
+            let n    = rejected.count
+            let noun = n == 1 ? "frame" : "frames"
+            let verb = n == 1 ? "was"   : "were"
+            print(orangeText("⚠  \(n) \(noun) matched the query but \(verb) excluded because \(n == 1 ? "it is" : "they are") rejected:"))
+            for f in rejected.prefix(5) {
+                let filename  = (f.filePath as NSString).lastPathComponent
+                let reasonStr = f.rejectedReason.map { " — \($0)" } ?? ""
+                print(orangeText("   \(filename)\(reasonStr)"))
+            }
+            if rejected.count > 5 {
+                print(orangeText("   …and \(rejected.count - 5) more"))
+            }
+            print(orangeText("   Use 'ap-archive reject <id> --undo' to un-reject a frame."))
+            print("")
         }
 
         /// Queries for all frames that match the base criteria (ignoring quality filters) and
