@@ -81,7 +81,7 @@ steps:
           image_type: "grayscale"
       - name: background_level
         type: table
-        description: Background level scalar
+        description: Background level (background_level normalised 0–1; background_level_adu in ADU when FITS scale available)
 
   - id: threshold
     type: threshold

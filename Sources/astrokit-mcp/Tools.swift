@@ -656,7 +656,13 @@ struct Tools {
             if let v = metrics.starCount          { parts.append("stars: \(v)") }
             if let v = metrics.saturatedStarCount { parts.append("sat: \(v)") }
             if let v = metrics.medianFWHM         { parts.append(String(format: "FWHM: %.2fpx", v)) }
-            if let v = metrics.backgroundNoise    { parts.append(String(format: "bg: %.4f", v)) }
+            if let v = metrics.backgroundNoise {
+                if metrics.backgroundNoiseIsADU {
+                    parts.append(String(format: "bg: %.2f ADU", v))
+                } else {
+                    parts.append(String(format: "bg: %.4f", v))
+                }
+            }
             if let v = metrics.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
             if let v = metrics.hotPixelCount      { parts.append("hot_px: \(v)") }
             return "Quality metrics stored on frame \(id): \(parts.joined(separator: ", "))."
@@ -669,7 +675,8 @@ struct Tools {
     ///
     /// Identified by having `file_path`, `median_fwhm`, and `star_count` columns (produced by
     /// `FrameRegistrationProcessor` inside frame_registration and frame_stacking pipelines).
-    /// `sky_noise` is not mapped to `backgroundNoise` because it is in ADU, not normalised 0–1.
+    /// `sky_noise` (per-frame registration ADU value) is not mapped to `backgroundNoise` here;
+    /// the stacking summary handles it separately.
     static func extractPerFrameQuality(
         from tables: [TableData]
     ) -> [(filePath: String, starCount: Int?, medianFWHM: Double?, medianEccentricity: Double?)] {
@@ -701,13 +708,16 @@ struct Tools {
     /// - `calibration_quality` (has `noise_sigma`, `hot_pixel_count`): from CalibrationQualityProcessor.
     /// - `pixel_coordinates` (has `centroid_x`/`centroid_y`): legacy — row count → `starCount`.
     /// - `median_fwhm` summary (has `sigma_clipped_mean_fwhm_major/minor`): legacy → `medianFWHM`.
-    /// - `background_level` table: legacy → `backgroundNoise` (normalised 0–1).
+    /// - `background_level` table: prefers `background_level_adu` (ADU) over `background_level` (normalised).
+    ///
+    /// Returns `backgroundNoiseIsADU = true` when the background value was read from an ADU column.
     static func extractGlobalQuality(
         from tables: [TableData]
-    ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, medianEccentricity: Double?, saturatedStarCount: Int?, hotPixelCount: Int?) {
+    ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, backgroundNoiseIsADU: Bool, medianEccentricity: Double?, saturatedStarCount: Int?, hotPixelCount: Int?) {
         var starCount: Int? = nil
         var medianFWHM: Double? = nil
         var backgroundNoise: Double? = nil
+        var backgroundNoiseIsADU = false
         var medianEccentricity: Double? = nil
         var saturatedStarCount: Int? = nil
         var hotPixelCount: Int? = nil
@@ -724,7 +734,7 @@ struct Tools {
                 if let v = row["median_fwhm"]          as? Double, v > 0 { medianFWHM = v }
                 if let v = row["median_eccentricity"]  as? Double { medianEccentricity = v }
                 if let v = row["background_level_adu"] as? Double {
-                    backgroundNoise = v
+                    backgroundNoise = v; backgroundNoiseIsADU = true
                 } else if let v = row["background_level"] as? Double {
                     backgroundNoise = v
                 }
@@ -735,7 +745,7 @@ struct Tools {
                let row = df.rows.first {
                 if let v = row["hot_pixel_count"] as? Int { hotPixelCount = v }
                 if let v = row["noise_sigma_adu"] as? Double {
-                    backgroundNoise = v
+                    backgroundNoise = v; backgroundNoiseIsADU = true
                 } else if let v = row["noise_sigma"] as? Double {
                     backgroundNoise = v
                 }
@@ -759,12 +769,17 @@ struct Tools {
                 medianFWHM = (major + minor) / 2.0
             }
             // Legacy: background level table (from background_estimation).
+            // Prefer ADU column when present (BackgroundEstimationProcessor emits
+            // background_level_adu whenever the frame has FITS scale info).
             if colNames.contains("background_level"),
                !colNames.contains("star_count"),   // avoid double-counting frame_quality table
                let row = df.rows.first,
-               let level = row["background_level"] as? Double,
                backgroundNoise == nil {
-                backgroundNoise = level
+                if let v = row["background_level_adu"] as? Double {
+                    backgroundNoise = v; backgroundNoiseIsADU = true
+                } else if let v = row["background_level"] as? Double {
+                    backgroundNoise = v
+                }
             }
             // Legacy: optical_quality summary eccentricity.
             if colNames.contains("global_mean_eccentricity"),
@@ -774,7 +789,7 @@ struct Tools {
                 medianEccentricity = ecc
             }
         }
-        return (starCount, medianFWHM, backgroundNoise, medianEccentricity, saturatedStarCount, hotPixelCount)
+        return (starCount, medianFWHM, backgroundNoise, backgroundNoiseIsADU, medianEccentricity, saturatedStarCount, hotPixelCount)
     }
 
     private func stackSummaryLine(pixels: [Float], registrationTable df: DataFrame, inputFrameSet: FrameSet?) -> String? {

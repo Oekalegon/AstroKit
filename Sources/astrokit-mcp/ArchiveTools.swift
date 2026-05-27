@@ -76,7 +76,7 @@ struct ArchiveTools {
                     "rejected_only": ["type": "boolean", "description": "Return only rejected frames."],
                     "max_fwhm": ["type": "number", "description": "Only frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded."],
                     "min_stars": ["type": "integer", "description": "Only frames with at least this many detected stars. Frames without quality data are excluded."],
-                    "max_background_noise": ["type": "number", "description": "Only frames with background noise ≤ this value (0–1). Frames without quality data are excluded."],
+                    "max_background_noise": ["type": "number", "description": "Only frames with background noise ≤ this value (ADU for frames processed with quality pipelines). Frames without quality data are excluded."],
                     "max_eccentricity": ["type": "number", "description": "Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded."],
                 ] as [String: Any],
                 "required": [],
@@ -118,7 +118,7 @@ struct ArchiveTools {
                     "temp_tolerance": ["type": "number", "description": "Temperature tolerance ±°C (default 2.0)."],
                     "max_fwhm": ["type": "number", "description": "Only frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded."],
                     "min_stars": ["type": "integer", "description": "Only frames with at least this many detected stars. Frames without quality data are excluded."],
-                    "max_background_noise": ["type": "number", "description": "Only frames with background noise ≤ this value (0–1). Frames without quality data are excluded."],
+                    "max_background_noise": ["type": "number", "description": "Only frames with background noise ≤ this value (ADU for frames processed with quality pipelines). Frames without quality data are excluded."],
                     "max_eccentricity": ["type": "number", "description": "Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded."],
                 ] as [String: Any],
                 "required": [],
@@ -143,7 +143,7 @@ struct ArchiveTools {
                     "temp_tolerance": ["type": "number", "description": "Temperature tolerance ±°C (default 2.0)."],
                     "max_fwhm": ["type": "number", "description": "Only frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded."],
                     "min_stars": ["type": "integer", "description": "Only frames with at least this many detected stars. Frames without quality data are excluded."],
-                    "max_background_noise": ["type": "number", "description": "Only frames with background noise ≤ this value (0–1). Frames without quality data are excluded."],
+                    "max_background_noise": ["type": "number", "description": "Only frames with background noise ≤ this value (ADU for frames processed with quality pipelines). Frames without quality data are excluded."],
                     "max_eccentricity": ["type": "number", "description": "Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded."],
                     "force": ["type": "boolean", "description": "Allow mixed optical filters; stored as comma-separated list on the frame set (default false)."],
                 ] as [String: Any],
@@ -382,7 +382,7 @@ struct ArchiveTools {
             }
             if let v = f.medianFWHM         { lines.append(row("FWHM",         String(format: "%.2f px", v))) }
             if let v = f.medianEccentricity { lines.append(row("Eccentricity", String(format: "%.3f", v))) }
-            if let v = f.backgroundNoise    { lines.append(row("Bg. noise",    String(format: "%.4f", v))) }
+            if let v = f.backgroundNoise    { lines.append(row("Bg. noise",    String(format: "%.2f ADU", v))) }
             if let v = f.hotPixelCount      { lines.append(row("Hot pixels",   "\(v)")) }
         }
 
@@ -745,7 +745,7 @@ struct ArchiveTools {
         if let v = starCount          { updated.append("star_count=\(v)") }
         if let v = saturatedStarCount { updated.append("saturated_star_count=\(v)") }
         if let v = medianFWHM         { updated.append(String(format: "median_fwhm=%.3fpx", v)) }
-        if let v = backgroundNoise    { updated.append(String(format: "background_noise=%.4f", v)) }
+        if let v = backgroundNoise    { updated.append(String(format: "background_noise=%.2f ADU", v)) }
         if let v = medianEccentricity { updated.append(String(format: "median_eccentricity=%.3f", v)) }
         if let v = hotPixelCount      { updated.append("hot_pixel_count=\(v)") }
         return "Updated quality metrics for frame \(idStr): \(updated.joined(separator: ", "))."

@@ -87,11 +87,10 @@ steps:
           image_type: "grayscale"
       - name: background_level
         type: table
-        description: Background level scalar value
+        description: Background level (background_level normalised 0–1; background_level_adu in ADU when FITS scale available)
         metadata:
           processing_stage: "background_estimation"
           data_type: "scalar"
-          unit: "ADU"
 
   - id: threshold
     type: threshold

@@ -348,7 +348,13 @@ extension AP {
                         if let v = metrics.starCount          { parts.append("stars: \(v)") }
                         if let v = metrics.saturatedStarCount { parts.append("sat: \(v)") }
                         if let v = metrics.medianFWHM         { parts.append(String(format: "FWHM: %.2fpx", v)) }
-                        if let v = metrics.backgroundNoise    { parts.append(String(format: "bg: %.4f", v)) }
+                        if let v = metrics.backgroundNoise {
+                            if metrics.backgroundNoiseIsADU {
+                                parts.append(String(format: "bg: %.2f ADU", v))
+                            } else {
+                                parts.append(String(format: "bg: %.4f", v))
+                            }
+                        }
                         if let v = metrics.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
                         if let v = metrics.hotPixelCount      { parts.append("hot_px: \(v)") }
                         print("Quality → \(af.id): \(parts.joined(separator: ", "))")
@@ -389,10 +395,11 @@ extension AP {
         /// Extracts aggregate quality metrics from single-frame analysis pipeline output tables.
         private func extractGlobalQuality(
             from tables: [TableData]
-        ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, medianEccentricity: Double?, saturatedStarCount: Int?, hotPixelCount: Int?) {
+        ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, backgroundNoiseIsADU: Bool, medianEccentricity: Double?, saturatedStarCount: Int?, hotPixelCount: Int?) {
             var starCount: Int? = nil
             var medianFWHM: Double? = nil
             var backgroundNoise: Double? = nil
+            var backgroundNoiseIsADU = false
             var medianEccentricity: Double? = nil
             var saturatedStarCount: Int? = nil
             var hotPixelCount: Int? = nil
@@ -410,7 +417,7 @@ extension AP {
                     if let v = row["median_eccentricity"]  as? Double { medianEccentricity = v }
                     // Prefer ADU background over normalised; only skip if the ADU column is absent.
                     if let v = row["background_level_adu"] as? Double {
-                        backgroundNoise = v
+                        backgroundNoise = v; backgroundNoiseIsADU = true
                     } else if let v = row["background_level"] as? Double {
                         backgroundNoise = v
                     }
@@ -421,7 +428,7 @@ extension AP {
                    let row = df.rows.first {
                     if let v = row["hot_pixel_count"] as? Int { hotPixelCount = v }
                     if let v = row["noise_sigma_adu"] as? Double {
-                        backgroundNoise = v
+                        backgroundNoise = v; backgroundNoiseIsADU = true
                     } else if let v = row["noise_sigma"] as? Double {
                         backgroundNoise = v
                     }
@@ -445,12 +452,17 @@ extension AP {
                     medianFWHM = (major + minor) / 2.0
                 }
                 // Legacy: background level table (background_estimation).
+                // Prefer ADU column when present (BackgroundEstimationProcessor emits
+                // background_level_adu whenever the frame has FITS scale info).
                 if colNames.contains("background_level"),
                    !colNames.contains("star_count"),   // avoid double-counting frame_quality table
                    let row = df.rows.first,
-                   let level = row["background_level"] as? Double,
                    backgroundNoise == nil {
-                    backgroundNoise = level
+                    if let v = row["background_level_adu"] as? Double {
+                        backgroundNoise = v; backgroundNoiseIsADU = true
+                    } else if let v = row["background_level"] as? Double {
+                        backgroundNoise = v
+                    }
                 }
                 // Legacy: optical_quality summary eccentricity.
                 if colNames.contains("global_mean_eccentricity"),
@@ -460,7 +472,7 @@ extension AP {
                     medianEccentricity = ecc
                 }
             }
-            return (starCount, medianFWHM, backgroundNoise, medianEccentricity, saturatedStarCount, hotPixelCount)
+            return (starCount, medianFWHM, backgroundNoise, backgroundNoiseIsADU, medianEccentricity, saturatedStarCount, hotPixelCount)
         }
 
         private func autoArchiveResults(
