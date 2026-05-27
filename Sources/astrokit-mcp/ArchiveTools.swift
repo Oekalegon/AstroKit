@@ -222,15 +222,17 @@ struct ArchiveTools {
         ],
         [
             "name": "archive_update_quality",
-            "description": "Update quality metrics for an archived frame. Metrics are normally populated automatically after running an analysis pipeline (star_detection, optical_quality, background_estimation) via run_pipeline. Use this tool to set or correct them manually. Only supplied fields are updated; omitted fields are unchanged.",
+            "description": "Update quality metrics for an archived frame. Metrics are normally populated automatically after running a quality pipeline (frame_quality for light frames, calibration_quality for dark/bias/flat) via run_pipeline. Use this tool to set or correct them manually. Only supplied fields are updated; omitted fields are unchanged.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "id": ["type": "string", "description": "Archive frame UUID."],
-                    "star_count": ["type": "integer", "description": "Number of detected stars."],
+                    "star_count": ["type": "integer", "description": "Number of detected stars (light frames)."],
+                    "saturated_star_count": ["type": "integer", "description": "Number of saturated stars (peak ≥ 90 % full-scale)."],
                     "median_fwhm": ["type": "number", "description": "Median FWHM in pixels (average of major and minor axes)."],
-                    "background_noise": ["type": "number", "description": "Normalised background noise level (0–1)."],
+                    "background_noise": ["type": "number", "description": "Background level in ADU (light frames, frame_quality pipeline) or noise sigma in ADU (calibration frames, calibration_quality pipeline). Legacy pipelines store a normalised 0–1 value."],
                     "median_eccentricity": ["type": "number", "description": "Median star eccentricity (0=circular, closer to 0 is rounder). Indicates optical quality and tracking accuracy."],
+                    "hot_pixel_count": ["type": "integer", "description": "Approximate count of hot pixels (calibration frames, from calibration_quality pipeline)."],
                 ] as [String: Any],
                 "required": ["id"],
             ] as [String: Any],
@@ -368,14 +370,20 @@ struct ArchiveTools {
             lines.append(row("Rejected", "yes\(reasonStr)"))
         }
 
-        if f.starCount != nil || f.medianFWHM != nil || f.medianEccentricity != nil || f.backgroundNoise != nil {
+        let hasQuality = f.starCount != nil || f.medianFWHM != nil || f.medianEccentricity != nil
+            || f.backgroundNoise != nil || f.saturatedStarCount != nil || f.hotPixelCount != nil
+        if hasQuality {
             lines.append("")
             lines.append("Quality metrics")
             lines.append(String(repeating: "─", count: 60))
-            if let v = f.starCount          { lines.append(row("Stars",        "\(v)")) }
+            if let v = f.starCount          {
+                let satStr = f.saturatedStarCount.map { "  (\($0) saturated)" } ?? ""
+                lines.append(row("Stars",        "\(v)\(satStr)"))
+            }
             if let v = f.medianFWHM         { lines.append(row("FWHM",         String(format: "%.2f px", v))) }
             if let v = f.medianEccentricity { lines.append(row("Eccentricity", String(format: "%.3f", v))) }
             if let v = f.backgroundNoise    { lines.append(row("Bg. noise",    String(format: "%.4f", v))) }
+            if let v = f.hotPixelCount      { lines.append(row("Hot pixels",   "\(v)")) }
         }
 
         lines.append(row("Added at",   iso.string(from: f.addedAt)))
@@ -707,13 +715,19 @@ struct ArchiveTools {
         guard let idStr = args["id"] as? String, let uuid = UUID(uuidString: idStr) else {
             throw ToolError("archive_update_quality requires a valid 'id' UUID.")
         }
-        let starCount          = args["star_count"]          as? Int
-        let medianFWHM         = args["median_fwhm"]         as? Double
-        let backgroundNoise    = args["background_noise"]    as? Double
-        let medianEccentricity = args["median_eccentricity"] as? Double
+        let starCount          = args["star_count"]           as? Int
+        let saturatedStarCount = args["saturated_star_count"] as? Int
+        let medianFWHM         = args["median_fwhm"]          as? Double
+        let backgroundNoise    = args["background_noise"]     as? Double
+        let medianEccentricity = args["median_eccentricity"]  as? Double
+        let hotPixelCount      = args["hot_pixel_count"]      as? Int
 
-        guard starCount != nil || medianFWHM != nil || backgroundNoise != nil || medianEccentricity != nil else {
-            throw ToolError("Provide at least one of: star_count, median_fwhm, background_noise, median_eccentricity.")
+        guard starCount != nil || saturatedStarCount != nil || medianFWHM != nil
+                || backgroundNoise != nil || medianEccentricity != nil || hotPixelCount != nil else {
+            throw ToolError(
+                "Provide at least one of: star_count, saturated_star_count, median_fwhm, " +
+                "background_noise, median_eccentricity, hot_pixel_count."
+            )
         }
 
         let archive = try makeArchive()
@@ -722,14 +736,18 @@ struct ArchiveTools {
             starCount: starCount,
             medianFWHM: medianFWHM,
             backgroundNoise: backgroundNoise,
-            medianEccentricity: medianEccentricity
+            medianEccentricity: medianEccentricity,
+            saturatedStarCount: saturatedStarCount,
+            hotPixelCount: hotPixelCount
         )
 
         var updated: [String] = []
         if let v = starCount          { updated.append("star_count=\(v)") }
+        if let v = saturatedStarCount { updated.append("saturated_star_count=\(v)") }
         if let v = medianFWHM         { updated.append(String(format: "median_fwhm=%.3fpx", v)) }
         if let v = backgroundNoise    { updated.append(String(format: "background_noise=%.4f", v)) }
         if let v = medianEccentricity { updated.append(String(format: "median_eccentricity=%.3f", v)) }
+        if let v = hotPixelCount      { updated.append("hot_pixel_count=\(v)") }
         return "Updated quality metrics for frame \(idStr): \(updated.joined(separator: ", "))."
     }
 

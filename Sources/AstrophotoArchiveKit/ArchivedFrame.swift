@@ -48,14 +48,24 @@ public struct ArchivedFrame: Sendable, Identifiable {
 
     // MARK: - Quality metrics (populated by analysis pipelines or read from FITS headers)
 
-    /// Number of stars detected in this frame (populated by star_detection / optical_quality pipeline).
+    /// Number of stars detected in this frame (populated by frame_quality / star_detection / optical_quality pipeline).
     public var starCount: Int?
-    /// Median FWHM in pixels, averaged over major and minor axes (populated by star_detection pipeline).
+    /// Median FWHM in pixels, averaged over major and minor axes (populated by frame_quality / star_detection pipeline).
     public var medianFWHM: Double?
-    /// Background noise level, normalised 0–1 (populated by background_estimation pipeline or read from FITS header BACKNOIS).
+    /// Background level in ADU for light frames; noise sigma in ADU for calibration frames.
+    /// Populated by frame_quality / calibration_quality pipeline or read from FITS header BACKNOIS.
+    /// Note: frames analysed with older pipelines (star_detection, optical_quality) store a normalised
+    /// 0–1 value here; frames analysed with frame_quality or calibration_quality store ADU.
     public var backgroundNoise: Double?
-    /// Mean star eccentricity (0 = circular, 1 = line; populated by star_detection / frame_registration pipeline or read from FITS header MEDECCEN).
+    /// Median star eccentricity (0 = circular, 1 = line; populated by frame_quality / star_detection
+    /// / frame_registration pipeline or read from FITS header MEDECCEN).
     public var medianEccentricity: Double?
+    /// Number of saturated stars (peak pixel ≥ 90 % full-scale).
+    /// Populated by frame_quality pipeline or read from FITS header NSATSTAR.
+    public var saturatedStarCount: Int?
+    /// Approximate count of hot pixels (value > mean + N·sigma).
+    /// Populated by calibration_quality pipeline or read from FITS header NHOTPIX.
+    public var hotPixelCount: Int?
 
     public init(
         id: UUID, filePath: String, objectName: String?, ra: Double?, dec: Double?,
@@ -77,7 +87,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
         starCount: Int? = nil,
         medianFWHM: Double? = nil,
         backgroundNoise: Double? = nil,
-        medianEccentricity: Double? = nil
+        medianEccentricity: Double? = nil,
+        saturatedStarCount: Int? = nil,
+        hotPixelCount: Int? = nil
     ) {
         self.id = id
         self.filePath = filePath
@@ -117,5 +129,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.medianFWHM = medianFWHM
         self.backgroundNoise = backgroundNoise
         self.medianEccentricity = medianEccentricity
+        self.saturatedStarCount = saturatedStarCount
+        self.hotPixelCount = hotPixelCount
     }
 }

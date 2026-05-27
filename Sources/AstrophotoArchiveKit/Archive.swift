@@ -87,7 +87,9 @@ public actor Archive {
             starCount: meta.starCount,
             medianFWHM: meta.medianFWHM,
             backgroundNoise: meta.backgroundNoise,
-            medianEccentricity: meta.medianEccentricity
+            medianEccentricity: meta.medianEccentricity,
+            saturatedStarCount: meta.saturatedStarCount,
+            hotPixelCount: meta.hotPixelCount
         )
         let isNew = try await database.insertFrame(frame)
         if !isNew {
@@ -229,23 +231,31 @@ public actor Archive {
     ///
     /// - Parameters:
     ///   - id: The archive frame UUID.
-    ///   - starCount: Number of detected stars (from star_detection / optical_quality pipeline).
+    ///   - starCount: Number of detected stars (from frame_quality / star_detection pipeline).
     ///   - medianFWHM: Median FWHM in pixels, averaged over major and minor axes.
-    ///   - backgroundNoise: Normalised background noise level (0–1, from background_estimation pipeline).
-    ///   - medianEccentricity: Mean star eccentricity (0=circular, 1=line).
+    ///   - backgroundNoise: Background level in ADU for light frames (frame_quality pipeline);
+    ///     noise sigma in ADU for calibration frames (calibration_quality pipeline).
+    ///     Legacy pipelines (star_detection, optical_quality) still write a normalised 0–1 value.
+    ///   - medianEccentricity: Median star eccentricity (0=circular, 1=line).
+    ///   - saturatedStarCount: Count of saturated stars (peak ≥ 90 % full-scale).
+    ///   - hotPixelCount: Approximate count of hot pixels (calibration frames only).
     public func updateFrameQuality(
         id: UUID,
         starCount: Int? = nil,
         medianFWHM: Double? = nil,
         backgroundNoise: Double? = nil,
-        medianEccentricity: Double? = nil
+        medianEccentricity: Double? = nil,
+        saturatedStarCount: Int? = nil,
+        hotPixelCount: Int? = nil
     ) async throws {
         try await database.updateFrameQuality(
             id: id,
             starCount: starCount,
             medianFWHM: medianFWHM,
             backgroundNoise: backgroundNoise,
-            medianEccentricity: medianEccentricity
+            medianEccentricity: medianEccentricity,
+            saturatedStarCount: saturatedStarCount,
+            hotPixelCount: hotPixelCount
         )
     }
 

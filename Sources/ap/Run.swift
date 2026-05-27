@@ -316,7 +316,9 @@ extension AP {
 
             // 2. Single-frame path: summary tables from analysis pipelines.
             let metrics = extractGlobalQuality(from: tables)
-            guard metrics.starCount != nil || metrics.medianFWHM != nil || metrics.backgroundNoise != nil || metrics.medianEccentricity != nil else {
+            guard metrics.starCount != nil || metrics.medianFWHM != nil || metrics.backgroundNoise != nil
+                    || metrics.medianEccentricity != nil || metrics.saturatedStarCount != nil
+                    || metrics.hotPixelCount != nil else {
                 return
             }
 
@@ -337,14 +339,18 @@ extension AP {
                         starCount: metrics.starCount,
                         medianFWHM: metrics.medianFWHM,
                         backgroundNoise: metrics.backgroundNoise,
-                        medianEccentricity: metrics.medianEccentricity
+                        medianEccentricity: metrics.medianEccentricity,
+                        saturatedStarCount: metrics.saturatedStarCount,
+                        hotPixelCount: metrics.hotPixelCount
                     )
                     if !json {
                         var parts: [String] = []
                         if let v = metrics.starCount          { parts.append("stars: \(v)") }
+                        if let v = metrics.saturatedStarCount { parts.append("sat: \(v)") }
                         if let v = metrics.medianFWHM         { parts.append(String(format: "FWHM: %.2fpx", v)) }
                         if let v = metrics.backgroundNoise    { parts.append(String(format: "bg: %.4f", v)) }
                         if let v = metrics.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
+                        if let v = metrics.hotPixelCount      { parts.append("hot_px: \(v)") }
                         print("Quality → \(af.id): \(parts.joined(separator: ", "))")
                     }
                 } catch {
@@ -383,41 +389,78 @@ extension AP {
         /// Extracts aggregate quality metrics from single-frame analysis pipeline output tables.
         private func extractGlobalQuality(
             from tables: [TableData]
-        ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, medianEccentricity: Double?) {
+        ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, medianEccentricity: Double?, saturatedStarCount: Int?, hotPixelCount: Int?) {
             var starCount: Int? = nil
             var medianFWHM: Double? = nil
             var backgroundNoise: Double? = nil
             var medianEccentricity: Double? = nil
+            var saturatedStarCount: Int? = nil
+            var hotPixelCount: Int? = nil
 
             for table in tables {
                 guard let df = table.dataFrame else { continue }
                 let colNames = Set(df.columns.map { $0.name })
 
-                if colNames.contains("centroid_x") && colNames.contains("centroid_y") {
-                    starCount = df.rows.count
-                    let eccs = df.rows.compactMap { $0["eccentricity"] as? Double }.filter { !$0.isNaN }
-                    if !eccs.isEmpty { medianEccentricity = eccs.reduce(0, +) / Double(eccs.count) }
+                // frame_quality table — compact summary from FrameQualityProcessor.
+                if colNames.contains("star_count") && colNames.contains("saturated_star_count"),
+                   let row = df.rows.first {
+                    if let v = row["star_count"]           as? Int  { starCount = v }
+                    if let v = row["saturated_star_count"] as? Int  { saturatedStarCount = v }
+                    if let v = row["median_fwhm"]          as? Double, v > 0 { medianFWHM = v }
+                    if let v = row["median_eccentricity"]  as? Double { medianEccentricity = v }
+                    // Prefer ADU background over normalised; only skip if the ADU column is absent.
+                    if let v = row["background_level_adu"] as? Double {
+                        backgroundNoise = v
+                    } else if let v = row["background_level"] as? Double {
+                        backgroundNoise = v
+                    }
                 }
+
+                // calibration_quality table — from CalibrationQualityProcessor.
+                if colNames.contains("noise_sigma") && colNames.contains("hot_pixel_count"),
+                   let row = df.rows.first {
+                    if let v = row["hot_pixel_count"] as? Int { hotPixelCount = v }
+                    if let v = row["noise_sigma_adu"] as? Double {
+                        backgroundNoise = v
+                    } else if let v = row["noise_sigma"] as? Double {
+                        backgroundNoise = v
+                    }
+                }
+
+                // Legacy: per-star table (star_detection / optical_quality).
+                if colNames.contains("centroid_x") && colNames.contains("centroid_y") {
+                    if starCount == nil { starCount = df.rows.count }
+                    if medianEccentricity == nil {
+                        let eccs = df.rows.compactMap { $0["eccentricity"] as? Double }.filter { !$0.isNaN }
+                        if !eccs.isEmpty { medianEccentricity = eccs.reduce(0, +) / Double(eccs.count) }
+                    }
+                }
+                // Legacy: FWHM summary table (star_detection).
                 if colNames.contains("sigma_clipped_mean_fwhm_major"),
                    colNames.contains("sigma_clipped_mean_fwhm_minor"),
                    let row = df.rows.first,
                    let major = row["sigma_clipped_mean_fwhm_major"] as? Double,
                    let minor = row["sigma_clipped_mean_fwhm_minor"] as? Double,
-                   major > 0 {
+                   major > 0, medianFWHM == nil {
                     medianFWHM = (major + minor) / 2.0
                 }
+                // Legacy: background level table (background_estimation).
                 if colNames.contains("background_level"),
+                   !colNames.contains("star_count"),   // avoid double-counting frame_quality table
                    let row = df.rows.first,
-                   let level = row["background_level"] as? Double {
+                   let level = row["background_level"] as? Double,
+                   backgroundNoise == nil {
                     backgroundNoise = level
                 }
+                // Legacy: optical_quality summary eccentricity.
                 if colNames.contains("global_mean_eccentricity"),
                    let row = df.rows.first,
-                   let ecc = row["global_mean_eccentricity"] as? Double {
+                   let ecc = row["global_mean_eccentricity"] as? Double,
+                   medianEccentricity == nil {
                     medianEccentricity = ecc
                 }
             }
-            return (starCount, medianFWHM, backgroundNoise, medianEccentricity)
+            return (starCount, medianFWHM, backgroundNoise, medianEccentricity, saturatedStarCount, hotPixelCount)
         }
 
         private func autoArchiveResults(
