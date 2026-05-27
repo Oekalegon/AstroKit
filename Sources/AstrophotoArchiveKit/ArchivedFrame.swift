@@ -16,8 +16,14 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var temperature: Double?     // sensor °C
     public var timestamp: Date?
     public var exposureTime: Double?    // seconds
+    /// Camera gain setting (FITS `GAIN` keyword). Dimensionless; camera-model-specific.
+    /// Not the same as `egain` — see that property for the physical conversion factor.
     public var gain: Double?
     public var offset: Double?
+    /// Electron conversion factor in e⁻/ADU (FITS `EGAIN` keyword).
+    /// Use this with `offset` to convert raw ADU values to electrons:
+    /// `electrons = (adu - offset) × egain`.
+    public var egain: Double?
     public var width: Int?
     public var height: Int?
     public var bitpix: Int?
@@ -89,7 +95,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
         backgroundNoise: Double? = nil,
         medianEccentricity: Double? = nil,
         saturatedStarCount: Int? = nil,
-        hotPixelCount: Int? = nil
+        hotPixelCount: Int? = nil,
+        egain: Double? = nil
     ) {
         self.id = id
         self.filePath = filePath
@@ -107,6 +114,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.exposureTime = exposureTime
         self.gain = gain
         self.offset = offset
+        self.egain = egain
         self.width = width
         self.height = height
         self.bitpix = bitpix

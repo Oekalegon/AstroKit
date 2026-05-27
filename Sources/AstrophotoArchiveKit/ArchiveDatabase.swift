@@ -155,6 +155,23 @@ actor ArchiveDatabase {
         ALTER TABLE frames ADD COLUMN saturated_star_count INTEGER;
         ALTER TABLE frames ADD COLUMN hot_pixel_count INTEGER;
         """,
+        // v15: EGAIN — separate electron conversion factor (e⁻/ADU) from the camera gain setting.
+        // GAIN (stored in the existing `gain` column) is the camera's gain *setting*, a dimensionless
+        // number (e.g. 0–300 for ZWO cameras). EGAIN is the physical factor that converts raw ADU
+        // to electrons: electrons = (adu - offset) × egain.
+        "ALTER TABLE frames ADD COLUMN egain REAL;",
+        // v16: camera_profiles — auto-learned GAIN-setting → EGAIN mapping per camera.
+        // Populated automatically during archiving when a frame carries INSTRUME + GAIN + EGAIN.
+        // Can also be populated manually for cameras that do not write EGAIN in their FITS headers.
+        """
+        CREATE TABLE IF NOT EXISTS camera_profiles (
+            camera_name  TEXT NOT NULL,
+            gain_setting REAL NOT NULL,
+            egain        REAL NOT NULL,
+            updated_at   TEXT NOT NULL,
+            PRIMARY KEY (camera_name, gain_setting)
+        );
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -243,8 +260,8 @@ actor ArchiveDatabase {
          frame_signature, rejected, rejected_reason, position_angle, processing_run_id,
          session_beg, session_end, temperature_min, temperature_max,
          star_count, median_fwhm, background_noise, median_eccentricity,
-         saturated_star_count, hot_pixel_count)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         saturated_star_count, hot_pixel_count, egain)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -295,6 +312,7 @@ actor ArchiveDatabase {
         bind(stmt, 38, frame.medianEccentricity)
         bind(stmt, 39, frame.saturatedStarCount.map { Int64($0) })
         bind(stmt, 40, frame.hotPixelCount.map { Int64($0) })
+        bind(stmt, 41, frame.egain)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -866,6 +884,42 @@ actor ArchiveDatabase {
 
     // MARK: - Row mapping
 
+    // MARK: - Camera Profiles
+
+    /// Inserts or updates a camera gain-setting → EGAIN mapping.
+    /// Called automatically during archiving when a frame carries INSTRUME + GAIN + EGAIN.
+    func upsertCameraProfile(cameraName: String, gainSetting: Double, egain: Double) throws {
+        let sql = """
+        INSERT INTO camera_profiles (camera_name, gain_setting, egain, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(camera_name, gain_setting) DO UPDATE SET
+            egain      = excluded.egain,
+            updated_at = excluded.updated_at
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        let iso = ISO8601DateFormatter()
+        bind(stmt, 1, cameraName)
+        bind(stmt, 2, gainSetting)
+        bind(stmt, 3, egain)
+        bind(stmt, 4, iso.string(from: Date()))
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
+    /// Returns the stored EGAIN (e⁻/ADU) for a camera + gain-setting pair, or `nil` if unknown.
+    func lookupEGain(cameraName: String, gainSetting: Double) throws -> Double? {
+        let stmt = try prepare(
+            "SELECT egain FROM camera_profiles WHERE camera_name = ? AND gain_setting = ? LIMIT 1"
+        )
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, cameraName)
+        bind(stmt, 2, gainSetting)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return columnDouble(stmt, 0)
+    }
+
     private func rowToFrame(_ stmt: OpaquePointer?) -> ArchivedFrame? {
         guard let stmt,
               let idStr = columnText(stmt, 0), let id = UUID(uuidString: idStr),
@@ -912,7 +966,8 @@ actor ArchiveDatabase {
             backgroundNoise: columnDouble(stmt, 36),
             medianEccentricity: columnDouble(stmt, 37),
             saturatedStarCount: sqlite3_column_type(stmt, 38) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 38)) : nil,
-            hotPixelCount: sqlite3_column_type(stmt, 39) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 39)) : nil
+            hotPixelCount: sqlite3_column_type(stmt, 39) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 39)) : nil,
+            egain: columnDouble(stmt, 40)
         )
     }
 
