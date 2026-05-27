@@ -103,9 +103,15 @@ struct Frameset: AsyncParsableCommand {
             let config  = try archiveOptions.makeConfiguration()
             let archive = try Archive(configuration: config)
             let query   = queryOptions.makeQuery()
+            let hasQualityFilter = queryOptions.maxFwhm != nil
+                || queryOptions.minStars != nil
+                || queryOptions.maxBackgroundNoise != nil
 
             if dryRun {
                 let inspection = try await archive.inspectFrameSet(query: query)
+                if !json && hasQualityFilter {
+                    try await printMissingQualityWarnings(archive: archive, inspection: inspection)
+                }
                 if json {
                     printInspectionJSON(inspection)
                 } else {
@@ -122,10 +128,56 @@ struct Frameset: AsyncParsableCommand {
             if json {
                 printJSON(frameSet, inspection: inspection)
             } else {
+                if hasQualityFilter {
+                    try await printMissingQualityWarnings(archive: archive, inspection: inspection)
+                }
                 print("Created frame set '\(frameSet.name)'  [\(frameSet.id.uuidString)]")
                 print("")
                 print(inspection.formatted(isDryRun: false))
             }
+        }
+
+        /// Queries for all frames that match the base criteria (ignoring quality filters) and
+        /// prints an orange warning for any that were excluded solely because quality data is absent.
+        private func printMissingQualityWarnings(
+            archive: Archive,
+            inspection: FrameSetInspection
+        ) async throws {
+            // Re-run the query without quality filters to find every candidate frame.
+            var baseQuery = queryOptions.makeQuery()
+            baseQuery.maxFWHM            = nil
+            baseQuery.minStarCount       = nil
+            baseQuery.maxBackgroundNoise = nil
+            let allFrames   = try await archive.frames(matching: baseQuery)
+            let includedIDs = Set(inspection.frames.map { $0.id })
+
+            // A frame is "missing quality data" if it is not included in the quality-filtered
+            // result AND has a nil value for at least one of the active filter fields.
+            let excluded = allFrames.filter { f in
+                !includedIDs.contains(f.id) &&
+                ((queryOptions.maxFwhm != nil            && f.medianFWHM      == nil) ||
+                 (queryOptions.minStars != nil           && f.starCount        == nil) ||
+                 (queryOptions.maxBackgroundNoise != nil && f.backgroundNoise  == nil))
+            }
+            guard !excluded.isEmpty else { return }
+
+            let n = excluded.count
+            let noun = n == 1 ? "frame" : "frames"
+            let verb = n == 1 ? "was"   : "were"
+            print(orangeText("⚠  \(n) \(noun) matched the query but \(verb) excluded — no quality data for the active filter(s):"))
+            for f in excluded.prefix(5) {
+                var missing: [String] = []
+                if queryOptions.maxFwhm != nil            && f.medianFWHM     == nil { missing.append("FWHM") }
+                if queryOptions.minStars != nil           && f.starCount       == nil { missing.append("star count") }
+                if queryOptions.maxBackgroundNoise != nil && f.backgroundNoise == nil { missing.append("bg. noise") }
+                let filename = (f.filePath as NSString).lastPathComponent
+                print(orangeText("   \(filename)  (no \(missing.joined(separator: ", ")))"))
+            }
+            if excluded.count > 5 {
+                print(orangeText("   …and \(excluded.count - 5) more"))
+            }
+            print(orangeText("   Tip: run 'ap run star_detection --input <file>' to populate quality metrics."))
+            print("")
         }
 
         private func autoName(_ q: QueryOptions) -> String {
