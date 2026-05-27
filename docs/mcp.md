@@ -32,7 +32,7 @@ Add the following to your `claude_desktop_config.json` (usually at `~/Library/Ap
 }
 ```
 
-Restart Claude Desktop. The fifteen tools below will be available in every conversation.
+Restart Claude Desktop. The sixteen tools below will be available in every conversation.
 
 > **Archive tools** (`archive_*`) require `ASTROARCHIVE_PATH` to be set — either in the MCP server `env` block above or as a system environment variable.
 
@@ -222,19 +222,30 @@ Response:
 ```
 Frame  A3F2B1C0-1234-5678-ABCD-EF0123456789
 ────────────────────────────────────────────────────────────
-  Type:              stacked
+  Type:              light
   Object:            M51
   Filter:            Ha
-  Exposure:          5400 s
+  Exposure:          300 s
 
   Camera:            ZWO ASI294MC Pro
   Gain:              100
+  Temperature:       -10.0 °C
 
-  Size:              6248 × 4176
+  RA / Dec:          202.4700° / 47.1952°  (J2000)
+  Pixel scale:       1.240 "/px
+  Focal length:      800 mm
+  Size:              6248 × 4176  (16-bit)
 
-  Processing:        stacked  [calibrated: ✗  stacked: ✓  stretched: ✗]
+  Processing:        raw  [calibrated: ✗  stacked: ✗  stretched: ✗]
   Added at:          2026-05-25T10:00:00Z
-  File:              /Users/…/AstroArchive/M51/stacked/Ha/stacked.fits
+  File:              /Users/…/AstroArchive/M51/2024-03-15/light/Ha/M51_Ha_300s_001.fits
+
+Quality metrics
+────────────────────────────────────────────────────────────
+  Stars:             312
+  FWHM:              3.85 px
+  Eccentricity:      0.312
+  Bg. noise:         0.0028
 
 Provenance
 ────────────────────────────────────────────────────────────
@@ -270,6 +281,10 @@ Searches the archive and returns matching frames.
 | `limit` | integer | | Maximum number of results |
 | `include_rejected` | boolean | | Include rejected frames in results (default `false`) |
 | `rejected_only` | boolean | | Return only rejected frames |
+| `max_fwhm` | number | | Only frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded. |
+| `min_stars` | integer | | Only frames with at least this many detected stars. Frames without quality data are excluded. |
+| `max_background_noise` | number | | Only frames with background noise ≤ this value (0–1). Frames without quality data are excluded. |
+| `max_eccentricity` | number | | Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded. |
 
 By default, rejected frames are excluded from results — safe for pipeline use. Use `include_rejected` or `rejected_only` to surface them.
 
@@ -353,6 +368,33 @@ archive_reject(id="A3F2B1C0-...", undo=true)
 
 ---
 
+### `archive_update_quality`
+
+Manually sets or corrects quality metrics for an archived frame. Only supplied fields are updated; omitted fields are left unchanged.
+
+Quality metrics are normally populated automatically when you run an analysis pipeline (`star_detection`, `frame_registration`, `frame_stacking`, `optical_quality`) via `run_pipeline`. Use this tool to set or correct them manually — for example to import measurements from external software.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `id` | string | ✓ | Archive frame UUID (from `archive_find`) |
+| `star_count` | integer | | Number of detected stars |
+| `median_fwhm` | number | | Median FWHM in pixels (average of major and minor axes) |
+| `median_eccentricity` | number | | Median star eccentricity (0=circular; lower is rounder, indicating better tracking and focus) |
+| `background_noise` | number | | Normalised background noise level (0–1) |
+
+Examples:
+```
+archive_update_quality(id="A3F2B1C0-...", star_count=312, median_fwhm=3.85, median_eccentricity=0.312)
+archive_update_quality(id="A3F2B1C0-...", background_noise=0.0028)
+```
+
+Response:
+```
+Updated quality metrics for frame A3F2B1C0-...: star_count=312, median_fwhm=3.850px, median_eccentricity=0.312.
+```
+
+---
+
 ## Frame set tools
 
 Frame sets are named, homogeneous collections of archived frames. All members share the same frame type, processing level, and optical filter. They serve as inputs to processing pipelines and as calibration references for future processed frames.
@@ -373,6 +415,10 @@ Dry-run: shows which frames would form a frame set and reports property distribu
 | `calibrated` | boolean | | Only calibrated frames |
 | `temp_center` | number | | Centre temperature in °C for dark frame grouping |
 | `temp_tolerance` | number | | Temperature tolerance ±°C (default `2.0`) |
+| `max_fwhm` | number | | Only frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded. |
+| `min_stars` | integer | | Only frames with at least this many detected stars. Frames without quality data are excluded. |
+| `max_background_noise` | number | | Only frames with background noise ≤ this value (0–1). Frames without quality data are excluded. |
+| `max_eccentricity` | number | | Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded. |
 
 Example:
 ```
@@ -422,6 +468,10 @@ Creates a frame set from all non-rejected frames matching a query. Errors if the
 | `calibrated` | boolean | | Only calibrated frames |
 | `temp_center` | number | | Centre temperature in °C for dark frame grouping |
 | `temp_tolerance` | number | | Temperature tolerance ±°C (default `2.0`) |
+| `max_fwhm` | number | | Only frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded. |
+| `min_stars` | integer | | Only frames with at least this many detected stars. Frames without quality data are excluded. |
+| `max_background_noise` | number | | Only frames with background noise ≤ this value (0–1). Frames without quality data are excluded. |
+| `max_eccentricity` | number | | Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded. |
 | `force` | boolean | | Allow mixed optical filters; stored as comma-separated list (default `false`) |
 
 Shared properties (object, filter, camera, exposure, temperature range, date span, pixel scale, focal length, position angle) are recorded automatically on the set; any property that differs across members is left blank.

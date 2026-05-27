@@ -74,6 +74,10 @@ struct ArchiveTools {
                     "limit": ["type": "integer", "description": "Maximum number of results."],
                     "include_rejected": ["type": "boolean", "description": "Include rejected frames in results (default false)."],
                     "rejected_only": ["type": "boolean", "description": "Return only rejected frames."],
+                    "max_fwhm": ["type": "number", "description": "Only frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded."],
+                    "min_stars": ["type": "integer", "description": "Only frames with at least this many detected stars. Frames without quality data are excluded."],
+                    "max_background_noise": ["type": "number", "description": "Only frames with background noise ≤ this value (0–1). Frames without quality data are excluded."],
+                    "max_eccentricity": ["type": "number", "description": "Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded."],
                 ] as [String: Any],
                 "required": [],
             ] as [String: Any],
@@ -112,6 +116,10 @@ struct ArchiveTools {
                     "calibrated": ["type": "boolean", "description": "Only calibrated frames."],
                     "temp_center": ["type": "number", "description": "Centre temperature in °C for dark frame grouping."],
                     "temp_tolerance": ["type": "number", "description": "Temperature tolerance ±°C (default 2.0)."],
+                    "max_fwhm": ["type": "number", "description": "Only frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded."],
+                    "min_stars": ["type": "integer", "description": "Only frames with at least this many detected stars. Frames without quality data are excluded."],
+                    "max_background_noise": ["type": "number", "description": "Only frames with background noise ≤ this value (0–1). Frames without quality data are excluded."],
+                    "max_eccentricity": ["type": "number", "description": "Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded."],
                 ] as [String: Any],
                 "required": [],
             ] as [String: Any],
@@ -133,6 +141,10 @@ struct ArchiveTools {
                     "calibrated": ["type": "boolean", "description": "Only calibrated frames."],
                     "temp_center": ["type": "number", "description": "Centre temperature in °C for dark frame grouping."],
                     "temp_tolerance": ["type": "number", "description": "Temperature tolerance ±°C (default 2.0)."],
+                    "max_fwhm": ["type": "number", "description": "Only frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded."],
+                    "min_stars": ["type": "integer", "description": "Only frames with at least this many detected stars. Frames without quality data are excluded."],
+                    "max_background_noise": ["type": "number", "description": "Only frames with background noise ≤ this value (0–1). Frames without quality data are excluded."],
+                    "max_eccentricity": ["type": "number", "description": "Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded."],
                     "force": ["type": "boolean", "description": "Allow mixed optical filters; stored as comma-separated list on the frame set (default false)."],
                 ] as [String: Any],
                 "required": [],
@@ -204,6 +216,7 @@ struct ArchiveTools {
                     "star_count": ["type": "integer", "description": "Number of detected stars."],
                     "median_fwhm": ["type": "number", "description": "Median FWHM in pixels (average of major and minor axes)."],
                     "background_noise": ["type": "number", "description": "Normalised background noise level (0–1)."],
+                    "median_eccentricity": ["type": "number", "description": "Median star eccentricity (0=circular, closer to 0 is rounder). Indicates optical quality and tracking accuracy."],
                 ] as [String: Any],
                 "required": ["id"],
             ] as [String: Any],
@@ -340,11 +353,14 @@ struct ArchiveTools {
             lines.append(row("Rejected", "yes\(reasonStr)"))
         }
 
-        if f.starCount != nil || f.medianFWHM != nil || f.backgroundNoise != nil {
+        if f.starCount != nil || f.medianFWHM != nil || f.medianEccentricity != nil || f.backgroundNoise != nil {
             lines.append("")
-            if let v = f.starCount       { lines.append(row("Stars",     "\(v)")) }
-            if let v = f.medianFWHM      { lines.append(row("FWHM",      String(format: "%.2f px", v))) }
-            if let v = f.backgroundNoise { lines.append(row("Bg. noise", String(format: "%.4f", v))) }
+            lines.append("Quality metrics")
+            lines.append(String(repeating: "─", count: 60))
+            if let v = f.starCount          { lines.append(row("Stars",        "\(v)")) }
+            if let v = f.medianFWHM         { lines.append(row("FWHM",         String(format: "%.2f px", v))) }
+            if let v = f.medianEccentricity { lines.append(row("Eccentricity", String(format: "%.3f", v))) }
+            if let v = f.backgroundNoise    { lines.append(row("Bg. noise",    String(format: "%.4f", v))) }
         }
 
         lines.append(row("Added at",   iso.string(from: f.addedAt)))
@@ -402,6 +418,10 @@ struct ArchiveTools {
         } else if args["include_rejected"] as? Bool == true {
             query.rejectionFilter = .includeAll
         }
+        query.maxFWHM            = args["max_fwhm"]             as? Double
+        query.minStarCount       = args["min_stars"]            as? Int
+        query.maxBackgroundNoise = args["max_background_noise"] as? Double
+        query.maxEccentricity    = args["max_eccentricity"]     as? Double
 
         let frames = try await archive.frames(matching: query)
         if frames.isEmpty { return "No frames found matching the query." }
@@ -496,6 +516,10 @@ struct ArchiveTools {
             let tol = args["temp_tolerance"] as? Double ?? 2.0
             query.temperatureRange = (center - tol)...(center + tol)
         }
+        query.maxFWHM            = args["max_fwhm"]             as? Double
+        query.minStarCount       = args["min_stars"]            as? Int
+        query.maxBackgroundNoise = args["max_background_noise"] as? Double
+        query.maxEccentricity    = args["max_eccentricity"]     as? Double
         return query
     }
 
@@ -640,12 +664,13 @@ struct ArchiveTools {
         guard let idStr = args["id"] as? String, let uuid = UUID(uuidString: idStr) else {
             throw ToolError("archive_update_quality requires a valid 'id' UUID.")
         }
-        let starCount       = args["star_count"]       as? Int
-        let medianFWHM      = args["median_fwhm"]      as? Double
-        let backgroundNoise = args["background_noise"] as? Double
+        let starCount          = args["star_count"]          as? Int
+        let medianFWHM         = args["median_fwhm"]         as? Double
+        let backgroundNoise    = args["background_noise"]    as? Double
+        let medianEccentricity = args["median_eccentricity"] as? Double
 
-        guard starCount != nil || medianFWHM != nil || backgroundNoise != nil else {
-            throw ToolError("Provide at least one of: star_count, median_fwhm, background_noise.")
+        guard starCount != nil || medianFWHM != nil || backgroundNoise != nil || medianEccentricity != nil else {
+            throw ToolError("Provide at least one of: star_count, median_fwhm, background_noise, median_eccentricity.")
         }
 
         let archive = try makeArchive()
@@ -653,13 +678,15 @@ struct ArchiveTools {
             id: uuid,
             starCount: starCount,
             medianFWHM: medianFWHM,
-            backgroundNoise: backgroundNoise
+            backgroundNoise: backgroundNoise,
+            medianEccentricity: medianEccentricity
         )
 
         var updated: [String] = []
-        if let v = starCount       { updated.append("star_count=\(v)") }
-        if let v = medianFWHM      { updated.append(String(format: "median_fwhm=%.3fpx", v)) }
-        if let v = backgroundNoise { updated.append(String(format: "background_noise=%.4f", v)) }
+        if let v = starCount          { updated.append("star_count=\(v)") }
+        if let v = medianFWHM         { updated.append(String(format: "median_fwhm=%.3fpx", v)) }
+        if let v = backgroundNoise    { updated.append(String(format: "background_noise=%.4f", v)) }
+        if let v = medianEccentricity { updated.append(String(format: "median_eccentricity=%.3f", v)) }
         return "Updated quality metrics for frame \(idStr): \(updated.joined(separator: ", "))."
     }
 
