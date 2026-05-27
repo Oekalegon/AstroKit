@@ -248,6 +248,12 @@ extension AP {
                 )
             }
 
+            // Back-update quality metrics on the input archive frame(s) when an analysis
+            // pipeline produces star/FWHM/background data.
+            if !tables.isEmpty {
+                await backUpdateQuality(tables: tables, pipelineInputs: pipelineInputs)
+            }
+
             if json {
                 let result: [String: Any] = [
                     "pipeline": pipelineID,
@@ -263,6 +269,142 @@ extension AP {
                     printTable(table, index: i + 1)
                 }
             }
+        }
+
+        /// Extracts quality metrics from pipeline output tables and persists them on the
+        /// matching input archive frame(s). Silently skips if no archive is configured or
+        /// if the pipeline did not produce recognisable quality tables.
+        ///
+        /// Handles two cases:
+        /// - **Per-frame** (registration table from frame_registration / frame_stacking): each row
+        ///   is matched to an archive frame by its `file_path` column.
+        /// - **Single-frame** (summary tables from star_detection / optical_quality / autofocus):
+        ///   the aggregate result is applied to each archive frame found among `pipelineInputs`.
+        private func backUpdateQuality(
+            tables: [TableData],
+            pipelineInputs: [String: Any]
+        ) async {
+            guard let config = try? ArchiveConfiguration.fromEnvironment(),
+                  let archive = try? Archive(configuration: config) else { return }
+
+            // 1. Per-frame path: registration table from frame_registration / frame_stacking.
+            let perFrame = extractPerFrameQuality(from: tables)
+            if !perFrame.isEmpty {
+                for entry in perFrame {
+                    guard let af = try? await archive.frame(filePath: entry.filePath) else { continue }
+                    do {
+                        try await archive.updateFrameQuality(
+                            id: af.id,
+                            starCount: entry.starCount,
+                            medianFWHM: entry.medianFWHM,
+                            backgroundNoise: nil
+                        )
+                        if !json {
+                            var parts: [String] = []
+                            if let v = entry.starCount  { parts.append("stars: \(v)") }
+                            if let v = entry.medianFWHM { parts.append(String(format: "FWHM: %.2fpx", v)) }
+                            print("Quality → \(af.id): \(parts.joined(separator: ", "))")
+                        }
+                    } catch {
+                        if !json { print("Warning: quality update failed: \(error.localizedDescription)") }
+                    }
+                }
+                return
+            }
+
+            // 2. Single-frame path: summary tables from analysis pipelines.
+            let metrics = extractGlobalQuality(from: tables)
+            guard metrics.starCount != nil || metrics.medianFWHM != nil || metrics.backgroundNoise != nil else {
+                return
+            }
+
+            var inputPaths: [String] = []
+            for value in pipelineInputs.values {
+                if let frameSet = value as? FrameSet {
+                    inputPaths += frameSet.frames.compactMap { $0.filePath }
+                } else if let frame = value as? Frame, let path = frame.filePath {
+                    inputPaths.append(path)
+                }
+            }
+
+            for path in inputPaths {
+                guard let af = try? await archive.frame(filePath: path) else { continue }
+                do {
+                    try await archive.updateFrameQuality(
+                        id: af.id,
+                        starCount: metrics.starCount,
+                        medianFWHM: metrics.medianFWHM,
+                        backgroundNoise: metrics.backgroundNoise
+                    )
+                    if !json {
+                        var parts: [String] = []
+                        if let v = metrics.starCount       { parts.append("stars: \(v)") }
+                        if let v = metrics.medianFWHM      { parts.append(String(format: "FWHM: %.2fpx", v)) }
+                        if let v = metrics.backgroundNoise { parts.append(String(format: "bg: %.4f", v)) }
+                        print("Quality → \(af.id): \(parts.joined(separator: ", "))")
+                    }
+                } catch {
+                    if !json { print("Warning: quality update failed for \(path): \(error.localizedDescription)") }
+                }
+            }
+        }
+
+        /// Extracts per-frame quality metrics from a registration table (frame_registration /
+        /// frame_stacking). Identified by `file_path`, `median_fwhm`, and `star_count` columns.
+        /// `sky_noise` is not mapped to `backgroundNoise` because it is in ADU, not normalised 0–1.
+        private func extractPerFrameQuality(
+            from tables: [TableData]
+        ) -> [(filePath: String, starCount: Int?, medianFWHM: Double?)] {
+            for table in tables {
+                guard let df = table.dataFrame else { continue }
+                let colNames = Set(df.columns.map { $0.name })
+                guard colNames.contains("file_path"),
+                      colNames.contains("median_fwhm"),
+                      colNames.contains("star_count") else { continue }
+
+                var results: [(filePath: String, starCount: Int?, medianFWHM: Double?)] = []
+                for row in df.rows {
+                    guard let path = row["file_path"] as? String, !path.isEmpty else { continue }
+                    let starCount: Int? = (row["star_count"] as? Int32).map { Int($0) }
+                        ?? (row["star_count"] as? Int)
+                    let medianFWHM = row["median_fwhm"] as? Double
+                    results.append((filePath: path, starCount: starCount, medianFWHM: medianFWHM))
+                }
+                return results
+            }
+            return []
+        }
+
+        /// Extracts aggregate quality metrics from single-frame analysis pipeline output tables.
+        private func extractGlobalQuality(
+            from tables: [TableData]
+        ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?) {
+            var starCount: Int? = nil
+            var medianFWHM: Double? = nil
+            var backgroundNoise: Double? = nil
+
+            for table in tables {
+                guard let df = table.dataFrame else { continue }
+                let colNames = Set(df.columns.map { $0.name })
+
+                if colNames.contains("centroid_x") && colNames.contains("centroid_y") {
+                    starCount = df.rows.count
+                }
+                if colNames.contains("sigma_clipped_mean_fwhm_major"),
+                   colNames.contains("sigma_clipped_mean_fwhm_minor"),
+                   let row = df.rows.first,
+                   let major = row["sigma_clipped_mean_fwhm_major"] as? Double,
+                   let minor = row["sigma_clipped_mean_fwhm_minor"] as? Double,
+                   major > 0 {
+                    medianFWHM = (major + minor) / 2.0
+                }
+                if colNames.contains("background_level"),
+                   let row = df.rows.first,
+                   let level = row["background_level"] as? Double {
+                    backgroundNoise = level
+                }
+            }
+            return (starCount, medianFWHM, backgroundNoise)
         }
 
         private func autoArchiveResults(

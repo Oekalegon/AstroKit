@@ -194,6 +194,20 @@ struct ArchiveTools {
                 "required": ["id"],
             ] as [String: Any],
         ],
+        [
+            "name": "archive_update_quality",
+            "description": "Update quality metrics for an archived frame. Metrics are normally populated automatically after running an analysis pipeline (star_detection, optical_quality, background_estimation) via run_pipeline. Use this tool to set or correct them manually. Only supplied fields are updated; omitted fields are unchanged.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "id": ["type": "string", "description": "Archive frame UUID."],
+                    "star_count": ["type": "integer", "description": "Number of detected stars."],
+                    "median_fwhm": ["type": "number", "description": "Median FWHM in pixels (average of major and minor axes)."],
+                    "background_noise": ["type": "number", "description": "Normalised background noise level (0–1)."],
+                ] as [String: Any],
+                "required": ["id"],
+            ] as [String: Any],
+        ],
     ]
 
     // MARK: - Dispatch
@@ -207,6 +221,7 @@ struct ArchiveTools {
         case "archive_stats":            return try await archiveStats()
         case "archive_remove":           return try await archiveRemove(arguments)
         case "archive_reject":           return try await archiveReject(arguments)
+        case "archive_update_quality":   return try await archiveUpdateQuality(arguments)
         case "archive_frameset_inspect":  return try await archiveFrameSetInspect(arguments)
         case "archive_frameset_create":  return try await archiveFrameSetCreate(arguments)
         case "archive_frameset_list":    return try await archiveFrameSetList()
@@ -324,6 +339,14 @@ struct ArchiveTools {
             let reasonStr = f.rejectedReason.map { "  (\($0))" } ?? ""
             lines.append(row("Rejected", "yes\(reasonStr)"))
         }
+
+        if f.starCount != nil || f.medianFWHM != nil || f.backgroundNoise != nil {
+            lines.append("")
+            if let v = f.starCount       { lines.append(row("Stars",     "\(v)")) }
+            if let v = f.medianFWHM      { lines.append(row("FWHM",      String(format: "%.2f px", v))) }
+            if let v = f.backgroundNoise { lines.append(row("Bg. noise", String(format: "%.4f", v))) }
+        }
+
         lines.append(row("Added at",   iso.string(from: f.addedAt)))
         lines.append(row("File",       f.filePath))
 
@@ -611,6 +634,33 @@ struct ArchiveTools {
         let archive = try makeArchive()
         try await archive.deleteFrameSet(id: uuid)
         return "Deleted frame set \(idStr)."
+    }
+
+    private func archiveUpdateQuality(_ args: [String: Any]) async throws -> String {
+        guard let idStr = args["id"] as? String, let uuid = UUID(uuidString: idStr) else {
+            throw ToolError("archive_update_quality requires a valid 'id' UUID.")
+        }
+        let starCount       = args["star_count"]       as? Int
+        let medianFWHM      = args["median_fwhm"]      as? Double
+        let backgroundNoise = args["background_noise"] as? Double
+
+        guard starCount != nil || medianFWHM != nil || backgroundNoise != nil else {
+            throw ToolError("Provide at least one of: star_count, median_fwhm, background_noise.")
+        }
+
+        let archive = try makeArchive()
+        try await archive.updateFrameQuality(
+            id: uuid,
+            starCount: starCount,
+            medianFWHM: medianFWHM,
+            backgroundNoise: backgroundNoise
+        )
+
+        var updated: [String] = []
+        if let v = starCount       { updated.append("star_count=\(v)") }
+        if let v = medianFWHM      { updated.append(String(format: "median_fwhm=%.3fpx", v)) }
+        if let v = backgroundNoise { updated.append(String(format: "background_noise=%.4f", v)) }
+        return "Updated quality metrics for frame \(idStr): \(updated.joined(separator: ", "))."
     }
 
     private func archiveRemove(_ args: [String: Any]) async throws -> String {
