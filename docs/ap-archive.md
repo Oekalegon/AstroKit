@@ -121,6 +121,49 @@ ap-archive find --rejected-only
 
 ---
 
+### `ap-archive recent`
+
+Lists the most recently archived frames, newest first. Useful for reviewing what was just added or produced by a pipeline run.
+
+```
+ap-archive recent [-c <count>] [--json]
+```
+
+| Option | Description |
+|--------|-------------|
+| `-c`, `--count <n>` | Number of frames to show (default: 15) |
+| `--json` | Print results as JSON |
+
+**Examples:**
+
+```bash
+# Show the 15 most recently archived frames:
+ap-archive recent
+
+# Show the 5 most recently archived frames:
+ap-archive recent -c 5
+
+# JSON output for scripting:
+ap-archive recent --json
+```
+
+**Example output:**
+
+```
+Recently archived frames (15):
+
+ID                                    Added at          Type      Filter    Exposure  File
+--------------------------------------------------------------------------------------------------------------
+A3F2B1C0-1234-5678-ABCD-EF0123456789  2026-05-26 14:32  light     Hɑ           300s  M51_Ha_300s_018.fits
+B4E3D2F1-1234-5678-ABCD-EF0123456789  2026-05-26 14:32  light     Hɑ           300s  M51_Ha_300s_017.fits
+C5F4E3D2-1234-5678-ABCD-EF0123456789  2026-05-25 22:10  stacked   Hɑ              -  stacked.fits
+…
+```
+
+> The list is sorted by **archive ingestion time** (`Added at`), not by observation date. This means a freshly auto-archived pipeline result appears at the top even if the underlying light frames are weeks old.
+
+---
+
 ### `ap-archive reject`
 
 Marks a frame as rejected so it is excluded from all processing queries, or clears that flag.

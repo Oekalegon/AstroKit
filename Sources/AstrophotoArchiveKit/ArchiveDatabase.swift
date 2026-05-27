@@ -762,6 +762,18 @@ actor ArchiveDatabase {
         )
     }
 
+    func recentFrames(limit: Int) throws -> [ArchivedFrame] {
+        let stmt = try prepare(
+            "SELECT * FROM frames WHERE rejected = 0 ORDER BY added_at DESC LIMIT \(limit)"
+        )
+        defer { sqlite3_finalize(stmt) }
+        var results: [ArchivedFrame] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let f = rowToFrame(stmt) { results.append(f) }
+        }
+        return results
+    }
+
     func listObjects() throws -> [(name: String, count: Int)] {
         try rows("SELECT object_name, COUNT(*) FROM frames WHERE object_name IS NOT NULL GROUP BY object_name ORDER BY object_name")
             .compactMap { row -> (String, Int)? in

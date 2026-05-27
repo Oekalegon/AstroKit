@@ -170,6 +170,20 @@ struct ArchiveTools {
             ] as [String: Any],
         ],
         [
+            "name": "archive_recent",
+            "description": "List the most recently archived frames, newest first. Useful for seeing what was just added or produced by a pipeline run.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "limit": [
+                        "type": "integer",
+                        "description": "Maximum number of frames to return (default: 15).",
+                    ],
+                ] as [String: Any],
+                "required": [],
+            ] as [String: Any],
+        ],
+        [
             "name": "archive_remove",
             "description": "Remove a frame from the archive by its UUID.",
             "inputSchema": [
@@ -203,6 +217,7 @@ struct ArchiveTools {
         case "archive_add":              return try await archiveAdd(arguments)
         case "archive_get":              return try await archiveGet(arguments)
         case "archive_find":             return try await archiveFind(arguments)
+        case "archive_recent":           return try await archiveRecent(arguments)
         case "archive_list_objects":     return try await archiveListObjects()
         case "archive_stats":            return try await archiveStats()
         case "archive_remove":           return try await archiveRemove(arguments)
@@ -394,6 +409,34 @@ struct ArchiveTools {
             if let v = f.filter       { parts.append("filter: \(v)") }
             if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
             if let v = f.timestamp    { parts.append("date: \(String(iso.string(from: v).prefix(16)).replacingOccurrences(of: "T", with: " "))") }
+            parts.append("file: \((f.filePath as NSString).lastPathComponent)")
+            lines.append("  { \(parts.joined(separator: ", ")) }")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func archiveRecent(_ args: [String: Any]) async throws -> String {
+        let limit   = args["limit"] as? Int ?? 15
+        let archive = try makeArchive()
+        let frames  = try await archive.recentFrames(limit: limit)
+        if frames.isEmpty { return "No frames in archive." }
+
+        let iso = ISO8601DateFormatter()
+        func shortDate(_ date: Date) -> String {
+            String(iso.string(from: date).prefix(16)).replacingOccurrences(of: "T", with: " ")
+        }
+
+        var lines = ["Recently archived frames (\(frames.count)):"]
+        for f in frames {
+            var parts: [String] = [
+                "id: \(f.id.uuidString)",
+                "type: \(f.frameType)",
+                "added: \(shortDate(f.addedAt))",
+            ]
+            if let v = f.objectName   { parts.append("object: \(v)") }
+            if let v = f.filter       { parts.append("filter: \(v)") }
+            if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
+            if let v = f.timestamp    { parts.append("date: \(shortDate(v))") }
             parts.append("file: \((f.filePath as NSString).lastPathComponent)")
             lines.append("  { \(parts.joined(separator: ", ")) }")
         }
