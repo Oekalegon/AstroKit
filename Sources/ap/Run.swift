@@ -180,6 +180,104 @@ extension AP {
                 }
             }
 
+            // Build a map of pipeline-level input names → expected DataType.
+            // Pipeline inputs are step dataInputs whose `from` field has no dot.
+            let pipelineInputTypeMap: [String: DataType] = Dictionary(
+                pipeline.steps
+                    .flatMap { $0.dataInputs }
+                    .filter { !$0.from.contains(".") }
+                    .map { ($0.from, $0.type) },
+                uniquingKeysWith: { first, _ in first }
+            )
+
+            // Detect if a FrameSet was supplied for an input that expects a single Frame.
+            // This happens when @frameset:UUID is passed to a pipeline like frame_quality that
+            // takes one frame at a time.  The PipelineRunner's DataStack type-checks inputs
+            // strictly, so a FrameSet would silently produce zero outputs.
+            // Fix: run the pipeline once per frame in the FrameSet.
+            var frameLoopName: String? = nil
+            var frameLoopItems: [Frame] = []
+            for (name, value) in pipelineInputs {
+                if let fs = value as? FrameSet, pipelineInputTypeMap[name] == .frame {
+                    frameLoopName = name
+                    frameLoopItems = fs.frames
+                    break
+                }
+            }
+
+            if let loopName = frameLoopName, !frameLoopItems.isEmpty {
+                if output != nil {
+                    throw ValidationError(
+                        "--output is not supported when running a pipeline on a frameset. " +
+                        "Run on individual frames to save results."
+                    )
+                }
+                if !json {
+                    print("Running '\(pipelineID)' on \(frameLoopItems.count) frame(s)…")
+                }
+                let start = Date()
+                var totalTables = 0, totalResultFrames = 0
+                var jsonRows: [[String: Any]] = []
+
+                for (idx, frame) in frameLoopItems.enumerated() {
+                    var perFrameInputs = pipelineInputs
+                    perFrameInputs[loopName] = frame
+
+                    let runner = PipelineRunner(pipeline: pipeline)
+                    let frameOutputs = try await runner.execute(
+                        inputs: perFrameInputs,
+                        parameters: parameters,
+                        device: device,
+                        commandQueue: commandQueue
+                    )
+
+                    let frameTables  = frameOutputs.compactMap { $0 as? TableData }.filter { $0.isInstantiated }
+                    let frameResults = frameOutputs.compactMap { $0 as? Frame     }.filter { $0.isInstantiated }
+                    totalTables      += frameTables.count
+                    totalResultFrames += frameResults.count
+
+                    if !frameResults.isEmpty {
+                        await autoArchiveResults(
+                            frames: frameResults,
+                            pipelineID: pipelineID,
+                            parameters: parameters,
+                            pipelineInputs: perFrameInputs,
+                            existingOutputPath: nil
+                        )
+                    }
+                    if !frameTables.isEmpty {
+                        await backUpdateQuality(tables: frameTables, pipelineInputs: perFrameInputs)
+                    }
+
+                    if json {
+                        var row: [String: Any] = ["frame_index": idx]
+                        for (i, table) in frameTables.enumerated() {
+                            if let d = tableToDict(table) { row["table_\(i)"] = d }
+                        }
+                        jsonRows.append(row)
+                    }
+                }
+
+                let elapsed = Date().timeIntervalSince(start)
+                if json {
+                    let result: [String: Any] = [
+                        "pipeline": pipelineID,
+                        "frame_count": frameLoopItems.count,
+                        "elapsed_seconds": elapsed,
+                        "frames": jsonRows
+                    ]
+                    if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted]),
+                       let str = String(data: data, encoding: .utf8) { print(str) }
+                } else {
+                    print(String(
+                        format: "Done in %.2fs — %d frame(s) processed, %d table(s) per frame.",
+                        elapsed, frameLoopItems.count,
+                        frameLoopItems.isEmpty ? 0 : totalTables / frameLoopItems.count
+                    ))
+                }
+                return
+            }
+
             if !json { print("Running '\(pipelineID)'…") }
 
             let start = Date()
