@@ -232,7 +232,9 @@ extension AP {
                     )
 
                     let frameTables  = frameOutputs.compactMap { $0 as? TableData }.filter { $0.isInstantiated }
-                    let frameResults = frameOutputs.compactMap { $0 as? Frame     }.filter { $0.isInstantiated }
+                    let allFrames    = frameOutputs.compactMap { $0 as? Frame     }.filter { $0.isInstantiated }
+                    // Only archive frames from the last pipeline step; discard intermediates.
+                    let frameResults = terminalFrames(from: allFrames, pipeline: pipeline)
                     totalTables      += frameTables.count
                     totalResultFrames += frameResults.count
 
@@ -335,10 +337,13 @@ extension AP {
                 }
             }
 
-            // Auto-archive result frames when an archive is configured.
-            if !frames.isEmpty {
+            // Auto-archive result frames from the LAST pipeline step only.
+            // Intermediate frames (blurred_frame, background_frame, etc.) are produced
+            // by earlier steps and must not be stored as archive entries.
+            let resultFrames = terminalFrames(from: frames, pipeline: pipeline)
+            if !resultFrames.isEmpty {
                 await autoArchiveResults(
-                    frames: frames,
+                    frames: resultFrames,
                     pipelineID: pipelineID,
                     parameters: parameters,
                     pipelineInputs: pipelineInputs,
@@ -378,6 +383,21 @@ extension AP {
         ///   is matched to an archive frame by its `file_path` column.
         /// - **Single-frame** (summary tables from star_detection / optical_quality / autofocus):
         ///   the aggregate result is applied to each archive frame found among `pipelineInputs`.
+        /// Returns only the frames produced by the last step of the pipeline.
+        /// Intermediate processing frames (blurred, background-subtracted, eroded, etc.)
+        /// are produced by earlier steps and should not be archived as result frames.
+        private func terminalFrames(from frames: [Frame], pipeline: Pipeline) -> [Frame] {
+            guard let lastStepID = pipeline.steps.last?.id else { return frames }
+            return frames.filter { frame in
+                guard let outputLink = frame.outputLink,
+                      case .output(_, _, _, let stepLinkID) = outputLink else { return false }
+                // stepLinkID is "stepId.outputName" or "stepId[n].outputName" for split steps.
+                let stepPart   = String(stepLinkID.split(separator: ".").first ?? Substring(stepLinkID))
+                let baseStepID = String(stepPart.split(separator: "[").first ?? Substring(stepPart))
+                return baseStepID == lastStepID
+            }
+        }
+
         private func backUpdateQuality(
             tables: [TableData],
             pipelineInputs: [String: Any]
@@ -513,8 +533,10 @@ extension AP {
                     if let v = row["saturated_star_count"] as? Int  { saturatedStarCount = v }
                     if let v = row["median_fwhm"]          as? Double, v > 0 { medianFWHM = v }
                     if let v = row["median_eccentricity"]  as? Double { medianEccentricity = v }
-                    // Prefer ADU background over normalised; only skip if the ADU column is absent.
-                    if let v = row["background_level_adu"] as? Double {
+                    // Prefer ADU background over normalised; guard column existence first
+                    // because TabularData Row.subscript traps on missing columns.
+                    if colNames.contains("background_level_adu"),
+                       let v = row["background_level_adu"] as? Double {
                         backgroundNoise = v; backgroundNoiseIsADU = true
                     } else if let v = row["background_level"] as? Double {
                         backgroundNoise = v
@@ -525,7 +547,8 @@ extension AP {
                 if colNames.contains("noise_sigma") && colNames.contains("hot_pixel_count"),
                    let row = df.rows.first {
                     if let v = row["hot_pixel_count"] as? Int { hotPixelCount = v }
-                    if let v = row["noise_sigma_adu"] as? Double {
+                    if colNames.contains("noise_sigma_adu"),
+                       let v = row["noise_sigma_adu"] as? Double {
                         backgroundNoise = v; backgroundNoiseIsADU = true
                     } else if let v = row["noise_sigma"] as? Double {
                         backgroundNoise = v
@@ -556,7 +579,8 @@ extension AP {
                    !colNames.contains("star_count"),   // avoid double-counting frame_quality table
                    let row = df.rows.first,
                    backgroundNoise == nil {
-                    if let v = row["background_level_adu"] as? Double {
+                    if colNames.contains("background_level_adu"),
+                       let v = row["background_level_adu"] as? Double {
                         backgroundNoise = v; backgroundNoiseIsADU = true
                     } else if let v = row["background_level"] as? Double {
                         backgroundNoise = v

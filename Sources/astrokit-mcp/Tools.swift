@@ -733,7 +733,8 @@ struct Tools {
                 if let v = row["saturated_star_count"] as? Int  { saturatedStarCount = v }
                 if let v = row["median_fwhm"]          as? Double, v > 0 { medianFWHM = v }
                 if let v = row["median_eccentricity"]  as? Double { medianEccentricity = v }
-                if let v = row["background_level_adu"] as? Double {
+                if colNames.contains("background_level_adu"),
+                   let v = row["background_level_adu"] as? Double {
                     backgroundNoise = v; backgroundNoiseIsADU = true
                 } else if let v = row["background_level"] as? Double {
                     backgroundNoise = v
@@ -744,7 +745,8 @@ struct Tools {
             if colNames.contains("noise_sigma") && colNames.contains("hot_pixel_count"),
                let row = df.rows.first {
                 if let v = row["hot_pixel_count"] as? Int { hotPixelCount = v }
-                if let v = row["noise_sigma_adu"] as? Double {
+                if colNames.contains("noise_sigma_adu"),
+                   let v = row["noise_sigma_adu"] as? Double {
                     backgroundNoise = v; backgroundNoiseIsADU = true
                 } else if let v = row["noise_sigma"] as? Double {
                     backgroundNoise = v
@@ -775,7 +777,8 @@ struct Tools {
                !colNames.contains("star_count"),   // avoid double-counting frame_quality table
                let row = df.rows.first,
                backgroundNoise == nil {
-                if let v = row["background_level_adu"] as? Double {
+                if colNames.contains("background_level_adu"),
+                   let v = row["background_level_adu"] as? Double {
                     backgroundNoise = v; backgroundNoiseIsADU = true
                 } else if let v = row["background_level"] as? Double {
                     backgroundNoise = v
