@@ -42,6 +42,15 @@ struct Frameset: AsyncParsableCommand {
         @Option(name: .long, help: "Temperature tolerance ±°C for dark grouping (default 2.0).")
         var tempTolerance: Double?
 
+        @Option(name: .long, help: "Only include frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded.")
+        var maxFwhm: Double?
+
+        @Option(name: .long, help: "Only include frames with at least this many detected stars. Frames without quality data are excluded.")
+        var minStars: Int?
+
+        @Option(name: .long, help: "Only include frames with background noise ≤ this value (0–1). Frames without quality data are excluded.")
+        var maxBackgroundNoise: Double?
+
         func makeQuery() -> FrameQuery {
             var query = FrameQuery()
             query.objectName = object
@@ -61,6 +70,9 @@ struct Frameset: AsyncParsableCommand {
                 let tol = tempTolerance ?? 2.0
                 query.temperatureRange = (center - tol)...(center + tol)
             }
+            query.maxFWHM            = maxFwhm
+            query.minStarCount       = minStars
+            query.maxBackgroundNoise = maxBackgroundNoise
             return query
         }
     }
@@ -122,6 +134,9 @@ struct Frameset: AsyncParsableCommand {
             if let v = q.type   { parts.append(v) }
             if let v = q.filter { parts.append(v) }
             if let f = q.from, let t = q.to { parts.append("\(f)–\(t)") }
+            if let v = q.maxFwhm            { parts.append(String(format: "FWHM<%.1fpx", v)) }
+            if let v = q.minStars           { parts.append("stars≥\(v)") }
+            if let v = q.maxBackgroundNoise { parts.append(String(format: "noise<%.4f", v)) }
             return parts.isEmpty ? "frameset" : parts.joined(separator: " ")
         }
 

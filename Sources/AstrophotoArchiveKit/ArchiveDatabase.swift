@@ -386,6 +386,16 @@ actor ArchiveDatabase {
         case .onlyRejected:    conditions.append("rejected = 1")
         case .includeAll:      break
         }
+        // Quality filters: NULL rows are implicitly excluded by the comparison (NULL <= x is NULL → false).
+        if let maxFWHM = query.maxFWHM {
+            conditions.append("median_fwhm <= ?"); bindings.append(maxFWHM)
+        }
+        if let minStars = query.minStarCount {
+            conditions.append("star_count >= ?"); bindings.append(Int64(minStars))
+        }
+        if let maxNoise = query.maxBackgroundNoise {
+            conditions.append("background_noise <= ?"); bindings.append(maxNoise)
+        }
 
         var sql = "SELECT * FROM frames"
         if !conditions.isEmpty { sql += " WHERE " + conditions.joined(separator: " AND ") }

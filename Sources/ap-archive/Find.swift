@@ -54,6 +54,15 @@ struct Find: AsyncParsableCommand {
     @Flag(name: .long, help: "Show only rejected frames.")
     var rejectedOnly: Bool = false
 
+    @Option(name: .long, help: "Only frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded.")
+    var maxFwhm: Double?
+
+    @Option(name: .long, help: "Only frames with at least this many detected stars. Frames without quality data are excluded.")
+    var minStars: Int?
+
+    @Option(name: .long, help: "Only frames with background noise ≤ this value (0–1). Frames without quality data are excluded.")
+    var maxBackgroundNoise: Double?
+
     @Flag(name: .long, help: "Output as JSON.")
     var json: Bool = false
 
@@ -91,6 +100,9 @@ struct Find: AsyncParsableCommand {
         if let ra, let dec, let radius {
             query.coneSearch = FrameQuery.ConeSearch(ra: ra, dec: dec, radiusDeg: radius)
         }
+        query.maxFWHM            = maxFwhm
+        query.minStarCount       = minStars
+        query.maxBackgroundNoise = maxBackgroundNoise
 
         let frames = try await archive.frames(matching: query)
 
