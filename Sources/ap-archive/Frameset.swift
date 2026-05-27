@@ -1,5 +1,6 @@
 import ArgumentParser
 import AstrophotoArchiveKit
+import Darwin
 import Foundation
 
 struct Frameset: AsyncParsableCommand {
@@ -112,20 +113,32 @@ struct Frameset: AsyncParsableCommand {
                 || queryOptions.maxBackgroundNoise != nil
                 || queryOptions.maxEccentricity != nil
 
+            // Always inspect first so warnings are printed before any error is thrown.
+            let preInspection = try await archive.inspectFrameSet(query: query)
+
             if dryRun {
-                let inspection = try await archive.inspectFrameSet(query: query)
                 if !json {
-                    try await printRejectedWarnings(archive: archive, inspection: inspection, query: query)
+                    try await printRejectedWarnings(archive: archive, inspection: preInspection, query: query)
                     if hasQualityFilter {
-                        try await printMissingQualityWarnings(archive: archive, inspection: inspection)
+                        try await printMissingQualityWarnings(archive: archive, inspection: preInspection)
                     }
                 }
                 if json {
-                    printInspectionJSON(inspection)
+                    printInspectionJSON(preInspection)
                 } else {
-                    print(inspection.formatted(isDryRun: true))
+                    print(preInspection.formatted(isDryRun: true))
                 }
                 return
+            }
+
+            // Print warnings before attempting creation so they appear even when creation fails.
+            if !json {
+                try await printRejectedWarnings(archive: archive, inspection: preInspection, query: query)
+                if hasQualityFilter {
+                    try await printMissingQualityWarnings(archive: archive, inspection: preInspection)
+                }
+                // Flush the C stdio buffer so warnings appear before any error written to stderr.
+                fflush(Darwin.stdout)
             }
 
             let setName = name ?? autoName(queryOptions)
@@ -136,10 +149,6 @@ struct Frameset: AsyncParsableCommand {
             if json {
                 printJSON(frameSet, inspection: inspection)
             } else {
-                try await printRejectedWarnings(archive: archive, inspection: inspection, query: query)
-                if hasQualityFilter {
-                    try await printMissingQualityWarnings(archive: archive, inspection: inspection)
-                }
                 print("Created frame set '\(frameSet.name)'  [\(frameSet.id.uuidString)]")
                 print("")
                 print(inspection.formatted(isDryRun: false))
@@ -190,6 +199,7 @@ struct Frameset: AsyncParsableCommand {
             baseQuery.maxFWHM            = nil
             baseQuery.minStarCount       = nil
             baseQuery.maxBackgroundNoise = nil
+            baseQuery.maxEccentricity    = nil
             let allFrames   = try await archive.frames(matching: baseQuery)
             let includedIDs = Set(inspection.frames.map { $0.id })
 
