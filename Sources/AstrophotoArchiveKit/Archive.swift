@@ -82,7 +82,7 @@ public actor Archive {
             ra: meta.ra, dec: meta.dec,
             healpixPixel: healpixPixel,
             frameType: meta.frameType,
-            filter: meta.filter,
+            filter: ArchiveDatabase.canonicalFilterName(meta.filter),
             camera: meta.camera,
             focalLength: meta.focalLength,
             pixelScale: meta.pixelScale,

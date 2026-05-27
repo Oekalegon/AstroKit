@@ -343,6 +343,19 @@ actor ArchiveDatabase {
         }
     }
 
+    /// Canonical display name for a filter string read from a FITS header.
+    /// Normalises all Hɑ aliases to the proper Unicode display form "Hɑ".
+    /// Returns `nil` for nil input; passes other filter strings through unchanged.
+    static func canonicalFilterName(_ filter: String?) -> String? {
+        guard let filter = filter else { return nil }
+        switch filter.lowercased() {
+        case "ha", "h-alpha", "h_alpha", "halpha", "h alpha", "hα", "hɑ":
+            return "Hɑ"
+        default:
+            return filter
+        }
+    }
+
     // Stable string key used for content-based deduplication.
     // Components: fileDate (DATE header → DATE-OBS → filesystem, or ""), lowercased frame type,
     // normalised filter (or ""), exposure formatted to 3 decimal places (or "").
