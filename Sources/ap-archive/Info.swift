@@ -96,13 +96,14 @@ struct Info: AsyncParsableCommand {
         lines.append(row("Added at",   iso.string(from: f.addedAt)))
         lines.append(row("File",       f.filePath))
 
-        if f.starCount != nil || f.medianFWHM != nil || f.backgroundNoise != nil {
+        if f.starCount != nil || f.medianFWHM != nil || f.medianEccentricity != nil || f.backgroundNoise != nil {
             lines.append("")
             lines.append("Quality metrics")
             lines.append(String(repeating: "─", count: 60))
-            if let v = f.starCount       { lines.append(row("Stars",      "\(v)")) }
-            if let v = f.medianFWHM      { lines.append(row("FWHM",       String(format: "%.2f px", v))) }
-            if let v = f.backgroundNoise { lines.append(row("Bg. noise",  String(format: "%.4f", v))) }
+            if let v = f.starCount          { lines.append(row("Stars",        "\(v)")) }
+            if let v = f.medianFWHM         { lines.append(row("FWHM",         String(format: "%.2f px", v))) }
+            if let v = f.medianEccentricity { lines.append(row("Eccentricity", String(format: "%.3f", v))) }
+            if let v = f.backgroundNoise    { lines.append(row("Bg. noise",    String(format: "%.4f", v))) }
         }
 
         if let (run, inputs) = provenance {
@@ -164,9 +165,10 @@ struct Info: AsyncParsableCommand {
         if let v = f.bitpix       { d["bitpix"]         = v }
         d["rejected"] = f.rejected
         if let v = f.rejectedReason { d["rejected_reason"] = v }
-        if let v = f.starCount       { d["star_count"]       = v }
-        if let v = f.medianFWHM      { d["median_fwhm"]      = v }
-        if let v = f.backgroundNoise { d["background_noise"] = v }
+        if let v = f.starCount          { d["star_count"]          = v }
+        if let v = f.medianFWHM         { d["median_fwhm"]         = v }
+        if let v = f.medianEccentricity { d["median_eccentricity"] = v }
+        if let v = f.backgroundNoise    { d["background_noise"]    = v }
 
         if let (run, inputs) = provenance {
             var runDict: [String: Any] = [

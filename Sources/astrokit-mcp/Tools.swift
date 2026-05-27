@@ -610,11 +610,13 @@ struct Tools {
                         id: af.id,
                         starCount: entry.starCount,
                         medianFWHM: entry.medianFWHM,
-                        backgroundNoise: nil
+                        backgroundNoise: nil,
+                        medianEccentricity: entry.medianEccentricity
                     )
                     var parts: [String] = []
-                    if let v = entry.starCount  { parts.append("stars: \(v)") }
-                    if let v = entry.medianFWHM { parts.append(String(format: "FWHM: %.2fpx", v)) }
+                    if let v = entry.starCount         { parts.append("stars: \(v)") }
+                    if let v = entry.medianFWHM        { parts.append(String(format: "FWHM: %.2fpx", v)) }
+                    if let v = entry.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
                     if !parts.isEmpty { notes.append("\(af.id): \(parts.joined(separator: ", "))") }
                 }
             } catch {
@@ -625,7 +627,7 @@ struct Tools {
 
         // 2. Single-frame path: summary tables from analysis pipelines.
         let metrics = Self.extractGlobalQuality(from: tables)
-        guard metrics.starCount != nil || metrics.medianFWHM != nil || metrics.backgroundNoise != nil else {
+        guard metrics.starCount != nil || metrics.medianFWHM != nil || metrics.backgroundNoise != nil || metrics.medianEccentricity != nil else {
             return nil
         }
         do {
@@ -643,12 +645,14 @@ struct Tools {
                 id: id,
                 starCount: metrics.starCount,
                 medianFWHM: metrics.medianFWHM,
-                backgroundNoise: metrics.backgroundNoise
+                backgroundNoise: metrics.backgroundNoise,
+                medianEccentricity: metrics.medianEccentricity
             )
             var parts: [String] = []
-            if let v = metrics.starCount       { parts.append("stars: \(v)") }
-            if let v = metrics.medianFWHM      { parts.append(String(format: "FWHM: %.2fpx", v)) }
-            if let v = metrics.backgroundNoise { parts.append(String(format: "bg: %.4f", v)) }
+            if let v = metrics.starCount          { parts.append("stars: \(v)") }
+            if let v = metrics.medianFWHM         { parts.append(String(format: "FWHM: %.2fpx", v)) }
+            if let v = metrics.backgroundNoise    { parts.append(String(format: "bg: %.4f", v)) }
+            if let v = metrics.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
             return "Quality metrics stored on frame \(id): \(parts.joined(separator: ", "))."
         } catch {
             return "Quality update failed: \(error.localizedDescription)"
@@ -662,7 +666,7 @@ struct Tools {
     /// `sky_noise` is not mapped to `backgroundNoise` because it is in ADU, not normalised 0–1.
     static func extractPerFrameQuality(
         from tables: [TableData]
-    ) -> [(filePath: String, starCount: Int?, medianFWHM: Double?)] {
+    ) -> [(filePath: String, starCount: Int?, medianFWHM: Double?, medianEccentricity: Double?)] {
         for table in tables {
             guard let df = table.dataFrame else { continue }
             let colNames = Set(df.columns.map { $0.name })
@@ -670,13 +674,14 @@ struct Tools {
                   colNames.contains("median_fwhm"),
                   colNames.contains("star_count") else { continue }
 
-            var results: [(filePath: String, starCount: Int?, medianFWHM: Double?)] = []
+            var results: [(filePath: String, starCount: Int?, medianFWHM: Double?, medianEccentricity: Double?)] = []
             for row in df.rows {
                 guard let path = row["file_path"] as? String, !path.isEmpty else { continue }
                 let starCount: Int? = (row["star_count"] as? Int32).map { Int($0) }
                     ?? (row["star_count"] as? Int)
-                let medianFWHM = row["median_fwhm"] as? Double
-                results.append((filePath: path, starCount: starCount, medianFWHM: medianFWHM))
+                let medianFWHM         = row["median_fwhm"] as? Double
+                let medianEccentricity = row["mean_eccentricity"] as? Double
+                results.append((filePath: path, starCount: starCount, medianFWHM: medianFWHM, medianEccentricity: medianEccentricity))
             }
             return results
         }
@@ -690,18 +695,23 @@ struct Tools {
     /// - `background_level` table: → `backgroundNoise` (normalised 0–1)
     static func extractGlobalQuality(
         from tables: [TableData]
-    ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?) {
+    ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, medianEccentricity: Double?) {
         var starCount: Int? = nil
         var medianFWHM: Double? = nil
         var backgroundNoise: Double? = nil
+        var medianEccentricity: Double? = nil
 
         for table in tables {
             guard let df = table.dataFrame else { continue }
             let colNames = Set(df.columns.map { $0.name })
 
+            // Per-star table: star count + mean eccentricity from individual measurements.
             if colNames.contains("centroid_x") && colNames.contains("centroid_y") {
                 starCount = df.rows.count
+                let eccs = df.rows.compactMap { $0["eccentricity"] as? Double }.filter { !$0.isNaN }
+                if !eccs.isEmpty { medianEccentricity = eccs.reduce(0, +) / Double(eccs.count) }
             }
+            // FWHM summary table (from FWHMProcessor / star_detection).
             if colNames.contains("sigma_clipped_mean_fwhm_major"),
                colNames.contains("sigma_clipped_mean_fwhm_minor"),
                let row = df.rows.first,
@@ -710,13 +720,20 @@ struct Tools {
                major > 0 {
                 medianFWHM = (major + minor) / 2.0
             }
+            // Background level table (from background_estimation).
             if colNames.contains("background_level"),
                let row = df.rows.first,
                let level = row["background_level"] as? Double {
                 backgroundNoise = level
             }
+            // Global eccentricity summary (from optical_quality pipeline).
+            if colNames.contains("global_mean_eccentricity"),
+               let row = df.rows.first,
+               let ecc = row["global_mean_eccentricity"] as? Double {
+                medianEccentricity = ecc
+            }
         }
-        return (starCount, medianFWHM, backgroundNoise)
+        return (starCount, medianFWHM, backgroundNoise, medianEccentricity)
     }
 
     private func stackSummaryLine(pixels: [Float], registrationTable df: DataFrame, inputFrameSet: FrameSet?) -> String? {

@@ -32,6 +32,8 @@ public struct FrameQuery: Sendable {
     public var minStarCount: Int?
     /// Only include frames whose background noise is ≤ this value (normalised 0–1).
     public var maxBackgroundNoise: Double?
+    /// Only include frames whose mean star eccentricity is ≤ this value (0=circular, 1=line).
+    public var maxEccentricity: Double?
 
     public init() {}
 

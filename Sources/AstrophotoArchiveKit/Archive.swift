@@ -86,7 +86,8 @@ public actor Archive {
             fileDate: meta.fileDate,
             starCount: meta.starCount,
             medianFWHM: meta.medianFWHM,
-            backgroundNoise: meta.backgroundNoise
+            backgroundNoise: meta.backgroundNoise,
+            medianEccentricity: meta.medianEccentricity
         )
         let isNew = try await database.insertFrame(frame)
         if !isNew {
@@ -225,17 +226,20 @@ public actor Archive {
     ///   - starCount: Number of detected stars (from star_detection / optical_quality pipeline).
     ///   - medianFWHM: Median FWHM in pixels, averaged over major and minor axes.
     ///   - backgroundNoise: Normalised background noise level (0–1, from background_estimation pipeline).
+    ///   - medianEccentricity: Mean star eccentricity (0=circular, 1=line).
     public func updateFrameQuality(
         id: UUID,
         starCount: Int? = nil,
         medianFWHM: Double? = nil,
-        backgroundNoise: Double? = nil
+        backgroundNoise: Double? = nil,
+        medianEccentricity: Double? = nil
     ) async throws {
         try await database.updateFrameQuality(
             id: id,
             starCount: starCount,
             medianFWHM: medianFWHM,
-            backgroundNoise: backgroundNoise
+            backgroundNoise: backgroundNoise,
+            medianEccentricity: medianEccentricity
         )
     }
 

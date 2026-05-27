@@ -54,6 +54,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var medianFWHM: Double?
     /// Background noise level, normalised 0–1 (populated by background_estimation pipeline or read from FITS header BACKNOIS).
     public var backgroundNoise: Double?
+    /// Mean star eccentricity (0 = circular, 1 = line; populated by star_detection / frame_registration pipeline or read from FITS header MEDECCEN).
+    public var medianEccentricity: Double?
 
     public init(
         id: UUID, filePath: String, objectName: String?, ra: Double?, dec: Double?,
@@ -74,7 +76,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
         fileDate: Date? = nil,
         starCount: Int? = nil,
         medianFWHM: Double? = nil,
-        backgroundNoise: Double? = nil
+        backgroundNoise: Double? = nil,
+        medianEccentricity: Double? = nil
     ) {
         self.id = id
         self.filePath = filePath
@@ -113,5 +116,6 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.starCount = starCount
         self.medianFWHM = medianFWHM
         self.backgroundNoise = backgroundNoise
+        self.medianEccentricity = medianEccentricity
     }
 }
