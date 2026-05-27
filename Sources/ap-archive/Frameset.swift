@@ -1,5 +1,6 @@
 import ArgumentParser
 import AstrophotoArchiveKit
+import Darwin
 import Foundation
 
 struct Frameset: AsyncParsableCommand {
@@ -42,6 +43,18 @@ struct Frameset: AsyncParsableCommand {
         @Option(name: .long, help: "Temperature tolerance ±°C for dark grouping (default 2.0).")
         var tempTolerance: Double?
 
+        @Option(name: .long, help: "Only include frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded.")
+        var maxFwhm: Double?
+
+        @Option(name: .long, help: "Only include frames with at least this many detected stars. Frames without quality data are excluded.")
+        var minStars: Int?
+
+        @Option(name: .long, help: "Only include frames with background noise ≤ this value (0–1). Frames without quality data are excluded.")
+        var maxBackgroundNoise: Double?
+
+        @Option(name: .long, help: "Only include frames with mean star eccentricity ≤ this value (0=circular). Frames without quality data are excluded.")
+        var maxEccentricity: Double?
+
         func makeQuery() -> FrameQuery {
             var query = FrameQuery()
             query.objectName = object
@@ -61,6 +74,10 @@ struct Frameset: AsyncParsableCommand {
                 let tol = tempTolerance ?? 2.0
                 query.temperatureRange = (center - tol)...(center + tol)
             }
+            query.maxFWHM            = maxFwhm
+            query.minStarCount       = minStars
+            query.maxBackgroundNoise = maxBackgroundNoise
+            query.maxEccentricity    = maxEccentricity
             return query
         }
     }
@@ -91,15 +108,37 @@ struct Frameset: AsyncParsableCommand {
             let config  = try archiveOptions.makeConfiguration()
             let archive = try Archive(configuration: config)
             let query   = queryOptions.makeQuery()
+            let hasQualityFilter = queryOptions.maxFwhm != nil
+                || queryOptions.minStars != nil
+                || queryOptions.maxBackgroundNoise != nil
+                || queryOptions.maxEccentricity != nil
+
+            // Always inspect first so warnings are printed before any error is thrown.
+            let preInspection = try await archive.inspectFrameSet(query: query)
 
             if dryRun {
-                let inspection = try await archive.inspectFrameSet(query: query)
+                if !json {
+                    try await printRejectedWarnings(archive: archive, inspection: preInspection, query: query)
+                    if hasQualityFilter {
+                        try await printMissingQualityWarnings(archive: archive, inspection: preInspection)
+                    }
+                }
                 if json {
-                    printInspectionJSON(inspection)
+                    printInspectionJSON(preInspection)
                 } else {
-                    print(inspection.formatted(isDryRun: true))
+                    print(preInspection.formatted(isDryRun: true))
                 }
                 return
+            }
+
+            // Print warnings before attempting creation so they appear even when creation fails.
+            if !json {
+                try await printRejectedWarnings(archive: archive, inspection: preInspection, query: query)
+                if hasQualityFilter {
+                    try await printMissingQualityWarnings(archive: archive, inspection: preInspection)
+                }
+                // Flush the C stdio buffer so warnings appear before any error written to stderr.
+                fflush(Darwin.stdout)
             }
 
             let setName = name ?? autoName(queryOptions)
@@ -116,12 +155,95 @@ struct Frameset: AsyncParsableCommand {
             }
         }
 
+        /// Queries for rejected frames that pass every other filter and prints an orange warning.
+        /// A frame appears here only if it would be in the frameset were it not rejected —
+        /// i.e., it satisfies the type, object, filter, date, quality, and all other criteria.
+        private func printRejectedWarnings(
+            archive: Archive,
+            inspection: FrameSetInspection,
+            query: FrameQuery
+        ) async throws {
+            // Same query as the main one but lift the rejection exclusion.
+            var rejQuery = query
+            rejQuery.rejectionFilter = .includeAll
+            let allFrames   = try await archive.frames(matching: rejQuery)
+            let includedIDs = Set(inspection.frames.map { $0.id })
+
+            let rejected = allFrames.filter { $0.rejected && !includedIDs.contains($0.id) }
+            guard !rejected.isEmpty else { return }
+
+            let n    = rejected.count
+            let noun = n == 1 ? "frame" : "frames"
+            let verb = n == 1 ? "was"   : "were"
+            print(orangeText("⚠  \(n) \(noun) matched the query but \(verb) excluded because \(n == 1 ? "it is" : "they are") rejected:"))
+            for f in rejected.prefix(5) {
+                let filename  = (f.filePath as NSString).lastPathComponent
+                let reasonStr = f.rejectedReason.map { " — \($0)" } ?? ""
+                print(orangeText("   \(filename)\(reasonStr)"))
+            }
+            if rejected.count > 5 {
+                print(orangeText("   …and \(rejected.count - 5) more"))
+            }
+            print(orangeText("   Use 'ap-archive reject <id> --undo' to un-reject a frame."))
+            print("")
+        }
+
+        /// Queries for all frames that match the base criteria (ignoring quality filters) and
+        /// prints an orange warning for any that were excluded solely because quality data is absent.
+        private func printMissingQualityWarnings(
+            archive: Archive,
+            inspection: FrameSetInspection
+        ) async throws {
+            // Re-run the query without quality filters to find every candidate frame.
+            var baseQuery = queryOptions.makeQuery()
+            baseQuery.maxFWHM            = nil
+            baseQuery.minStarCount       = nil
+            baseQuery.maxBackgroundNoise = nil
+            baseQuery.maxEccentricity    = nil
+            let allFrames   = try await archive.frames(matching: baseQuery)
+            let includedIDs = Set(inspection.frames.map { $0.id })
+
+            // A frame is "missing quality data" if it is not included in the quality-filtered
+            // result AND has a nil value for at least one of the active filter fields.
+            let excluded = allFrames.filter { f in
+                !includedIDs.contains(f.id) &&
+                ((queryOptions.maxFwhm != nil            && f.medianFWHM        == nil) ||
+                 (queryOptions.minStars != nil           && f.starCount          == nil) ||
+                 (queryOptions.maxBackgroundNoise != nil && f.backgroundNoise    == nil) ||
+                 (queryOptions.maxEccentricity != nil    && f.medianEccentricity == nil))
+            }
+            guard !excluded.isEmpty else { return }
+
+            let n = excluded.count
+            let noun = n == 1 ? "frame" : "frames"
+            let verb = n == 1 ? "was"   : "were"
+            print(orangeText("⚠  \(n) \(noun) matched the query but \(verb) excluded — no quality data for the active filter(s):"))
+            for f in excluded.prefix(5) {
+                var missing: [String] = []
+                if queryOptions.maxFwhm != nil            && f.medianFWHM        == nil { missing.append("FWHM") }
+                if queryOptions.minStars != nil           && f.starCount          == nil { missing.append("star count") }
+                if queryOptions.maxBackgroundNoise != nil && f.backgroundNoise    == nil { missing.append("bg. noise") }
+                if queryOptions.maxEccentricity != nil    && f.medianEccentricity == nil { missing.append("eccentricity") }
+                let filename = (f.filePath as NSString).lastPathComponent
+                print(orangeText("   \(filename)  (no \(missing.joined(separator: ", ")))"))
+            }
+            if excluded.count > 5 {
+                print(orangeText("   …and \(excluded.count - 5) more"))
+            }
+            print(orangeText("   Tip: run 'ap run star_detection --input <file>' to populate quality metrics."))
+            print("")
+        }
+
         private func autoName(_ q: QueryOptions) -> String {
             var parts: [String] = []
             if let v = q.object { parts.append(v) }
             if let v = q.type   { parts.append(v) }
             if let v = q.filter { parts.append(v) }
             if let f = q.from, let t = q.to { parts.append("\(f)–\(t)") }
+            if let v = q.maxFwhm            { parts.append(String(format: "FWHM<%.1fpx", v)) }
+            if let v = q.minStars           { parts.append("stars≥\(v)") }
+            if let v = q.maxBackgroundNoise { parts.append(String(format: "noise<%.4f", v)) }
+            if let v = q.maxEccentricity    { parts.append(String(format: "ecc<%.3f", v)) }
             return parts.isEmpty ? "frameset" : parts.joined(separator: " ")
         }
 
@@ -269,22 +391,45 @@ struct Frameset: AsyncParsableCommand {
             row("Created", iso.string(from: fs.createdAt))
 
             if !frames.isEmpty {
-                func memberRow(_ uuid: String, _ obj: String, _ filt: String,
-                               _ exp: String, _ date: String) {
-                    print(String(format: "  %-36@  %-14@  %-8@  %8@  %@",
-                        uuid as NSString, obj as NSString, filt as NSString,
-                        exp as NSString, date as NSString))
-                }
+                let hasQuality = frames.contains { $0.starCount != nil || $0.medianFWHM != nil || $0.medianEccentricity != nil }
                 print("")
                 print("Members (\(frames.count)):")
-                memberRow("UUID", "Object", "Filter", "Exposure", "Date")
-                print("  " + String(repeating: "─", count: 36 + 14 + 8 + 8 + 16))
-                for f in frames {
-                    let obj  = f.objectName ?? "-"
-                    let filt = f.filter ?? "-"
-                    let exp  = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
-                    let date = f.timestamp.map { String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ") } ?? "-"
-                    memberRow(f.id.uuidString, obj, filt, exp, date)
+                if hasQuality {
+                    func memberRow(_ uuid: String, _ obj: String, _ filt: String,
+                                   _ exp: String, _ stars: String, _ fwhm: String,
+                                   _ ecc: String, _ date: String) {
+                        print(String(format: "  %-36@  %-14@  %-8@  %8@  %6@  %7@  %6@  %@",
+                            uuid as NSString, obj as NSString, filt as NSString, exp as NSString,
+                            stars as NSString, fwhm as NSString, ecc as NSString, date as NSString))
+                    }
+                    memberRow("UUID", "Object", "Filter", "Exposure", "Stars", "FWHM", "Ecc", "Date")
+                    print("  " + String(repeating: "─", count: 36 + 14 + 8 + 8 + 6 + 7 + 6 + 18))
+                    for f in frames {
+                        let obj   = f.objectName ?? "-"
+                        let filt  = f.filter ?? "-"
+                        let exp   = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
+                        let stars = f.starCount.map { "\($0)" } ?? "-"
+                        let fwhm  = f.medianFWHM.map { String(format: "%.2f", $0) } ?? "-"
+                        let ecc   = f.medianEccentricity.map { String(format: "%.3f", $0) } ?? "-"
+                        let date  = f.timestamp.map { String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ") } ?? "-"
+                        memberRow(f.id.uuidString, obj, filt, exp, stars, fwhm, ecc, date)
+                    }
+                } else {
+                    func memberRow(_ uuid: String, _ obj: String, _ filt: String,
+                                   _ exp: String, _ date: String) {
+                        print(String(format: "  %-36@  %-14@  %-8@  %8@  %@",
+                            uuid as NSString, obj as NSString, filt as NSString,
+                            exp as NSString, date as NSString))
+                    }
+                    memberRow("UUID", "Object", "Filter", "Exposure", "Date")
+                    print("  " + String(repeating: "─", count: 36 + 14 + 8 + 8 + 16))
+                    for f in frames {
+                        let obj  = f.objectName ?? "-"
+                        let filt = f.filter ?? "-"
+                        let exp  = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
+                        let date = f.timestamp.map { String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ") } ?? "-"
+                        memberRow(f.id.uuidString, obj, filt, exp, date)
+                    }
                 }
             }
         }

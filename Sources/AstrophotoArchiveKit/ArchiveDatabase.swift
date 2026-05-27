@@ -134,6 +134,17 @@ actor ArchiveDatabase {
         UPDATE frame_sets SET filter = 'Hɑ'
         WHERE LOWER(filter) IN ('ha', 'h-alpha', 'h_alpha', 'halpha', 'h alpha');
         """,
+        // v12: quality metrics for light frames — star count, median FWHM, background noise.
+        // These are populated by analysis pipelines (star_detection, background_estimation)
+        // or read from FITS headers (NSTARS, MEDFWHM, BACKNOIS) on import.
+        """
+        ALTER TABLE frames ADD COLUMN star_count INTEGER;
+        ALTER TABLE frames ADD COLUMN median_fwhm REAL;
+        ALTER TABLE frames ADD COLUMN background_noise REAL;
+        """,
+        // v13: mean star eccentricity — populated by star_detection / frame_registration pipelines
+        // or read from the FITS header MEDECCEN on import.
+        "ALTER TABLE frames ADD COLUMN median_eccentricity REAL;",
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -220,8 +231,9 @@ actor ArchiveDatabase {
          exposure_time, gain, offset, width, height, bitpix,
          calibrated, stacked, stretched, processing_level, added_at, thumbnail,
          frame_signature, rejected, rejected_reason, position_angle, processing_run_id,
-         session_beg, session_end, temperature_min, temperature_max)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         session_beg, session_end, temperature_min, temperature_max,
+         star_count, median_fwhm, background_noise, median_eccentricity)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -266,6 +278,10 @@ actor ArchiveDatabase {
         bind(stmt, 32, frame.sessionEnd.map { iso.string(from: $0) })
         bind(stmt, 33, frame.temperatureMin)
         bind(stmt, 34, frame.temperatureMax)
+        bind(stmt, 35, frame.starCount.map { Int64($0) })
+        bind(stmt, 36, frame.medianFWHM)
+        bind(stmt, 37, frame.backgroundNoise)
+        bind(stmt, 38, frame.medianEccentricity)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -374,6 +390,19 @@ actor ArchiveDatabase {
         case .onlyRejected:    conditions.append("rejected = 1")
         case .includeAll:      break
         }
+        // Quality filters: NULL rows are implicitly excluded by the comparison (NULL <= x is NULL → false).
+        if let maxFWHM = query.maxFWHM {
+            conditions.append("median_fwhm <= ?"); bindings.append(maxFWHM)
+        }
+        if let minStars = query.minStarCount {
+            conditions.append("star_count >= ?"); bindings.append(Int64(minStars))
+        }
+        if let maxNoise = query.maxBackgroundNoise {
+            conditions.append("background_noise <= ?"); bindings.append(maxNoise)
+        }
+        if let maxEcc = query.maxEccentricity {
+            conditions.append("median_eccentricity <= ?"); bindings.append(maxEcc)
+        }
 
         var sql = "SELECT * FROM frames"
         if !conditions.isEmpty { sql += " WHERE " + conditions.joined(separator: " AND ") }
@@ -414,6 +443,42 @@ actor ArchiveDatabase {
         sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return columnText(stmt, 0)
+    }
+
+    /// Updates quality metrics on a frame. Only non-nil values are written;
+    /// passing `nil` for a metric leaves the existing DB value unchanged.
+    func updateFrameQuality(
+        id: UUID,
+        starCount: Int?,
+        medianFWHM: Double?,
+        backgroundNoise: Double?,
+        medianEccentricity: Double? = nil
+    ) throws {
+        // Build SET clause dynamically so we never overwrite a metric with NULL.
+        var setClauses: [String] = []
+        var values: [Any] = []
+        if let v = starCount           { setClauses.append("star_count = ?");          values.append(Int64(v)) }
+        if let v = medianFWHM          { setClauses.append("median_fwhm = ?");         values.append(v) }
+        if let v = backgroundNoise     { setClauses.append("background_noise = ?");    values.append(v) }
+        if let v = medianEccentricity  { setClauses.append("median_eccentricity = ?"); values.append(v) }
+        guard !setClauses.isEmpty else { return }
+
+        let sql = "UPDATE frames SET \(setClauses.joined(separator: ", ")) WHERE id = ?"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+
+        for (i, value) in values.enumerated() {
+            let pos = Int32(i + 1)
+            switch value {
+            case let n as Int64:  sqlite3_bind_int64(stmt, pos, n)
+            case let d as Double: sqlite3_bind_double(stmt, pos, d)
+            default: break
+            }
+        }
+        bind(stmt, Int32(values.count + 1), id.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
     }
 
     func updateRejected(id: UUID, rejected: Bool, reason: String?) throws {
@@ -824,7 +889,11 @@ actor ArchiveDatabase {
             sessionBeg: columnText(stmt, 30).flatMap { iso.date(from: $0) },
             sessionEnd: columnText(stmt, 31).flatMap { iso.date(from: $0) },
             temperatureMin: columnDouble(stmt, 32),
-            temperatureMax: columnDouble(stmt, 33)
+            temperatureMax: columnDouble(stmt, 33),
+            starCount: sqlite3_column_type(stmt, 34) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 34)) : nil,
+            medianFWHM: columnDouble(stmt, 35),
+            backgroundNoise: columnDouble(stmt, 36),
+            medianEccentricity: columnDouble(stmt, 37)
         )
     }
 

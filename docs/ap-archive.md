@@ -98,6 +98,10 @@ ap-archive find [options]
 | `--limit <n>` | Maximum number of results |
 | `--include-rejected` | Include rejected frames in results (by default they are hidden) |
 | `--rejected-only` | Show only rejected frames |
+| `--max-fwhm <px>` | Only frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded. |
+| `--min-stars <n>` | Only frames with at least this many detected stars. Frames without quality data are excluded. |
+| `--max-background-noise <v>` | Only frames with background noise ≤ this value (0–1). Frames without quality data are excluded. |
+| `--max-eccentricity <v>` | Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded. |
 | `--json` | Print results as JSON |
 
 **Examples:**
@@ -117,6 +121,9 @@ ap-archive find --stacked --limit 20
 
 # Review all rejected frames:
 ap-archive find --rejected-only
+
+# Only frames with good seeing (FWHM ≤ 4 px, ≥ 150 stars, eccentricity ≤ 0.4):
+ap-archive find --object M51 --type light --max-fwhm 4 --min-stars 150 --max-eccentricity 0.4
 ```
 
 ---
@@ -279,6 +286,10 @@ ap-archive frameset create [options]
 | `--calibrated` | Only calibrated frames |
 | `--temp-center <°C>` | Centre temperature for dark frame grouping |
 | `--temp-tolerance <°C>` | Temperature tolerance ±°C (default 2.0) |
+| `--max-fwhm <px>` | Only frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded. |
+| `--min-stars <n>` | Only frames with at least this many detected stars. Frames without quality data are excluded. |
+| `--max-background-noise <v>` | Only frames with background noise ≤ this value (0–1). Frames without quality data are excluded. |
+| `--max-eccentricity <v>` | Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded. |
 | `--force` | Allow mixed optical filters (stored as comma-separated list) |
 | `--dry-run` | Show the inspection report without creating the frame set |
 | `--json` | Print result as JSON |
@@ -303,7 +314,12 @@ ap-archive frameset create --type dark --temp-center -10 --temp-tolerance 2
 
 # Allow frames from multiple filters (e.g. broadband LRGB):
 ap-archive frameset create --type light --object M51 --force
+
+# Only frames with good seeing — FWHM ≤ 5 px, ≥ 100 stars, eccentricity ≤ 0.4 (quality-first stacking):
+ap-archive frameset create --type light --object "NGC 6910" --filter SII --max-fwhm 5 --min-stars 100 --max-eccentricity 0.4
 ```
+
+> **Tip:** Run `ap run star_detection --input <file>` on your light frames before creating a quality-filtered frame set. The pipeline automatically writes star count, FWHM, eccentricity, and background noise back to each archived frame so the quality filters have data to work with. Frames without quality data are **excluded** from results whenever a quality filter is active.
 
 **Example output (dry-run):**
 
@@ -400,19 +416,31 @@ ap-archive info <id> [--json]
 ```
 Frame  A3F2B1C0-1234-5678-ABCD-EF0123456789
 ────────────────────────────────────────────────────────────
-  Type:              stacked
+  Type:              light
   Object:            M51
   Filter:            Hɑ
-  Exposure:          5400 s
+  Exposure:          300 s
+  Date:              2024-03-15T22:10:00Z
 
   Camera:            ZWO ASI294MC Pro
   Gain:              100
+  Temperature:       -10.0 °C
 
-  Size:              6248 × 4176
+  RA / Dec:          202.4700° / 47.1952°  (J2000)
+  Pixel scale:       1.240 "/px
+  Focal length:      800 mm
+  Size:              6248 × 4176  (16-bit)
 
-  Processing:        stacked  [calibrated: ✗  stacked: ✓  stretched: ✗]
+  Processing:        raw  [calibrated: ✗  stacked: ✗  stretched: ✗]
   Added at:          2026-05-25T10:00:00Z
-  File:              /Users/…/AstroArchive/M51/stacked/Hɑ/stacked.fits
+  File:              /Users/…/AstroArchive/M51/2024-03-15/light/Hɑ/M51_Ha_300s_001.fits
+
+Quality metrics
+────────────────────────────────────────────────────────────
+  Stars:             312
+  FWHM:              3.85 px
+  Eccentricity:      0.312
+  Bg. noise:         0.0028
 
 Provenance
 ────────────────────────────────────────────────────────────
@@ -519,6 +547,38 @@ When a file is added, `ap-archive` reads its FITS header to extract:
 | `OFFSET`, `PEDESTAL` | Camera offset |
 
 Processing level is inferred from `IMAGETYP` and custom keywords (`CALIBRAT`, `STACKED`, `STRETCHD`).
+
+### Quality metrics
+
+Four per-frame quality metrics are stored alongside the standard metadata:
+
+| Field | FITS keyword | Description |
+|-------|-------------|-------------|
+| Stars | `NSTARS` | Number of detected stars |
+| FWHM | `MEDFWHM` | Median FWHM in pixels (average of major and minor axes) |
+| Eccentricity | `MEDECCEN` | Median star eccentricity (0=circular; lower is rounder and indicates better tracking and focus) |
+| Bg. noise | `BACKNOIS` | Background noise, normalised 0–1 |
+
+Metrics can be populated in two ways:
+
+1. **Automatically by `ap run`** — after any pipeline run, `ap` back-updates the quality metrics for each archived input frame. Pipelines that produce a per-frame registration table (`frame_registration`, `frame_stacking`) update each frame individually. Pipelines with a global summary table (`star_detection`, `optical_quality`, `autofocus_focused`) update all input frames with the aggregate values.
+
+2. **From FITS headers on `add`** — if the file already contains `NSTARS`, `MEDFWHM`, `MEDECCEN`, or `BACKNOIS` headers (written by compatible tools or a previous pipeline run), those values are read automatically when the file is added to the archive.
+
+Metrics are populated progressively — a frame can be archived first and enriched with quality data later. When a quality filter (`--max-fwhm`, `--min-stars`, `--max-background-noise`, `--max-eccentricity`) is active, frames without quality data for that field are **excluded** from results, because there is no way to verify they meet the threshold.
+
+**Workflow:**
+
+```bash
+# 1. Add your light frames to the archive:
+ap-archive add ~/lights/NGC6910_SII/ --recursive
+
+# 2. Run star_detection on each frame — this writes quality metrics back:
+ap run star_detection --input ~/lights/NGC6910_SII/
+
+# 3. Create a frameset containing only the sharpest frames:
+ap-archive frameset create --object "NGC 6910" --filter SII --max-fwhm 5 --min-stars 100
+```
 
 ### Deduplication
 

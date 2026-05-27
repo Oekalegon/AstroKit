@@ -398,6 +398,16 @@ struct Tools {
             if let note = archiveNote { savedNote += "\n\(note)" }
         }
 
+        // Back-update quality metrics on the input frame (analysis pipelines only).
+        // We identify the input archive frame from input_frame_id or by file path lookup.
+        if let qualityNote = await backUpdateQuality(
+            tables: tables,
+            inputFrameID: inputFrameID.flatMap { UUID(uuidString: $0) },
+            inputFilePath: inputPath
+        ) {
+            savedNote += "\n\(qualityNote)"
+        }
+
         var lines = [
             "Pipeline '\(pipelineID)' completed in \(String(format: "%.2f", elapsed))s.",
             "\(frames.count) frame(s) produced, \(tables.count) table(s) produced.\(savedNote)",
@@ -567,6 +577,163 @@ struct Tools {
         } catch {
             return "Auto-archive failed: \(error.localizedDescription)"
         }
+    }
+
+    /// Extracts quality metrics from pipeline output tables and stores them on the input archive
+    /// frame(s). Handles two cases:
+    ///
+    /// **Per-frame** (frame_registration / frame_stacking): the registration table has one row per
+    /// input frame with `file_path`, `star_count`, and `median_fwhm` columns. Each row is matched
+    /// directly to an archive frame by its file path.
+    ///
+    /// **Single-frame** (star_detection / optical_quality / autofocus_focused): looks for a
+    /// `pixel_coordinates` table (star count), a `median_fwhm` summary table, and a
+    /// `background_level` table. The result is applied to the frame identified by `inputFrameID`
+    /// or `inputFilePath`.
+    private func backUpdateQuality(
+        tables: [TableData],
+        inputFrameID: UUID?,
+        inputFilePath: String?
+    ) async -> String? {
+        guard let config = try? ArchiveConfiguration.fromEnvironment() else { return nil }
+        guard let archive = try? Archive(configuration: config) else { return nil }
+
+        // 1. Per-frame path: registration table produced by frame_registration / frame_stacking.
+        let perFrame = Self.extractPerFrameQuality(from: tables)
+        if !perFrame.isEmpty {
+            var notes: [String] = []
+            do {
+                for entry in perFrame {
+                    let expanded = (entry.filePath as NSString).expandingTildeInPath
+                    guard let af = try await archive.frame(filePath: expanded) else { continue }
+                    try await archive.updateFrameQuality(
+                        id: af.id,
+                        starCount: entry.starCount,
+                        medianFWHM: entry.medianFWHM,
+                        backgroundNoise: nil,
+                        medianEccentricity: entry.medianEccentricity
+                    )
+                    var parts: [String] = []
+                    if let v = entry.starCount         { parts.append("stars: \(v)") }
+                    if let v = entry.medianFWHM        { parts.append(String(format: "FWHM: %.2fpx", v)) }
+                    if let v = entry.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
+                    if !parts.isEmpty { notes.append("\(af.id): \(parts.joined(separator: ", "))") }
+                }
+            } catch {
+                return "Quality update failed: \(error.localizedDescription)"
+            }
+            return notes.isEmpty ? nil : "Quality metrics stored on \(notes.count) frame(s)."
+        }
+
+        // 2. Single-frame path: summary tables from analysis pipelines.
+        let metrics = Self.extractGlobalQuality(from: tables)
+        guard metrics.starCount != nil || metrics.medianFWHM != nil || metrics.backgroundNoise != nil || metrics.medianEccentricity != nil else {
+            return nil
+        }
+        do {
+            let targetID: UUID?
+            if let id = inputFrameID {
+                targetID = id
+            } else if let path = inputFilePath {
+                let expanded = (path as NSString).expandingTildeInPath
+                targetID = try await archive.frame(filePath: expanded)?.id
+            } else {
+                targetID = nil
+            }
+            guard let id = targetID else { return nil }
+            try await archive.updateFrameQuality(
+                id: id,
+                starCount: metrics.starCount,
+                medianFWHM: metrics.medianFWHM,
+                backgroundNoise: metrics.backgroundNoise,
+                medianEccentricity: metrics.medianEccentricity
+            )
+            var parts: [String] = []
+            if let v = metrics.starCount          { parts.append("stars: \(v)") }
+            if let v = metrics.medianFWHM         { parts.append(String(format: "FWHM: %.2fpx", v)) }
+            if let v = metrics.backgroundNoise    { parts.append(String(format: "bg: %.4f", v)) }
+            if let v = metrics.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
+            return "Quality metrics stored on frame \(id): \(parts.joined(separator: ", "))."
+        } catch {
+            return "Quality update failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Extracts per-frame quality metrics from a registration table.
+    ///
+    /// Identified by having `file_path`, `median_fwhm`, and `star_count` columns (produced by
+    /// `FrameRegistrationProcessor` inside frame_registration and frame_stacking pipelines).
+    /// `sky_noise` is not mapped to `backgroundNoise` because it is in ADU, not normalised 0–1.
+    static func extractPerFrameQuality(
+        from tables: [TableData]
+    ) -> [(filePath: String, starCount: Int?, medianFWHM: Double?, medianEccentricity: Double?)] {
+        for table in tables {
+            guard let df = table.dataFrame else { continue }
+            let colNames = Set(df.columns.map { $0.name })
+            guard colNames.contains("file_path"),
+                  colNames.contains("median_fwhm"),
+                  colNames.contains("star_count") else { continue }
+
+            var results: [(filePath: String, starCount: Int?, medianFWHM: Double?, medianEccentricity: Double?)] = []
+            for row in df.rows {
+                guard let path = row["file_path"] as? String, !path.isEmpty else { continue }
+                let starCount: Int? = (row["star_count"] as? Int32).map { Int($0) }
+                    ?? (row["star_count"] as? Int)
+                let medianFWHM         = row["median_fwhm"] as? Double
+                let medianEccentricity = row["mean_eccentricity"] as? Double
+                results.append((filePath: path, starCount: starCount, medianFWHM: medianFWHM, medianEccentricity: medianEccentricity))
+            }
+            return results
+        }
+        return []
+    }
+
+    /// Extracts aggregate quality metrics from single-frame analysis pipeline output tables.
+    ///
+    /// - `pixel_coordinates` (has `centroid_x`/`centroid_y`): row count → `starCount`
+    /// - `median_fwhm` summary table (has `sigma_clipped_mean_fwhm_major/minor`): → `medianFWHM`
+    /// - `background_level` table: → `backgroundNoise` (normalised 0–1)
+    static func extractGlobalQuality(
+        from tables: [TableData]
+    ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, medianEccentricity: Double?) {
+        var starCount: Int? = nil
+        var medianFWHM: Double? = nil
+        var backgroundNoise: Double? = nil
+        var medianEccentricity: Double? = nil
+
+        for table in tables {
+            guard let df = table.dataFrame else { continue }
+            let colNames = Set(df.columns.map { $0.name })
+
+            // Per-star table: star count + mean eccentricity from individual measurements.
+            if colNames.contains("centroid_x") && colNames.contains("centroid_y") {
+                starCount = df.rows.count
+                let eccs = df.rows.compactMap { $0["eccentricity"] as? Double }.filter { !$0.isNaN }
+                if !eccs.isEmpty { medianEccentricity = eccs.reduce(0, +) / Double(eccs.count) }
+            }
+            // FWHM summary table (from FWHMProcessor / star_detection).
+            if colNames.contains("sigma_clipped_mean_fwhm_major"),
+               colNames.contains("sigma_clipped_mean_fwhm_minor"),
+               let row = df.rows.first,
+               let major = row["sigma_clipped_mean_fwhm_major"] as? Double,
+               let minor = row["sigma_clipped_mean_fwhm_minor"] as? Double,
+               major > 0 {
+                medianFWHM = (major + minor) / 2.0
+            }
+            // Background level table (from background_estimation).
+            if colNames.contains("background_level"),
+               let row = df.rows.first,
+               let level = row["background_level"] as? Double {
+                backgroundNoise = level
+            }
+            // Global eccentricity summary (from optical_quality pipeline).
+            if colNames.contains("global_mean_eccentricity"),
+               let row = df.rows.first,
+               let ecc = row["global_mean_eccentricity"] as? Double {
+                medianEccentricity = ecc
+            }
+        }
+        return (starCount, medianFWHM, backgroundNoise, medianEccentricity)
     }
 
     private func stackSummaryLine(pixels: [Float], registrationTable df: DataFrame, inputFrameSet: FrameSet?) -> String? {

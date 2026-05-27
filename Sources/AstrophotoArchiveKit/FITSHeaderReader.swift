@@ -30,6 +30,11 @@ struct FrameArchiveMetadata {
     var temperatureMax: Double?  // CCD-TMAX: warmest input frame (stacked frames only)
     /// File creation date for deduplication: DATE header → DATE-OBS → filesystem creation date.
     var fileDate: Date?
+    // MARK: - Quality metrics (written by analysis pipelines or external tools)
+    var starCount: Int?              // NSTARS: number of detected stars
+    var medianFWHM: Double?          // MEDFWHM: median FWHM in pixels (avg major+minor)
+    var backgroundNoise: Double?     // BACKNOIS: normalised background noise level (0–1)
+    var medianEccentricity: Double?  // MEDECCEN: mean star eccentricity (0=circular, 1=line)
 }
 
 enum FITSHeaderReader {
@@ -111,6 +116,12 @@ enum FITSHeaderReader {
         let temperatureMin = doubleValue(headers, keys: ["CCD-TMIN"])
         let temperatureMax = doubleValue(headers, keys: ["CCD-TMAX"])
 
+        // Quality metrics — written by AstrophotoKit analysis pipelines or compatible tools.
+        let starCount          = headers["NSTARS"]?.intValue.map { Int($0) }
+        let medianFWHM         = doubleValue(headers, keys: ["MEDFWHM"])
+        let backgroundNoise    = doubleValue(headers, keys: ["BACKNOIS"])
+        let medianEccentricity = doubleValue(headers, keys: ["MEDECCEN"])
+
         return FrameArchiveMetadata(
             objectName: objectName,
             ra: ra, dec: dec,
@@ -133,7 +144,11 @@ enum FITSHeaderReader {
             sessionBeg: sessionBeg,
             sessionEnd: sessionEnd,
             temperatureMin: temperatureMin,
-            temperatureMax: temperatureMax
+            temperatureMax: temperatureMax,
+            starCount: starCount,
+            medianFWHM: medianFWHM,
+            backgroundNoise: backgroundNoise,
+            medianEccentricity: medianEccentricity
         )
     }
 

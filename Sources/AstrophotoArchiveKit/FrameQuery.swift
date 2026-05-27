@@ -24,6 +24,17 @@ public struct FrameQuery: Sendable {
     public var rejectionFilter: RejectionFilter = .excludeRejected
     public var limit: Int?
 
+    // MARK: - Quality filters (frames without quality data are excluded when any of these is set)
+
+    /// Only include frames whose median FWHM is ≤ this value (pixels).
+    public var maxFWHM: Double?
+    /// Only include frames with at least this many detected stars.
+    public var minStarCount: Int?
+    /// Only include frames whose background noise is ≤ this value (normalised 0–1).
+    public var maxBackgroundNoise: Double?
+    /// Only include frames whose mean star eccentricity is ≤ this value (0=circular, 1=line).
+    public var maxEccentricity: Double?
+
     public init() {}
 
     public struct ConeSearch: Sendable {

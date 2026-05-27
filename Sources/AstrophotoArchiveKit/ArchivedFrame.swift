@@ -46,6 +46,17 @@ public struct ArchivedFrame: Sendable, Identifiable {
     /// File creation date used for archive deduplication (DATE header → DATE-OBS → filesystem).
     public var fileDate: Date?
 
+    // MARK: - Quality metrics (populated by analysis pipelines or read from FITS headers)
+
+    /// Number of stars detected in this frame (populated by star_detection / optical_quality pipeline).
+    public var starCount: Int?
+    /// Median FWHM in pixels, averaged over major and minor axes (populated by star_detection pipeline).
+    public var medianFWHM: Double?
+    /// Background noise level, normalised 0–1 (populated by background_estimation pipeline or read from FITS header BACKNOIS).
+    public var backgroundNoise: Double?
+    /// Mean star eccentricity (0 = circular, 1 = line; populated by star_detection / frame_registration pipeline or read from FITS header MEDECCEN).
+    public var medianEccentricity: Double?
+
     public init(
         id: UUID, filePath: String, objectName: String?, ra: Double?, dec: Double?,
         healpixPixel: Int64?, frameType: String, filter: String?, camera: String?,
@@ -62,7 +73,11 @@ public struct ArchivedFrame: Sendable, Identifiable {
         sessionEnd: Date? = nil,
         temperatureMin: Double? = nil,
         temperatureMax: Double? = nil,
-        fileDate: Date? = nil
+        fileDate: Date? = nil,
+        starCount: Int? = nil,
+        medianFWHM: Double? = nil,
+        backgroundNoise: Double? = nil,
+        medianEccentricity: Double? = nil
     ) {
         self.id = id
         self.filePath = filePath
@@ -98,5 +113,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.temperatureMin = temperatureMin
         self.temperatureMax = temperatureMax
         self.fileDate = fileDate
+        self.starCount = starCount
+        self.medianFWHM = medianFWHM
+        self.backgroundNoise = backgroundNoise
+        self.medianEccentricity = medianEccentricity
     }
 }

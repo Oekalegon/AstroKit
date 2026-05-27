@@ -83,7 +83,11 @@ public actor Archive {
             sessionEnd: meta.sessionEnd,
             temperatureMin: meta.temperatureMin,
             temperatureMax: meta.temperatureMax,
-            fileDate: meta.fileDate
+            fileDate: meta.fileDate,
+            starCount: meta.starCount,
+            medianFWHM: meta.medianFWHM,
+            backgroundNoise: meta.backgroundNoise,
+            medianEccentricity: meta.medianEccentricity
         )
         let isNew = try await database.insertFrame(frame)
         if !isNew {
@@ -214,6 +218,35 @@ public actor Archive {
 
     public func statistics() async throws -> ArchiveStatistics {
         try await database.statistics(archiveRoot: configuration.rootURL)
+    }
+
+    // MARK: - Quality metrics
+
+    /// Updates quality metrics on an archived frame.
+    ///
+    /// Call this after running an analysis pipeline on the frame to persist the results.
+    /// Only non-nil values are written; existing metrics are preserved for omitted parameters.
+    ///
+    /// - Parameters:
+    ///   - id: The archive frame UUID.
+    ///   - starCount: Number of detected stars (from star_detection / optical_quality pipeline).
+    ///   - medianFWHM: Median FWHM in pixels, averaged over major and minor axes.
+    ///   - backgroundNoise: Normalised background noise level (0–1, from background_estimation pipeline).
+    ///   - medianEccentricity: Mean star eccentricity (0=circular, 1=line).
+    public func updateFrameQuality(
+        id: UUID,
+        starCount: Int? = nil,
+        medianFWHM: Double? = nil,
+        backgroundNoise: Double? = nil,
+        medianEccentricity: Double? = nil
+    ) async throws {
+        try await database.updateFrameQuality(
+            id: id,
+            starCount: starCount,
+            medianFWHM: medianFWHM,
+            backgroundNoise: backgroundNoise,
+            medianEccentricity: medianEccentricity
+        )
     }
 
     // MARK: - Rejection
