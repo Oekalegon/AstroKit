@@ -32,7 +32,7 @@ Add the following to your `claude_desktop_config.json` (usually at `~/Library/Ap
 }
 ```
 
-Restart Claude Desktop. The fifteen tools below will be available in every conversation.
+Restart Claude Desktop. The sixteen tools below will be available in every conversation.
 
 > **Archive tools** (`archive_*`) require `ASTROARCHIVE_PATH` to be set — either in the MCP server `env` block above or as a system environment variable.
 
@@ -280,6 +280,32 @@ archive_find(ra=202.47, dec=47.20, radius_deg=1.0)
 archive_find(stacked=true, limit=20)
 archive_find(rejected_only=true)
 ```
+
+---
+
+### `archive_recent`
+
+Lists the most recently archived frames, newest first. Useful for reviewing what was just added or produced by a pipeline run.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `limit` | integer | | Maximum number of frames to return (default: `15`) |
+
+Example:
+```
+archive_recent(limit=5)
+```
+
+Response:
+```
+Recently archived frames (5):
+  { id: A3F2B1C0-..., type: light, added: 2026-05-26 14:32, object: M51, filter: Hɑ, exp: 300s, date: 2026-05-26 14:30, file: M51_Ha_300s_018.fits }
+  { id: B4E3D2F1-..., type: light, added: 2026-05-26 14:32, object: M51, filter: Hɑ, exp: 300s, date: 2026-05-26 14:30, file: M51_Ha_300s_017.fits }
+  { id: C5F4E3D2-..., type: stacked, added: 2026-05-25 22:10, object: M51, filter: Hɑ, file: stacked.fits }
+  …
+```
+
+> The list is sorted by **archive ingestion time** (`added`), not by observation date. A freshly auto-archived pipeline result appears at the top even if the underlying light frames are weeks old.
 
 ---
 

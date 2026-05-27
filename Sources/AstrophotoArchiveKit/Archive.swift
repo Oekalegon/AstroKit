@@ -199,6 +199,12 @@ public actor Archive {
         try await database.frameByID(id)
     }
 
+    /// Returns the most recently archived frames, newest first.
+    /// - Parameter limit: Maximum number of frames to return (default 15).
+    public func recentFrames(limit: Int = 15) async throws -> [ArchivedFrame] {
+        try await database.recentFrames(limit: limit)
+    }
+
     /// Returns all archived objects with frame counts.
     public func listObjects() async throws -> [(name: String, count: Int)] {
         try await database.listObjects()
