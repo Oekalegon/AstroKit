@@ -145,6 +145,16 @@ actor ArchiveDatabase {
         // v13: mean star eccentricity — populated by star_detection / frame_registration pipelines
         // or read from the FITS header MEDECCEN on import.
         "ALTER TABLE frames ADD COLUMN median_eccentricity REAL;",
+        // v14: saturated star count (light frames) and hot pixel count (calibration frames).
+        // Populated by frame_quality and calibration_quality pipelines respectively, or read
+        // from FITS headers NSATSTAR / NHOTPIX.
+        // Note: background_noise semantics change with this release — frames analysed by the new
+        // frame_quality / calibration_quality pipelines store ADU values; older frames retain the
+        // legacy normalised 0–1 value.
+        """
+        ALTER TABLE frames ADD COLUMN saturated_star_count INTEGER;
+        ALTER TABLE frames ADD COLUMN hot_pixel_count INTEGER;
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -232,8 +242,9 @@ actor ArchiveDatabase {
          calibrated, stacked, stretched, processing_level, added_at, thumbnail,
          frame_signature, rejected, rejected_reason, position_angle, processing_run_id,
          session_beg, session_end, temperature_min, temperature_max,
-         star_count, median_fwhm, background_noise, median_eccentricity)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         star_count, median_fwhm, background_noise, median_eccentricity,
+         saturated_star_count, hot_pixel_count)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -282,6 +293,8 @@ actor ArchiveDatabase {
         bind(stmt, 36, frame.medianFWHM)
         bind(stmt, 37, frame.backgroundNoise)
         bind(stmt, 38, frame.medianEccentricity)
+        bind(stmt, 39, frame.saturatedStarCount.map { Int64($0) })
+        bind(stmt, 40, frame.hotPixelCount.map { Int64($0) })
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -452,15 +465,19 @@ actor ArchiveDatabase {
         starCount: Int?,
         medianFWHM: Double?,
         backgroundNoise: Double?,
-        medianEccentricity: Double? = nil
+        medianEccentricity: Double? = nil,
+        saturatedStarCount: Int? = nil,
+        hotPixelCount: Int? = nil
     ) throws {
         // Build SET clause dynamically so we never overwrite a metric with NULL.
         var setClauses: [String] = []
         var values: [Any] = []
-        if let v = starCount           { setClauses.append("star_count = ?");          values.append(Int64(v)) }
-        if let v = medianFWHM          { setClauses.append("median_fwhm = ?");         values.append(v) }
-        if let v = backgroundNoise     { setClauses.append("background_noise = ?");    values.append(v) }
-        if let v = medianEccentricity  { setClauses.append("median_eccentricity = ?"); values.append(v) }
+        if let v = starCount           { setClauses.append("star_count = ?");            values.append(Int64(v)) }
+        if let v = medianFWHM          { setClauses.append("median_fwhm = ?");           values.append(v) }
+        if let v = backgroundNoise     { setClauses.append("background_noise = ?");      values.append(v) }
+        if let v = medianEccentricity  { setClauses.append("median_eccentricity = ?");   values.append(v) }
+        if let v = saturatedStarCount  { setClauses.append("saturated_star_count = ?");  values.append(Int64(v)) }
+        if let v = hotPixelCount       { setClauses.append("hot_pixel_count = ?");       values.append(Int64(v)) }
         guard !setClauses.isEmpty else { return }
 
         let sql = "UPDATE frames SET \(setClauses.joined(separator: ", ")) WHERE id = ?"
@@ -893,7 +910,9 @@ actor ArchiveDatabase {
             starCount: sqlite3_column_type(stmt, 34) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 34)) : nil,
             medianFWHM: columnDouble(stmt, 35),
             backgroundNoise: columnDouble(stmt, 36),
-            medianEccentricity: columnDouble(stmt, 37)
+            medianEccentricity: columnDouble(stmt, 37),
+            saturatedStarCount: sqlite3_column_type(stmt, 38) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 38)) : nil,
+            hotPixelCount: sqlite3_column_type(stmt, 39) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 39)) : nil
         )
     }
 

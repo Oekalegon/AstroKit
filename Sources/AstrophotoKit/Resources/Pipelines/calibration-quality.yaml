@@ -1,0 +1,34 @@
+id: calibration_quality
+name: Calibration Quality Pipeline
+description: Evaluates quality of a calibration frame (bias, dark, or flat) by computing
+  mean level, noise sigma, and hot pixel count. Values are expressed in ADU when FITS
+  scale information is available. Results are automatically persisted to the archive
+  after the pipeline completes.
+
+steps:
+  - id: quality
+    type: calibration_quality
+    name: Calibration Quality
+    description: Samples pixel statistics and detects hot pixels in the calibration frame
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        description: The calibration frame to analyse (bias, dark, or flat)
+    parameters:
+      - name: hot_pixel_sigma
+        from: hot_pixel_sigma
+        default_value: 5.0
+        description: Sigma threshold above the mean for hot pixel detection
+      - name: sample_step
+        from: sample_step
+        default_value: 4
+        description: Pixel subsampling stride (1 = full frame, 4 = every 4th pixel in each axis)
+    outputs:
+      - name: calibration_quality
+        type: table
+        description: Quality summary — mean_level, noise_sigma, hot_pixel_count,
+          mean_level_adu and noise_sigma_adu (when FITS scale info is available)
+        metadata:
+          processing_stage: "quality_assessment"
+          table_type: "quality_summary"

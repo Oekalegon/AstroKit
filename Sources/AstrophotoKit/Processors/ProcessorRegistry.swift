@@ -128,6 +128,16 @@ public actor ProcessorRegistry {
         if implementations[frameStacking.id] == nil {
             register(frameStacking)
         }
+
+        let frameQuality = FrameQualityProcessor()
+        if implementations[frameQuality.id] == nil {
+            register(frameQuality)
+        }
+
+        let calibrationQuality = CalibrationQualityProcessor()
+        if implementations[calibrationQuality.id] == nil {
+            register(calibrationQuality)
+        }
     }
 
     /// Register a processor using its `id` property

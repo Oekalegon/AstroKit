@@ -180,6 +180,106 @@ extension AP {
                 }
             }
 
+            // Build a map of pipeline-level input names → expected DataType.
+            // Pipeline inputs are step dataInputs whose `from` field has no dot.
+            let pipelineInputTypeMap: [String: DataType] = Dictionary(
+                pipeline.steps
+                    .flatMap { $0.dataInputs }
+                    .filter { !$0.from.contains(".") }
+                    .map { ($0.from, $0.type) },
+                uniquingKeysWith: { first, _ in first }
+            )
+
+            // Detect if a FrameSet was supplied for an input that expects a single Frame.
+            // This happens when @frameset:UUID is passed to a pipeline like frame_quality that
+            // takes one frame at a time.  The PipelineRunner's DataStack type-checks inputs
+            // strictly, so a FrameSet would silently produce zero outputs.
+            // Fix: run the pipeline once per frame in the FrameSet.
+            var frameLoopName: String? = nil
+            var frameLoopItems: [Frame] = []
+            for (name, value) in pipelineInputs {
+                if let fs = value as? FrameSet, pipelineInputTypeMap[name] == .frame {
+                    frameLoopName = name
+                    frameLoopItems = fs.frames
+                    break
+                }
+            }
+
+            if let loopName = frameLoopName, !frameLoopItems.isEmpty {
+                if output != nil {
+                    throw ValidationError(
+                        "--output is not supported when running a pipeline on a frameset. " +
+                        "Run on individual frames to save results."
+                    )
+                }
+                if !json {
+                    print("Running '\(pipelineID)' on \(frameLoopItems.count) frame(s)…")
+                }
+                let start = Date()
+                var totalTables = 0, totalResultFrames = 0
+                var jsonRows: [[String: Any]] = []
+
+                for (idx, frame) in frameLoopItems.enumerated() {
+                    var perFrameInputs = pipelineInputs
+                    perFrameInputs[loopName] = frame
+
+                    let runner = PipelineRunner(pipeline: pipeline)
+                    let frameOutputs = try await runner.execute(
+                        inputs: perFrameInputs,
+                        parameters: parameters,
+                        device: device,
+                        commandQueue: commandQueue
+                    )
+
+                    let frameTables  = frameOutputs.compactMap { $0 as? TableData }.filter { $0.isInstantiated }
+                    let allFrames    = frameOutputs.compactMap { $0 as? Frame     }.filter { $0.isInstantiated }
+                    // Only archive frames from the last pipeline step; discard intermediates.
+                    let frameResults = terminalFrames(from: allFrames, pipeline: pipeline)
+                    totalTables      += frameTables.count
+                    totalResultFrames += frameResults.count
+
+                    if !frameResults.isEmpty {
+                        await autoArchiveResults(
+                            frames: frameResults,
+                            pipelineID: pipelineID,
+                            parameters: parameters,
+                            pipelineInputs: perFrameInputs,
+                            existingOutputPath: nil
+                        )
+                    }
+                    if !frameTables.isEmpty {
+                        await backUpdateQuality(tables: frameTables, pipelineInputs: perFrameInputs)
+                    }
+
+                    if json {
+                        var row: [String: Any] = ["frame_index": idx]
+                        for (i, table) in frameTables.enumerated() {
+                            if let d = tableToDict(table) { row["table_\(i)"] = d }
+                        }
+                        jsonRows.append(row)
+                    }
+                }
+
+                let elapsed = Date().timeIntervalSince(start)
+                if json {
+                    let result: [String: Any] = [
+                        "pipeline": pipelineID,
+                        "frame_count": frameLoopItems.count,
+                        "elapsed_seconds": elapsed,
+                        "frames": jsonRows
+                    ]
+                    if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted]),
+                       let str = String(data: data, encoding: .utf8) { print(str) }
+                } else {
+                    print(String(
+                        format: "Done in %.2fs — %d frame(s) processed, %d table(s) per frame.",
+                        elapsed, frameLoopItems.count,
+                        frameLoopItems.isEmpty ? 0 : totalTables / frameLoopItems.count
+                    ))
+                }
+                return
+            }
+
             if !json { print("Running '\(pipelineID)'…") }
 
             let start = Date()
@@ -237,10 +337,13 @@ extension AP {
                 }
             }
 
-            // Auto-archive result frames when an archive is configured.
-            if !frames.isEmpty {
+            // Auto-archive result frames from the LAST pipeline step only.
+            // Intermediate frames (blurred_frame, background_frame, etc.) are produced
+            // by earlier steps and must not be stored as archive entries.
+            let resultFrames = terminalFrames(from: frames, pipeline: pipeline)
+            if !resultFrames.isEmpty {
                 await autoArchiveResults(
-                    frames: frames,
+                    frames: resultFrames,
                     pipelineID: pipelineID,
                     parameters: parameters,
                     pipelineInputs: pipelineInputs,
@@ -280,6 +383,21 @@ extension AP {
         ///   is matched to an archive frame by its `file_path` column.
         /// - **Single-frame** (summary tables from star_detection / optical_quality / autofocus):
         ///   the aggregate result is applied to each archive frame found among `pipelineInputs`.
+        /// Returns only the frames produced by the last step of the pipeline.
+        /// Intermediate processing frames (blurred, background-subtracted, eroded, etc.)
+        /// are produced by earlier steps and should not be archived as result frames.
+        private func terminalFrames(from frames: [Frame], pipeline: Pipeline) -> [Frame] {
+            guard let lastStepID = pipeline.steps.last?.id else { return frames }
+            return frames.filter { frame in
+                guard let outputLink = frame.outputLink,
+                      case .output(_, _, _, let stepLinkID) = outputLink else { return false }
+                // stepLinkID is "stepId.outputName" or "stepId[n].outputName" for split steps.
+                let stepPart   = String(stepLinkID.split(separator: ".").first ?? Substring(stepLinkID))
+                let baseStepID = String(stepPart.split(separator: "[").first ?? Substring(stepPart))
+                return baseStepID == lastStepID
+            }
+        }
+
         private func backUpdateQuality(
             tables: [TableData],
             pipelineInputs: [String: Any]
@@ -316,7 +434,9 @@ extension AP {
 
             // 2. Single-frame path: summary tables from analysis pipelines.
             let metrics = extractGlobalQuality(from: tables)
-            guard metrics.starCount != nil || metrics.medianFWHM != nil || metrics.backgroundNoise != nil || metrics.medianEccentricity != nil else {
+            guard metrics.starCount != nil || metrics.medianFWHM != nil || metrics.backgroundNoise != nil
+                    || metrics.medianEccentricity != nil || metrics.saturatedStarCount != nil
+                    || metrics.hotPixelCount != nil else {
                 return
             }
 
@@ -337,14 +457,24 @@ extension AP {
                         starCount: metrics.starCount,
                         medianFWHM: metrics.medianFWHM,
                         backgroundNoise: metrics.backgroundNoise,
-                        medianEccentricity: metrics.medianEccentricity
+                        medianEccentricity: metrics.medianEccentricity,
+                        saturatedStarCount: metrics.saturatedStarCount,
+                        hotPixelCount: metrics.hotPixelCount
                     )
                     if !json {
                         var parts: [String] = []
                         if let v = metrics.starCount          { parts.append("stars: \(v)") }
+                        if let v = metrics.saturatedStarCount { parts.append("sat: \(v)") }
                         if let v = metrics.medianFWHM         { parts.append(String(format: "FWHM: %.2fpx", v)) }
-                        if let v = metrics.backgroundNoise    { parts.append(String(format: "bg: %.4f", v)) }
+                        if let v = metrics.backgroundNoise {
+                            if metrics.backgroundNoiseIsADU {
+                                parts.append(String(format: "bg: %.2f ADU", v))
+                            } else {
+                                parts.append(String(format: "bg: %.4f", v))
+                            }
+                        }
                         if let v = metrics.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
+                        if let v = metrics.hotPixelCount      { parts.append("hot_px: \(v)") }
                         print("Quality → \(af.id): \(parts.joined(separator: ", "))")
                     }
                 } catch {
@@ -383,41 +513,88 @@ extension AP {
         /// Extracts aggregate quality metrics from single-frame analysis pipeline output tables.
         private func extractGlobalQuality(
             from tables: [TableData]
-        ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, medianEccentricity: Double?) {
+        ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, backgroundNoiseIsADU: Bool, medianEccentricity: Double?, saturatedStarCount: Int?, hotPixelCount: Int?) {
             var starCount: Int? = nil
             var medianFWHM: Double? = nil
             var backgroundNoise: Double? = nil
+            var backgroundNoiseIsADU = false
             var medianEccentricity: Double? = nil
+            var saturatedStarCount: Int? = nil
+            var hotPixelCount: Int? = nil
 
             for table in tables {
                 guard let df = table.dataFrame else { continue }
                 let colNames = Set(df.columns.map { $0.name })
 
-                if colNames.contains("centroid_x") && colNames.contains("centroid_y") {
-                    starCount = df.rows.count
-                    let eccs = df.rows.compactMap { $0["eccentricity"] as? Double }.filter { !$0.isNaN }
-                    if !eccs.isEmpty { medianEccentricity = eccs.reduce(0, +) / Double(eccs.count) }
+                // frame_quality table — compact summary from FrameQualityProcessor.
+                if colNames.contains("star_count") && colNames.contains("saturated_star_count"),
+                   let row = df.rows.first {
+                    if let v = row["star_count"]           as? Int  { starCount = v }
+                    if let v = row["saturated_star_count"] as? Int  { saturatedStarCount = v }
+                    if let v = row["median_fwhm"]          as? Double, v > 0 { medianFWHM = v }
+                    if let v = row["median_eccentricity"]  as? Double { medianEccentricity = v }
+                    // Prefer ADU background over normalised; guard column existence first
+                    // because TabularData Row.subscript traps on missing columns.
+                    if colNames.contains("background_level_adu"),
+                       let v = row["background_level_adu"] as? Double {
+                        backgroundNoise = v; backgroundNoiseIsADU = true
+                    } else if let v = row["background_level"] as? Double {
+                        backgroundNoise = v
+                    }
                 }
+
+                // calibration_quality table — from CalibrationQualityProcessor.
+                if colNames.contains("noise_sigma") && colNames.contains("hot_pixel_count"),
+                   let row = df.rows.first {
+                    if let v = row["hot_pixel_count"] as? Int { hotPixelCount = v }
+                    if colNames.contains("noise_sigma_adu"),
+                       let v = row["noise_sigma_adu"] as? Double {
+                        backgroundNoise = v; backgroundNoiseIsADU = true
+                    } else if let v = row["noise_sigma"] as? Double {
+                        backgroundNoise = v
+                    }
+                }
+
+                // Legacy: per-star table (star_detection / optical_quality).
+                if colNames.contains("centroid_x") && colNames.contains("centroid_y") {
+                    if starCount == nil { starCount = df.rows.count }
+                    if medianEccentricity == nil {
+                        let eccs = df.rows.compactMap { $0["eccentricity"] as? Double }.filter { !$0.isNaN }
+                        if !eccs.isEmpty { medianEccentricity = eccs.reduce(0, +) / Double(eccs.count) }
+                    }
+                }
+                // Legacy: FWHM summary table (star_detection).
                 if colNames.contains("sigma_clipped_mean_fwhm_major"),
                    colNames.contains("sigma_clipped_mean_fwhm_minor"),
                    let row = df.rows.first,
                    let major = row["sigma_clipped_mean_fwhm_major"] as? Double,
                    let minor = row["sigma_clipped_mean_fwhm_minor"] as? Double,
-                   major > 0 {
+                   major > 0, medianFWHM == nil {
                     medianFWHM = (major + minor) / 2.0
                 }
+                // Legacy: background level table (background_estimation).
+                // Prefer ADU column when present (BackgroundEstimationProcessor emits
+                // background_level_adu whenever the frame has FITS scale info).
                 if colNames.contains("background_level"),
+                   !colNames.contains("star_count"),   // avoid double-counting frame_quality table
                    let row = df.rows.first,
-                   let level = row["background_level"] as? Double {
-                    backgroundNoise = level
+                   backgroundNoise == nil {
+                    if colNames.contains("background_level_adu"),
+                       let v = row["background_level_adu"] as? Double {
+                        backgroundNoise = v; backgroundNoiseIsADU = true
+                    } else if let v = row["background_level"] as? Double {
+                        backgroundNoise = v
+                    }
                 }
+                // Legacy: optical_quality summary eccentricity.
                 if colNames.contains("global_mean_eccentricity"),
                    let row = df.rows.first,
-                   let ecc = row["global_mean_eccentricity"] as? Double {
+                   let ecc = row["global_mean_eccentricity"] as? Double,
+                   medianEccentricity == nil {
                     medianEccentricity = ecc
                 }
             }
-            return (starCount, medianFWHM, backgroundNoise, medianEccentricity)
+            return (starCount, medianFWHM, backgroundNoise, backgroundNoiseIsADU, medianEccentricity, saturatedStarCount, hotPixelCount)
         }
 
         private func autoArchiveResults(

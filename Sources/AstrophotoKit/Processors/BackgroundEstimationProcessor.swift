@@ -16,7 +16,9 @@ public struct BackgroundEstimationProcessor: Processor {
     ///   - outputs: Dictionary containing:
     ///     - "background_frame" -> ProcessData (Frame, to be instantiated)
     ///     - "background_subtracted_frame" -> ProcessData (Frame, to be instantiated)
-    ///     - "background_level" -> ProcessData (TableData, to be instantiated)
+    ///     - "background_level" -> ProcessData (TableData, to be instantiated).
+    ///       Contains `background_level` (normalised 0–1) and, when the input frame
+    ///       carries FITS scale info, `background_level_adu` (in ADU).
     ///   - parameters: Dictionary (empty for this processor)
     ///   - device: Metal device for GPU operations
     ///   - commandQueue: Metal command queue for GPU operations
@@ -29,7 +31,7 @@ public struct BackgroundEstimationProcessor: Processor {
         commandQueue: MTLCommandQueue
     ) throws {
         // Validate input frame
-        let (_, inputTexture) = try ProcessorHelpers.validateInputFrame(from: inputs)
+        let (inputFrame, inputTexture) = try ProcessorHelpers.validateInputFrame(from: inputs)
 
         Logger.processor.debug(
             "Estimating background (width: \(inputTexture.width), height: \(inputTexture.height))"
@@ -184,6 +186,7 @@ public struct BackgroundEstimationProcessor: Processor {
 
         // Calculate average background level and update outputs
         try finalizeOutputs(
+            inputFrame: inputFrame,
             backgroundTexture: backgroundTexture,
             subtractedTexture: subtractedTexture,
             outputs: &outputs,
@@ -358,8 +361,11 @@ public struct BackgroundEstimationProcessor: Processor {
         try ProcessorHelpers.executeCommandBuffer(commandBuffer)
     }
 
-    /// Finalize outputs by calculating background level and updating output frames
+    /// Finalize outputs by calculating background level and updating output frames.
+    /// Writes `background_level` (normalised 0–1) and, when FITS scale information
+    /// is available on `inputFrame`, also writes `background_level_adu` in ADU.
     /// - Parameters:
+    ///   - inputFrame: The original input frame (for FITS scale info).
     ///   - backgroundTexture: The background texture
     ///   - subtractedTexture: The background-subtracted texture
     ///   - outputs: Dictionary of processor outputs (inout)
@@ -367,6 +373,7 @@ public struct BackgroundEstimationProcessor: Processor {
     ///   - commandQueue: Metal command queue
     /// - Throws: ProcessorExecutionError if execution fails
     private func finalizeOutputs(
+        inputFrame: Frame,
         backgroundTexture: MTLTexture,
         subtractedTexture: MTLTexture,
         outputs: inout [String: ProcessData],
@@ -397,11 +404,15 @@ public struct BackgroundEstimationProcessor: Processor {
         if var backgroundLevelTable = outputs["background_level"] as? TableData {
             var dataFrame = DataFrame()
             dataFrame.append(column: Column(name: "background_level", contents: [backgroundLevel]))
+            if let adu = inputFrame.toADU(backgroundLevel) {
+                dataFrame.append(column: Column(name: "background_level_adu", contents: [adu]))
+            }
             backgroundLevelTable.dataFrame = dataFrame
             outputs["background_level"] = backgroundLevelTable
         }
 
-        Logger.processor.info("Background estimation completed (level: \(backgroundLevel))")
+        let aduInfo = inputFrame.toADU(backgroundLevel).map { String(format: " (%.1f ADU)", $0) } ?? ""
+        Logger.processor.info("Background estimation completed (level: \(backgroundLevel)\(aduInfo))")
     }
 
     /// Calculate progressive window sizes for multi-pass approach
