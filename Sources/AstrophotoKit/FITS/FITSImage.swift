@@ -261,11 +261,17 @@ extension FITSFile {
             throw FITSFileError.readError(status: status, message: errorString)
         }
         
-        // Read each keyword
+        // Read each keyword.
+        // Buffer sizes follow CFITSIO constants:
+        //   FLEN_KEYWORD = 75  (HIERARCH keyword names can be up to 74 chars + null)
+        //   FLEN_VALUE   = 71  (value up to 70 chars + null)
+        //   FLEN_COMMENT = 73  (comment up to 72 chars + null)
+        // Using 9 for the keyname buffer is only safe for standard 8-char keywords;
+        // HIERARCH keywords overflow a 9-byte buffer and corrupt the null terminator.
         for i in 1...nkeys {
-            var keyname = [CChar](repeating: 0, count: 9)  // FITS keyword names are 8 chars + null
-            var value = [CChar](repeating: 0, count: 71)   // FITS values can be up to 70 chars
-            var comment = [CChar](repeating: 0, count: 73) // Comments can be up to 72 chars
+            var keyname = [CChar](repeating: 0, count: 75)  // FLEN_KEYWORD: HIERARCH names up to 74 chars
+            var value = [CChar](repeating: 0, count: 71)    // FLEN_VALUE
+            var comment = [CChar](repeating: 0, count: 73)  // FLEN_COMMENT
             
             _ = readKeyAtIndex(file, i, &keyname, &value, &comment, &status)
             

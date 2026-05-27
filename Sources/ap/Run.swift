@@ -98,7 +98,8 @@ extension AP {
 
             // Parse --input args: collect multiple paths per named input.
             // A path may be a directory (expanded to FITS files), @frameset:UUID|name, or @frame:UUID.
-            var inputPaths: [String: [String]] = [:]
+            // Tuple carries an optional egain from the archive (injected when FITS header lacks EGAIN).
+            var inputPaths: [String: [(path: String, egain: Double?)]] = [:]
             for raw in input {
                 let (name, token): (String, String)
                 if raw.hasPrefix("@frameset:") || raw.hasPrefix("@frame:") {
@@ -125,14 +126,15 @@ extension AP {
 
                 if token.hasPrefix("@frameset:") {
                     let ref = String(token.dropFirst("@frameset:".count))
-                    let paths = try await archiveFrameSetPaths(ref: ref)
-                    inputPaths[name, default: []].append(contentsOf: paths)
+                    let entries = try await archiveFrameSetPaths(ref: ref)
+                    inputPaths[name, default: []].append(contentsOf: entries)
                 } else if token.hasPrefix("@frame:") {
                     let ref = String(token.dropFirst("@frame:".count))
-                    let path = try await archiveFramePath(ref: ref)
-                    inputPaths[name, default: []].append(path)
+                    let entry = try await archiveFramePath(ref: ref)
+                    inputPaths[name, default: []].append(entry)
                 } else {
-                    inputPaths[name, default: []].append(contentsOf: try fitsFiles(at: token))
+                    let paths = try fitsFiles(at: token)
+                    inputPaths[name, default: []].append(contentsOf: paths.map { ($0, nil) })
                 }
             }
             for name in expectedInputs where inputPaths[name] == nil {
@@ -162,18 +164,24 @@ extension AP {
             // Load FITS inputs — single path → Frame, multiple paths → FrameSet.
             // Paths were already validated and expanded by fitsFiles(at:).
             // Always create Frame (not raw FITSImage) so file paths and FITS metadata are preserved.
+            // When a frame came from an @frame:/@frameset: archive reference, inject egain from
+            // the archive DB if the FITS header did not carry it (e.g. PlayerOne cameras at fixed gain).
             var pipelineInputs: [String: Any] = [:]
-            for (name, paths) in inputPaths {
-                if paths.count == 1 {
-                    let fitsFile = try FITSFile(path: paths[0])
+            for (name, entries) in inputPaths {
+                if entries.count == 1 {
+                    let (path, archiveEgain) = entries[0]
+                    let fitsFile = try FITSFile(path: path)
                     let img = try fitsFile.readFITSImage()
-                    pipelineInputs[name] = try Frame(fitsImage: img, device: device, filePath: paths[0])
+                    var frame = try Frame(fitsImage: img, device: device, filePath: path)
+                    if let eg = archiveEgain { frame.injectEgainIfMissing(eg) }
+                    pipelineInputs[name] = frame
                 } else {
                     var frames: [Frame] = []
-                    for path in paths {
+                    for (path, archiveEgain) in entries {
                         let fitsFile = try FITSFile(path: path)
                         let img = try fitsFile.readFITSImage()
-                        let frame = try Frame(fitsImage: img, device: device, filePath: path)
+                        var frame = try Frame(fitsImage: img, device: device, filePath: path)
+                        if let eg = archiveEgain { frame.injectEgainIfMissing(eg) }
                         frames.append(frame)
                     }
                     pipelineInputs[name] = FrameSet(frames: frames, outputProcess: nil, inputProcesses: [])
@@ -459,14 +467,17 @@ extension AP {
                         backgroundNoise: metrics.backgroundNoise,
                         medianEccentricity: metrics.medianEccentricity,
                         saturatedStarCount: metrics.saturatedStarCount,
-                        hotPixelCount: metrics.hotPixelCount
+                        hotPixelCount: metrics.hotPixelCount,
+                        backgroundNoiseElectrons: metrics.backgroundNoiseElectrons
                     )
                     if !json {
                         var parts: [String] = []
                         if let v = metrics.starCount          { parts.append("stars: \(v)") }
                         if let v = metrics.saturatedStarCount { parts.append("sat: \(v)") }
                         if let v = metrics.medianFWHM         { parts.append(String(format: "FWHM: %.2fpx", v)) }
-                        if let v = metrics.backgroundNoise {
+                        if let v = metrics.backgroundNoiseElectrons {
+                            parts.append(String(format: "bg: %.2f e⁻", v))
+                        } else if let v = metrics.backgroundNoise {
                             if metrics.backgroundNoiseIsADU {
                                 parts.append(String(format: "bg: %.2f ADU", v))
                             } else {
@@ -513,11 +524,12 @@ extension AP {
         /// Extracts aggregate quality metrics from single-frame analysis pipeline output tables.
         private func extractGlobalQuality(
             from tables: [TableData]
-        ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, backgroundNoiseIsADU: Bool, medianEccentricity: Double?, saturatedStarCount: Int?, hotPixelCount: Int?) {
+        ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, backgroundNoiseIsADU: Bool, backgroundNoiseElectrons: Double?, medianEccentricity: Double?, saturatedStarCount: Int?, hotPixelCount: Int?) {
             var starCount: Int? = nil
             var medianFWHM: Double? = nil
             var backgroundNoise: Double? = nil
             var backgroundNoiseIsADU = false
+            var backgroundNoiseElectrons: Double? = nil
             var medianEccentricity: Double? = nil
             var saturatedStarCount: Int? = nil
             var hotPixelCount: Int? = nil
@@ -541,6 +553,10 @@ extension AP {
                     } else if let v = row["background_level"] as? Double {
                         backgroundNoise = v
                     }
+                    if colNames.contains("background_level_electrons"),
+                       let v = row["background_level_electrons"] as? Double {
+                        backgroundNoiseElectrons = v
+                    }
                 }
 
                 // calibration_quality table — from CalibrationQualityProcessor.
@@ -552,6 +568,10 @@ extension AP {
                         backgroundNoise = v; backgroundNoiseIsADU = true
                     } else if let v = row["noise_sigma"] as? Double {
                         backgroundNoise = v
+                    }
+                    if colNames.contains("noise_sigma_electrons"),
+                       let v = row["noise_sigma_electrons"] as? Double {
+                        backgroundNoiseElectrons = v
                     }
                 }
 
@@ -594,7 +614,7 @@ extension AP {
                     medianEccentricity = ecc
                 }
             }
-            return (starCount, medianFWHM, backgroundNoise, backgroundNoiseIsADU, medianEccentricity, saturatedStarCount, hotPixelCount)
+            return (starCount, medianFWHM, backgroundNoise, backgroundNoiseIsADU, backgroundNoiseElectrons, medianEccentricity, saturatedStarCount, hotPixelCount)
         }
 
         private func autoArchiveResults(
@@ -740,7 +760,7 @@ extension AP {
             }
         }
 
-        private func archiveFramePath(ref: String) async throws -> String {
+        private func archiveFramePath(ref: String) async throws -> (path: String, egain: Double?) {
             guard let uuid = UUID(uuidString: ref) else {
                 throw ValidationError("@frame: reference must be a valid UUID: '\(ref)'.")
             }
@@ -749,10 +769,10 @@ extension AP {
             guard let frame = try await archive.frame(id: uuid) else {
                 throw ValidationError("No archive frame found with id '\(ref)'.")
             }
-            return frame.filePath
+            return (frame.filePath, frame.egain)
         }
 
-        private func archiveFrameSetPaths(ref: String) async throws -> [String] {
+        private func archiveFrameSetPaths(ref: String) async throws -> [(path: String, egain: Double?)] {
             let config = try ArchiveConfiguration.fromEnvironment()
             let archive = try Archive(configuration: config)
 
@@ -777,7 +797,7 @@ extension AP {
             guard !frames.isEmpty else {
                 throw ValidationError("Archive frame set '\(ref)' contains no frames.")
             }
-            return frames.map { $0.filePath }
+            return frames.map { ($0.filePath, $0.egain) }
         }
 
         private func tableToDict(_ table: TableData) -> [String: Any]? {

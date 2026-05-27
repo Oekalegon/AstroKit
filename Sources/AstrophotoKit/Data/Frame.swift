@@ -62,9 +62,9 @@ public struct Frame: ProcessData {
     }
 
     /// The metadata for this frame.
-    /// 
+    ///
     /// The metadata is a dictionary of frame metadata keys and values.
-    private let metadata: [FrameMetadataKey: Any]
+    private var metadata: [FrameMetadataKey: Any]
 
     /// The type of frame. This is a metadata key but is required for frames.
     /// 
@@ -136,6 +136,13 @@ public struct Frame: ProcessData {
     /// camera-independent and physically meaningful.
     public var egain: Double? {
         return metadata(for: FrameMetadataKey.egain) as? Double
+    }
+
+    /// Injects an EGAIN value from an external source (e.g. the archive camera_profiles table)
+    /// when the FITS header did not carry an `EGAIN` keyword. Has no effect if egain is already set.
+    public mutating func injectEgainIfMissing(_ egain: Double) {
+        guard metadata[FrameMetadataKey.egain] == nil else { return }
+        metadata[FrameMetadataKey.egain] = egain
     }
 
     /// The canonical display name for the filter.

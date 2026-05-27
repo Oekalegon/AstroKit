@@ -172,6 +172,16 @@ actor ArchiveDatabase {
             PRIMARY KEY (camera_name, gain_setting)
         );
         """,
+        // v17: background_noise_electrons — background level / noise sigma in electrons.
+        // Derived from (background_noise - offset) × egain; only populated when EGAIN is available.
+        // Cross-camera comparable (independent of gain setting and bit depth).
+        // `offset` is the camera bias pedestal in ADU; defaults to 0 when absent.
+        // Backfill existing rows where both background_noise and egain are known.
+        """
+        ALTER TABLE frames ADD COLUMN background_noise_electrons REAL;
+        UPDATE frames SET background_noise_electrons = (background_noise - COALESCE(offset, 0)) * egain
+        WHERE background_noise IS NOT NULL AND egain IS NOT NULL;
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -260,8 +270,8 @@ actor ArchiveDatabase {
          frame_signature, rejected, rejected_reason, position_angle, processing_run_id,
          session_beg, session_end, temperature_min, temperature_max,
          star_count, median_fwhm, background_noise, median_eccentricity,
-         saturated_star_count, hot_pixel_count, egain)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         saturated_star_count, hot_pixel_count, egain, background_noise_electrons)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -313,6 +323,7 @@ actor ArchiveDatabase {
         bind(stmt, 39, frame.saturatedStarCount.map { Int64($0) })
         bind(stmt, 40, frame.hotPixelCount.map { Int64($0) })
         bind(stmt, 41, frame.egain)
+        bind(stmt, 42, frame.backgroundNoiseElectrons)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -485,17 +496,19 @@ actor ArchiveDatabase {
         backgroundNoise: Double?,
         medianEccentricity: Double? = nil,
         saturatedStarCount: Int? = nil,
-        hotPixelCount: Int? = nil
+        hotPixelCount: Int? = nil,
+        backgroundNoiseElectrons: Double? = nil
     ) throws {
         // Build SET clause dynamically so we never overwrite a metric with NULL.
         var setClauses: [String] = []
         var values: [Any] = []
-        if let v = starCount           { setClauses.append("star_count = ?");            values.append(Int64(v)) }
-        if let v = medianFWHM          { setClauses.append("median_fwhm = ?");           values.append(v) }
-        if let v = backgroundNoise     { setClauses.append("background_noise = ?");      values.append(v) }
-        if let v = medianEccentricity  { setClauses.append("median_eccentricity = ?");   values.append(v) }
-        if let v = saturatedStarCount  { setClauses.append("saturated_star_count = ?");  values.append(Int64(v)) }
-        if let v = hotPixelCount       { setClauses.append("hot_pixel_count = ?");       values.append(Int64(v)) }
+        if let v = starCount                 { setClauses.append("star_count = ?");                    values.append(Int64(v)) }
+        if let v = medianFWHM                { setClauses.append("median_fwhm = ?");                   values.append(v) }
+        if let v = backgroundNoise           { setClauses.append("background_noise = ?");              values.append(v) }
+        if let v = medianEccentricity        { setClauses.append("median_eccentricity = ?");           values.append(v) }
+        if let v = saturatedStarCount        { setClauses.append("saturated_star_count = ?");          values.append(Int64(v)) }
+        if let v = hotPixelCount             { setClauses.append("hot_pixel_count = ?");               values.append(Int64(v)) }
+        if let v = backgroundNoiseElectrons  { setClauses.append("background_noise_electrons = ?");    values.append(v) }
         guard !setClauses.isEmpty else { return }
 
         let sql = "UPDATE frames SET \(setClauses.joined(separator: ", ")) WHERE id = ?"
@@ -967,7 +980,8 @@ actor ArchiveDatabase {
             medianEccentricity: columnDouble(stmt, 37),
             saturatedStarCount: sqlite3_column_type(stmt, 38) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 38)) : nil,
             hotPixelCount: sqlite3_column_type(stmt, 39) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 39)) : nil,
-            egain: columnDouble(stmt, 40)
+            egain: columnDouble(stmt, 40),
+            backgroundNoiseElectrons: columnDouble(stmt, 41)
         )
     }
 

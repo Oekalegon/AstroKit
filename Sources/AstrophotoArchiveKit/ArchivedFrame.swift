@@ -63,6 +63,10 @@ public struct ArchivedFrame: Sendable, Identifiable {
     /// Note: frames analysed with older pipelines (star_detection, optical_quality) store a normalised
     /// 0–1 value here; frames analysed with frame_quality or calibration_quality store ADU.
     public var backgroundNoise: Double?
+    /// Background level in electrons for light frames; noise sigma in electrons for calibration frames.
+    /// Derived from `backgroundNoise` × `egain`. Only populated when EGAIN is available.
+    /// Cross-camera comparable (independent of gain setting and bit depth).
+    public var backgroundNoiseElectrons: Double?
     /// Median star eccentricity (0 = circular, 1 = line; populated by frame_quality / star_detection
     /// / frame_registration pipeline or read from FITS header MEDECCEN).
     public var medianEccentricity: Double?
@@ -96,7 +100,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
         medianEccentricity: Double? = nil,
         saturatedStarCount: Int? = nil,
         hotPixelCount: Int? = nil,
-        egain: Double? = nil
+        egain: Double? = nil,
+        backgroundNoiseElectrons: Double? = nil
     ) {
         self.id = id
         self.filePath = filePath
@@ -139,5 +144,6 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.medianEccentricity = medianEccentricity
         self.saturatedStarCount = saturatedStarCount
         self.hotPixelCount = hotPixelCount
+        self.backgroundNoiseElectrons = backgroundNoiseElectrons
     }
 }

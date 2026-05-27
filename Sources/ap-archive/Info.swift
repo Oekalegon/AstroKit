@@ -64,6 +64,7 @@ struct Info: AsyncParsableCommand {
         if let v = f.camera      { lines.append(row("Camera",       v));                        hasCameraSection = true }
         if let v = f.gain        { lines.append(row("Gain",         String(format: "%.0f", v))); hasCameraSection = true }
         if let v = f.offset      { lines.append(row("Offset",       String(format: "%.0f", v))); hasCameraSection = true }
+        if let v = f.egain       { lines.append(row("EGAIN",        String(format: "%.4f e⁻/ADU", v))); hasCameraSection = true }
         if let lo = f.temperatureMin, let hi = f.temperatureMax, abs(hi - lo) > 0.05 {
             lines.append(row("Temperature",  String(format: "%.1f … %.1f °C", lo, hi))); hasCameraSection = true
         } else if let v = f.temperature {
@@ -96,14 +97,23 @@ struct Info: AsyncParsableCommand {
         lines.append(row("Added at",   iso.string(from: f.addedAt)))
         lines.append(row("File",       f.filePath))
 
-        if f.starCount != nil || f.medianFWHM != nil || f.medianEccentricity != nil || f.backgroundNoise != nil {
+        let hasQuality = f.starCount != nil || f.medianFWHM != nil || f.medianEccentricity != nil
+            || f.backgroundNoise != nil || f.saturatedStarCount != nil || f.hotPixelCount != nil
+        if hasQuality {
             lines.append("")
             lines.append("Quality metrics")
             lines.append(String(repeating: "─", count: 60))
-            if let v = f.starCount          { lines.append(row("Stars",        "\(v)")) }
+            if let v = f.starCount {
+                let satStr = f.saturatedStarCount.map { "  (\($0) saturated)" } ?? ""
+                lines.append(row("Stars", "\(v)\(satStr)"))
+            }
             if let v = f.medianFWHM         { lines.append(row("FWHM",         String(format: "%.2f px", v))) }
             if let v = f.medianEccentricity { lines.append(row("Eccentricity", String(format: "%.3f", v))) }
-            if let v = f.backgroundNoise    { lines.append(row("Bg. noise",    String(format: "%.4f", v))) }
+            if let v = f.backgroundNoise {
+                let eStr = f.backgroundNoiseElectrons.map { String(format: "  (%.2f e⁻)", $0) } ?? ""
+                lines.append(row("Bg. noise", String(format: "%.2f ADU\(eStr)", v)))
+            }
+            if let v = f.hotPixelCount      { lines.append(row("Hot pixels",   "≈\(v)")) }
         }
 
         if let (run, inputs) = provenance {
@@ -165,10 +175,14 @@ struct Info: AsyncParsableCommand {
         if let v = f.bitpix       { d["bitpix"]         = v }
         d["rejected"] = f.rejected
         if let v = f.rejectedReason { d["rejected_reason"] = v }
-        if let v = f.starCount          { d["star_count"]          = v }
-        if let v = f.medianFWHM         { d["median_fwhm"]         = v }
-        if let v = f.medianEccentricity { d["median_eccentricity"] = v }
-        if let v = f.backgroundNoise    { d["background_noise"]    = v }
+        if let v = f.egain                    { d["egain"]                       = v }
+        if let v = f.starCount                { d["star_count"]                  = v }
+        if let v = f.saturatedStarCount       { d["saturated_star_count"]        = v }
+        if let v = f.medianFWHM               { d["median_fwhm"]                 = v }
+        if let v = f.medianEccentricity       { d["median_eccentricity"]         = v }
+        if let v = f.backgroundNoise          { d["background_noise"]            = v }
+        if let v = f.backgroundNoiseElectrons { d["background_noise_electrons"]  = v }
+        if let v = f.hotPixelCount            { d["hot_pixel_count"]             = v }
 
         if let (run, inputs) = provenance {
             var runDict: [String: Any] = [

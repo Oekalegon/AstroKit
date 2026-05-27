@@ -262,6 +262,9 @@ public actor Archive {
     ///   - medianEccentricity: Median star eccentricity (0=circular, 1=line).
     ///   - saturatedStarCount: Count of saturated stars (peak ≥ 90 % full-scale).
     ///   - hotPixelCount: Approximate count of hot pixels (calibration frames only).
+    ///   - backgroundNoiseElectrons: Background level in electrons (light frames) or noise sigma
+    ///     in electrons (calibration frames). Derived from backgroundNoise × egain. Only populated
+    ///     when EGAIN is available. Cross-camera comparable.
     public func updateFrameQuality(
         id: UUID,
         starCount: Int? = nil,
@@ -269,7 +272,8 @@ public actor Archive {
         backgroundNoise: Double? = nil,
         medianEccentricity: Double? = nil,
         saturatedStarCount: Int? = nil,
-        hotPixelCount: Int? = nil
+        hotPixelCount: Int? = nil,
+        backgroundNoiseElectrons: Double? = nil
     ) async throws {
         try await database.updateFrameQuality(
             id: id,
@@ -278,7 +282,8 @@ public actor Archive {
             backgroundNoise: backgroundNoise,
             medianEccentricity: medianEccentricity,
             saturatedStarCount: saturatedStarCount,
-            hotPixelCount: hotPixelCount
+            hotPixelCount: hotPixelCount,
+            backgroundNoiseElectrons: backgroundNoiseElectrons
         )
     }
 
