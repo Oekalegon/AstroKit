@@ -16,8 +16,14 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var temperature: Double?     // sensor °C
     public var timestamp: Date?
     public var exposureTime: Double?    // seconds
+    /// Camera gain setting (FITS `GAIN` keyword). Dimensionless; camera-model-specific.
+    /// Not the same as `egain` — see that property for the physical conversion factor.
     public var gain: Double?
     public var offset: Double?
+    /// Electron conversion factor in e⁻/ADU (FITS `EGAIN` keyword).
+    /// Use this with `offset` to convert raw ADU values to electrons:
+    /// `electrons = (adu - offset) × egain`.
+    public var egain: Double?
     public var width: Int?
     public var height: Int?
     public var bitpix: Int?
@@ -57,6 +63,10 @@ public struct ArchivedFrame: Sendable, Identifiable {
     /// Note: frames analysed with older pipelines (star_detection, optical_quality) store a normalised
     /// 0–1 value here; frames analysed with frame_quality or calibration_quality store ADU.
     public var backgroundNoise: Double?
+    /// Background level in electrons for light frames; noise sigma in electrons for calibration frames.
+    /// Derived from `backgroundNoise` × `egain`. Only populated when EGAIN is available.
+    /// Cross-camera comparable (independent of gain setting and bit depth).
+    public var backgroundNoiseElectrons: Double?
     /// Median star eccentricity (0 = circular, 1 = line; populated by frame_quality / star_detection
     /// / frame_registration pipeline or read from FITS header MEDECCEN).
     public var medianEccentricity: Double?
@@ -89,7 +99,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
         backgroundNoise: Double? = nil,
         medianEccentricity: Double? = nil,
         saturatedStarCount: Int? = nil,
-        hotPixelCount: Int? = nil
+        hotPixelCount: Int? = nil,
+        egain: Double? = nil,
+        backgroundNoiseElectrons: Double? = nil
     ) {
         self.id = id
         self.filePath = filePath
@@ -107,6 +119,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.exposureTime = exposureTime
         self.gain = gain
         self.offset = offset
+        self.egain = egain
         self.width = width
         self.height = height
         self.bitpix = bitpix
@@ -131,5 +144,6 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.medianEccentricity = medianEccentricity
         self.saturatedStarCount = saturatedStarCount
         self.hotPixelCount = hotPixelCount
+        self.backgroundNoiseElectrons = backgroundNoiseElectrons
     }
 }

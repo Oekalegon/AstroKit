@@ -38,8 +38,12 @@ import os
 /// | noise_sigma               | Double | Pixel std-dev, normalised 0–1.                      |
 /// | hot_pixel_count           | Int    | Estimated hot pixel count (scaled to full frame).   |
 /// | hot_pixel_sigma_threshold | Double | Sigma threshold used for hot pixel detection.       |
-/// | mean_level_adu            | Double | Mean level in ADU (when FITS scale info available). |
-/// | noise_sigma_adu           | Double | Noise sigma in ADU (scale only, no offset).         |
+/// | mean_level_adu            | Double | Mean level in ADU (when FITS scale info available).        |
+/// | noise_sigma_adu           | Double | Noise sigma in ADU (scale only, no offset).                |
+/// | mean_level_electrons      | Double | Mean level in electrons = (ADU−offset)×EGAIN (when EGAIN  |
+/// |                           |        | available). Cross-camera comparable.                       |
+/// | noise_sigma_electrons     | Double | Noise sigma in electrons = sigma_ADU×EGAIN (when EGAIN    |
+/// |                           |        | available). Offset cancels in a difference.                |
 public struct CalibrationQualityProcessor: Processor {
 
     public var id: String { "calibration_quality" }
@@ -99,10 +103,20 @@ public struct CalibrationQualityProcessor: Processor {
             return sigma * (maxVal - minVal)
         }()
 
+        // Electron conversion when EGAIN is available — cross-camera comparable.
+        // Mean:  (adu - offset) × egain.  Sigma: scale-only (offset cancels in a difference).
+        let meanElectrons:  Double? = inputFrame.toElectrons(mean)
+        let sigmaElectrons: Double? = {
+            guard let eg = inputFrame.egain, let sigDelta = sigmaADU else { return nil }
+            return sigDelta * eg
+        }()
+
         let meanStr  = String(format: "%.4f", mean)
         let sigmaStr = String(format: "%.4f", sigma)
-        let aduInfo  = meanADU.map { String(format: " (%.1f ADU)", $0) } ?? ""
-        let sigmaAduInfo = sigmaADU.map { String(format: " (%.2f ADU)", $0) } ?? ""
+        let aduInfo  = meanElectrons.map { String(format: " (%.1f e⁻)", $0) }
+            ?? meanADU.map { String(format: " (%.1f ADU)", $0) } ?? ""
+        let sigmaAduInfo = sigmaElectrons.map { String(format: " (%.2f e⁻)", $0) }
+            ?? sigmaADU.map { String(format: " (%.2f ADU)", $0) } ?? ""
         Logger.processor.info(
             "CalibrationQualityProcessor: mean=\(meanStr)\(aduInfo), sigma=\(sigmaStr)\(sigmaAduInfo), hot_pixels≈\(hotPixelCount)"
         )
@@ -114,8 +128,10 @@ public struct CalibrationQualityProcessor: Processor {
         df.append(column: Column(name: "noise_sigma",               contents: [sigma]))
         df.append(column: Column(name: "hot_pixel_count",           contents: [hotPixelCount]))
         df.append(column: Column(name: "hot_pixel_sigma_threshold", contents: [hotPixelSigma]))
-        if let v = meanADU  { df.append(column: Column(name: "mean_level_adu",  contents: [v])) }
-        if let v = sigmaADU { df.append(column: Column(name: "noise_sigma_adu", contents: [v])) }
+        if let v = meanADU      { df.append(column: Column(name: "mean_level_adu",        contents: [v])) }
+        if let v = sigmaADU     { df.append(column: Column(name: "noise_sigma_adu",       contents: [v])) }
+        if let v = meanElectrons  { df.append(column: Column(name: "mean_level_electrons",  contents: [v])) }
+        if let v = sigmaElectrons { df.append(column: Column(name: "noise_sigma_electrons", contents: [v])) }
         table.dataFrame = df
         outputs["calibration_quality"] = table
     }

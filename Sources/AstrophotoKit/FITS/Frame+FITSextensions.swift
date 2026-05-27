@@ -64,14 +64,21 @@ extension Frame {
             if let v = fitsImage.metadata[key]?.intValue    { exposureTime = Double(v); break }
         }
 
-        // Extract camera gain. FITS integer and double values both appear in the wild.
+        // Extract camera gain setting (dimensionless value, e.g. 0–300 for ZWO cameras).
+        // GAIN and EGAIN are two distinct quantities:
+        //   GAIN  = camera gain setting (depends on camera model, not in physical units)
+        //   EGAIN = actual conversion factor in electrons per ADU (e⁻/ADU, a small positive real)
         var gain: Double? = nil
         if let v = fitsImage.metadata["GAIN"]?.doubleValue {
             gain = v
         } else if let v = fitsImage.metadata["GAIN"]?.intValue {
             gain = Double(v)
-        } else if let v = fitsImage.metadata["EGAIN"]?.doubleValue {
-            gain = v
+        }
+
+        // Extract electron conversion factor (e⁻/ADU) from the EGAIN keyword.
+        var egain: Double? = nil
+        if let v = fitsImage.metadata["EGAIN"]?.doubleValue {
+            egain = v
         }
 
         // Extract camera offset / bias pedestal.
@@ -100,7 +107,8 @@ extension Frame {
             offset: offset,
             filterName: filterName,
             fitsMinValue: Double(fitsImage.originalMinValue),
-            fitsMaxValue: Double(fitsImage.originalMaxValue)
+            fitsMaxValue: Double(fitsImage.originalMaxValue),
+            egain: egain
         )
     }
 

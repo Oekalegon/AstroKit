@@ -16,6 +16,8 @@ struct FrameArchiveMetadata {
     var exposureTime: Double?
     var gain: Double?
     var offset: Double?
+    /// Electron conversion factor in e⁻/ADU (FITS `EGAIN` keyword).
+    var egain: Double?
     var width: Int
     var height: Int
     var bitpix: Int
@@ -97,7 +99,10 @@ enum FITSHeaderReader {
 
         let timestamp = parseTimestamp(headers)
         let exposureTime = doubleValue(headers, keys: ["EXPTIME", "EXPOSURE"])
+        // GAIN = camera gain setting (dimensionless, model-specific, e.g. 0–300 for ZWO cameras).
+        // EGAIN = electron conversion factor in e⁻/ADU — a distinct physical quantity.
         let gain   = doubleValue(headers, keys: ["GAIN"])
+        let egain  = doubleValue(headers, keys: ["EGAIN"])
         let offset = doubleValue(headers, keys: ["OFFSET", "PEDESTAL"])
 
         let calibrated = headers["CALIBRAT"]?.boolValue
@@ -139,6 +144,7 @@ enum FITSHeaderReader {
             exposureTime: exposureTime,
             gain: gain,
             offset: offset,
+            egain: egain,
             width: width, height: height, bitpix: bitpix,
             calibrated: calibrated,
             stacked: stacked,

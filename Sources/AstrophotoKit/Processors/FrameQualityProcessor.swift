@@ -32,8 +32,9 @@ import os
 /// | median_fwhm            | Double | Median FWHM in pixels (avg major+minor), unsaturated stars. |
 /// | median_eccentricity    | Double | Median eccentricity 0–1 (0=circular), unsaturated stars.    |
 /// | background_level       | Double | Normalised background level 0–1 (for backward compatibility). |
-/// | background_level_adu   | Double | Background level in ADU (only present when FITS scale info  |
-/// |                        |        | is available via `fitsMinValue`/`fitsMaxValue`).            |
+/// | background_level_adu       | Double | Background level in ADU (when FITS scale info available).      |
+/// | background_level_electrons | Double | Background in electrons = (ADU−offset)×EGAIN (when EGAIN       |
+/// |                            |        | is available). Cross-camera comparable.                        |
 public struct FrameQualityProcessor: Processor {
 
     public var id: String { "frame_quality" }
@@ -69,14 +70,15 @@ public struct FrameQualityProcessor: Processor {
         let metrics = computeMetrics(from: starDF)
 
         // Convert background level to ADU using FITS scale info when available.
-        // ADU = normalised × (fitsMax – fitsMin) + fitsMin
-        let backgroundLevelADU: Double? = backgroundLevelNorm.flatMap { level in
-            guard let minVal = inputFrame.fitsMinValue,
-                  let maxVal = inputFrame.fitsMaxValue else { return nil }
-            return level * (maxVal - minVal) + minVal
-        }
+        let backgroundLevelADU: Double? = backgroundLevelNorm.flatMap { inputFrame.toADU($0) }
 
-        let bgInfo = backgroundLevelADU.map { String(format: ", bg=%.1f ADU", $0) } ?? ""
+        // Convert to electrons when EGAIN is available — cross-camera comparable.
+        // Formula: (adu - offset) × egain  (offset defaults to 0 when absent).
+        let backgroundLevelElectrons: Double? = backgroundLevelNorm.flatMap { inputFrame.toElectrons($0) }
+
+        let bgInfo = backgroundLevelElectrons.map { String(format: ", bg=%.1f e⁻", $0) }
+            ?? backgroundLevelADU.map { String(format: ", bg=%.1f ADU", $0) }
+            ?? ""
         let fwhmStr = String(format: "%.2f", metrics.medianFWHM ?? 0)
         let eccStr  = String(format: "%.3f", metrics.medianEccentricity ?? 0)
         Logger.processor.info(
@@ -93,6 +95,9 @@ public struct FrameQualityProcessor: Processor {
         df.append(column: Column(name: "background_level",     contents: [backgroundLevelNorm ?? 0.0]))
         if let adu = backgroundLevelADU {
             df.append(column: Column(name: "background_level_adu", contents: [adu]))
+        }
+        if let electrons = backgroundLevelElectrons {
+            df.append(column: Column(name: "background_level_electrons", contents: [electrons]))
         }
         table.dataFrame = df
         outputs["frame_quality"] = table

@@ -34,6 +34,28 @@ public actor Archive {
 
         let meta = try FITSHeaderReader.read(from: url.path)
 
+        // Auto-learn: when a frame carries camera name + gain setting + EGAIN,
+        // record the mapping in camera_profiles so future frames without EGAIN
+        // can benefit from the lookup.
+        if let camera = meta.camera,
+           let gainSetting = meta.gain,
+           let knownEgain = meta.egain {
+            try? await database.upsertCameraProfile(
+                cameraName: camera, gainSetting: gainSetting, egain: knownEgain
+            )
+        }
+
+        // Auto-lookup: when EGAIN is absent but camera + gain are known,
+        // fill it from the camera_profiles table.
+        let resolvedEgain: Double?
+        if let e = meta.egain {
+            resolvedEgain = e
+        } else if let camera = meta.camera, let gainSetting = meta.gain {
+            resolvedEgain = try? await database.lookupEGain(cameraName: camera, gainSetting: gainSetting)
+        } else {
+            resolvedEgain = nil
+        }
+
         let healpixPixel: Int64? = {
             guard let ra = meta.ra, let dec = meta.dec else { return nil }
             let coord = AngularCoordinate(
@@ -60,7 +82,7 @@ public actor Archive {
             ra: meta.ra, dec: meta.dec,
             healpixPixel: healpixPixel,
             frameType: meta.frameType,
-            filter: meta.filter,
+            filter: ArchiveDatabase.canonicalFilterName(meta.filter),
             camera: meta.camera,
             focalLength: meta.focalLength,
             pixelScale: meta.pixelScale,
@@ -89,7 +111,8 @@ public actor Archive {
             backgroundNoise: meta.backgroundNoise,
             medianEccentricity: meta.medianEccentricity,
             saturatedStarCount: meta.saturatedStarCount,
-            hotPixelCount: meta.hotPixelCount
+            hotPixelCount: meta.hotPixelCount,
+            egain: resolvedEgain
         )
         let isNew = try await database.insertFrame(frame)
         if !isNew {
@@ -239,6 +262,9 @@ public actor Archive {
     ///   - medianEccentricity: Median star eccentricity (0=circular, 1=line).
     ///   - saturatedStarCount: Count of saturated stars (peak ≥ 90 % full-scale).
     ///   - hotPixelCount: Approximate count of hot pixels (calibration frames only).
+    ///   - backgroundNoiseElectrons: Background level in electrons (light frames) or noise sigma
+    ///     in electrons (calibration frames). Derived from backgroundNoise × egain. Only populated
+    ///     when EGAIN is available. Cross-camera comparable.
     public func updateFrameQuality(
         id: UUID,
         starCount: Int? = nil,
@@ -246,7 +272,8 @@ public actor Archive {
         backgroundNoise: Double? = nil,
         medianEccentricity: Double? = nil,
         saturatedStarCount: Int? = nil,
-        hotPixelCount: Int? = nil
+        hotPixelCount: Int? = nil,
+        backgroundNoiseElectrons: Double? = nil
     ) async throws {
         try await database.updateFrameQuality(
             id: id,
@@ -255,7 +282,8 @@ public actor Archive {
             backgroundNoise: backgroundNoise,
             medianEccentricity: medianEccentricity,
             saturatedStarCount: saturatedStarCount,
-            hotPixelCount: hotPixelCount
+            hotPixelCount: hotPixelCount,
+            backgroundNoiseElectrons: backgroundNoiseElectrons
         )
     }
 

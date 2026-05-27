@@ -155,6 +155,33 @@ actor ArchiveDatabase {
         ALTER TABLE frames ADD COLUMN saturated_star_count INTEGER;
         ALTER TABLE frames ADD COLUMN hot_pixel_count INTEGER;
         """,
+        // v15: EGAIN — separate electron conversion factor (e⁻/ADU) from the camera gain setting.
+        // GAIN (stored in the existing `gain` column) is the camera's gain *setting*, a dimensionless
+        // number (e.g. 0–300 for ZWO cameras). EGAIN is the physical factor that converts raw ADU
+        // to electrons: electrons = (adu - offset) × egain.
+        "ALTER TABLE frames ADD COLUMN egain REAL;",
+        // v16: camera_profiles — auto-learned GAIN-setting → EGAIN mapping per camera.
+        // Populated automatically during archiving when a frame carries INSTRUME + GAIN + EGAIN.
+        // Can also be populated manually for cameras that do not write EGAIN in their FITS headers.
+        """
+        CREATE TABLE IF NOT EXISTS camera_profiles (
+            camera_name  TEXT NOT NULL,
+            gain_setting REAL NOT NULL,
+            egain        REAL NOT NULL,
+            updated_at   TEXT NOT NULL,
+            PRIMARY KEY (camera_name, gain_setting)
+        );
+        """,
+        // v17: background_noise_electrons — background level / noise sigma in electrons.
+        // Derived from (background_noise - offset) × egain; only populated when EGAIN is available.
+        // Cross-camera comparable (independent of gain setting and bit depth).
+        // `offset` is the camera bias pedestal in ADU; defaults to 0 when absent.
+        // Backfill existing rows where both background_noise and egain are known.
+        """
+        ALTER TABLE frames ADD COLUMN background_noise_electrons REAL;
+        UPDATE frames SET background_noise_electrons = (background_noise - COALESCE(offset, 0)) * egain
+        WHERE background_noise IS NOT NULL AND egain IS NOT NULL;
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -243,8 +270,8 @@ actor ArchiveDatabase {
          frame_signature, rejected, rejected_reason, position_angle, processing_run_id,
          session_beg, session_end, temperature_min, temperature_max,
          star_count, median_fwhm, background_noise, median_eccentricity,
-         saturated_star_count, hot_pixel_count)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         saturated_star_count, hot_pixel_count, egain, background_noise_electrons)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -295,6 +322,8 @@ actor ArchiveDatabase {
         bind(stmt, 38, frame.medianEccentricity)
         bind(stmt, 39, frame.saturatedStarCount.map { Int64($0) })
         bind(stmt, 40, frame.hotPixelCount.map { Int64($0) })
+        bind(stmt, 41, frame.egain)
+        bind(stmt, 42, frame.backgroundNoiseElectrons)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -311,6 +340,19 @@ actor ArchiveDatabase {
             return "hɑ"
         default:
             return filter.lowercased()
+        }
+    }
+
+    /// Canonical display name for a filter string read from a FITS header.
+    /// Normalises all Hɑ aliases to the proper Unicode display form "Hɑ".
+    /// Returns `nil` for nil input; passes other filter strings through unchanged.
+    static func canonicalFilterName(_ filter: String?) -> String? {
+        guard let filter = filter else { return nil }
+        switch filter.lowercased() {
+        case "ha", "h-alpha", "h_alpha", "halpha", "h alpha", "hα", "hɑ":
+            return "Hɑ"
+        default:
+            return filter
         }
     }
 
@@ -467,17 +509,19 @@ actor ArchiveDatabase {
         backgroundNoise: Double?,
         medianEccentricity: Double? = nil,
         saturatedStarCount: Int? = nil,
-        hotPixelCount: Int? = nil
+        hotPixelCount: Int? = nil,
+        backgroundNoiseElectrons: Double? = nil
     ) throws {
         // Build SET clause dynamically so we never overwrite a metric with NULL.
         var setClauses: [String] = []
         var values: [Any] = []
-        if let v = starCount           { setClauses.append("star_count = ?");            values.append(Int64(v)) }
-        if let v = medianFWHM          { setClauses.append("median_fwhm = ?");           values.append(v) }
-        if let v = backgroundNoise     { setClauses.append("background_noise = ?");      values.append(v) }
-        if let v = medianEccentricity  { setClauses.append("median_eccentricity = ?");   values.append(v) }
-        if let v = saturatedStarCount  { setClauses.append("saturated_star_count = ?");  values.append(Int64(v)) }
-        if let v = hotPixelCount       { setClauses.append("hot_pixel_count = ?");       values.append(Int64(v)) }
+        if let v = starCount                 { setClauses.append("star_count = ?");                    values.append(Int64(v)) }
+        if let v = medianFWHM                { setClauses.append("median_fwhm = ?");                   values.append(v) }
+        if let v = backgroundNoise           { setClauses.append("background_noise = ?");              values.append(v) }
+        if let v = medianEccentricity        { setClauses.append("median_eccentricity = ?");           values.append(v) }
+        if let v = saturatedStarCount        { setClauses.append("saturated_star_count = ?");          values.append(Int64(v)) }
+        if let v = hotPixelCount             { setClauses.append("hot_pixel_count = ?");               values.append(Int64(v)) }
+        if let v = backgroundNoiseElectrons  { setClauses.append("background_noise_electrons = ?");    values.append(v) }
         guard !setClauses.isEmpty else { return }
 
         let sql = "UPDATE frames SET \(setClauses.joined(separator: ", ")) WHERE id = ?"
@@ -866,6 +910,42 @@ actor ArchiveDatabase {
 
     // MARK: - Row mapping
 
+    // MARK: - Camera Profiles
+
+    /// Inserts or updates a camera gain-setting → EGAIN mapping.
+    /// Called automatically during archiving when a frame carries INSTRUME + GAIN + EGAIN.
+    func upsertCameraProfile(cameraName: String, gainSetting: Double, egain: Double) throws {
+        let sql = """
+        INSERT INTO camera_profiles (camera_name, gain_setting, egain, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(camera_name, gain_setting) DO UPDATE SET
+            egain      = excluded.egain,
+            updated_at = excluded.updated_at
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        let iso = ISO8601DateFormatter()
+        bind(stmt, 1, cameraName)
+        bind(stmt, 2, gainSetting)
+        bind(stmt, 3, egain)
+        bind(stmt, 4, iso.string(from: Date()))
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
+    /// Returns the stored EGAIN (e⁻/ADU) for a camera + gain-setting pair, or `nil` if unknown.
+    func lookupEGain(cameraName: String, gainSetting: Double) throws -> Double? {
+        let stmt = try prepare(
+            "SELECT egain FROM camera_profiles WHERE camera_name = ? AND gain_setting = ? LIMIT 1"
+        )
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, cameraName)
+        bind(stmt, 2, gainSetting)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return columnDouble(stmt, 0)
+    }
+
     private func rowToFrame(_ stmt: OpaquePointer?) -> ArchivedFrame? {
         guard let stmt,
               let idStr = columnText(stmt, 0), let id = UUID(uuidString: idStr),
@@ -912,7 +992,9 @@ actor ArchiveDatabase {
             backgroundNoise: columnDouble(stmt, 36),
             medianEccentricity: columnDouble(stmt, 37),
             saturatedStarCount: sqlite3_column_type(stmt, 38) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 38)) : nil,
-            hotPixelCount: sqlite3_column_type(stmt, 39) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 39)) : nil
+            hotPixelCount: sqlite3_column_type(stmt, 39) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 39)) : nil,
+            egain: columnDouble(stmt, 40),
+            backgroundNoiseElectrons: columnDouble(stmt, 41)
         )
     }
 

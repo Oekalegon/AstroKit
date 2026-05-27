@@ -62,9 +62,9 @@ public struct Frame: ProcessData {
     }
 
     /// The metadata for this frame.
-    /// 
+    ///
     /// The metadata is a dictionary of frame metadata keys and values.
-    private let metadata: [FrameMetadataKey: Any]
+    private var metadata: [FrameMetadataKey: Any]
 
     /// The type of frame. This is a metadata key but is required for frames.
     /// 
@@ -120,6 +120,8 @@ public struct Frame: ProcessData {
     }
 
     /// The camera gain, if available in the FITS header.
+    /// This is the camera gain *setting* (e.g. 0–300 for ZWO cameras), not the
+    /// physical conversion factor. See `egain` for the e⁻/ADU conversion factor.
     public var gain: Double? {
         return metadata(for: FrameMetadataKey.gain) as? Double
     }
@@ -127,6 +129,20 @@ public struct Frame: ProcessData {
     /// The camera offset (bias pedestal), if available in the FITS header.
     public var offset: Double? {
         return metadata(for: FrameMetadataKey.offset) as? Double
+    }
+
+    /// The electron conversion factor in electrons per ADU (e⁻/ADU), from the FITS
+    /// `EGAIN` keyword. Use this to convert ADU values to electrons, which are
+    /// camera-independent and physically meaningful.
+    public var egain: Double? {
+        return metadata(for: FrameMetadataKey.egain) as? Double
+    }
+
+    /// Injects an EGAIN value from an external source (e.g. the archive camera_profiles table)
+    /// when the FITS header did not carry an `EGAIN` keyword. Has no effect if egain is already set.
+    public mutating func injectEgainIfMissing(_ egain: Double) {
+        guard metadata[FrameMetadataKey.egain] == nil else { return }
+        metadata[FrameMetadataKey.egain] = egain
     }
 
     /// The canonical display name for the filter.
@@ -151,9 +167,20 @@ public struct Frame: ProcessData {
 
     /// Converts a normalized [0, 1] pixel value back to the original ADU scale.
     /// Returns `nil` if the FITS min/max scale is not available.
+    /// Note: ADU values are camera-specific (depend on bit depth and gain setting).
+    /// Use `toElectrons(_:)` for cross-camera comparable values when `egain` is available.
     public func toADU(_ normalizedValue: Double) -> Double? {
         guard let minVal = fitsMinValue, let maxVal = fitsMaxValue else { return nil }
         return normalizedValue * (maxVal - minVal) + minVal
+    }
+
+    /// Converts a normalized [0, 1] pixel value to electrons using the EGAIN factor.
+    /// Formula: `(adu - offset) × egain`, where offset defaults to 0 when not available.
+    /// Returns `nil` if FITS scale info or EGAIN is not available.
+    public func toElectrons(_ normalizedValue: Double) -> Double? {
+        guard let adu = toADU(normalizedValue), let eg = egain else { return nil }
+        let off = offset ?? 0.0
+        return (adu - off) * eg
     }
 
     /// Create a new frame.
@@ -179,6 +206,7 @@ public struct Frame: ProcessData {
     /// - Parameter gain: The camera gain, if available.
     /// - Parameter offset: The camera offset, if available.
     /// - Parameter filterName: The canonical display name of the filter, if available.
+    /// - Parameter egain: The electron conversion factor in e⁻/ADU (FITS `EGAIN`), if available.
     public init(
         type: FrameType,
         filter: Filter = .none,
@@ -194,7 +222,8 @@ public struct Frame: ProcessData {
         offset: Double? = nil,
         filterName: String? = nil,
         fitsMinValue: Double? = nil,
-        fitsMaxValue: Double? = nil
+        fitsMaxValue: Double? = nil,
+        egain: Double? = nil
     ) {
         self.instantiatedAt = texture != nil ? Date() : nil
         self.texture = texture
@@ -211,6 +240,7 @@ public struct Frame: ProcessData {
         if let filterName   = filterName   { metadata[FrameMetadataKey.filterName]   = filterName }
         if let fitsMinValue = fitsMinValue { metadata[FrameMetadataKey.fitsMinValue] = fitsMinValue }
         if let fitsMaxValue = fitsMaxValue { metadata[FrameMetadataKey.fitsMaxValue] = fitsMaxValue }
+        if let egain        = egain        { metadata[FrameMetadataKey.egain]        = egain }
         self.metadata = metadata
         self.outputLink = outputProcess
         self.inputLinks = inputProcesses
@@ -298,10 +328,14 @@ public enum FrameMetadataKey: String, MetadataKey {
     case timestamp
 
     /// The camera gain used for the frame, if available in the FITS header.
+    /// This is the camera gain *setting* (FITS `GAIN`), not the e⁻/ADU factor. See `egain`.
     case gain
 
     /// The camera offset (bias pedestal) used for the frame, if available in the FITS header.
     case offset
+
+    /// The electron conversion factor in electrons per ADU (e⁻/ADU), from the FITS `EGAIN` keyword.
+    case egain
 
     /// The canonical display name of the filter (e.g. "Ha", "SII", "OIII", "NII").
     /// For known filters this is the normalised name; for unrecognised ones it is the
@@ -339,6 +373,8 @@ public enum FrameMetadataKey: String, MetadataKey {
         case .gain:
             return Double.self
         case .offset:
+            return Double.self
+        case .egain:
             return Double.self
         case .filterName:
             return String.self

@@ -340,6 +340,7 @@ struct ArchiveTools {
         if let v = f.camera      { lines.append(row("Camera",       v));                              hasCameraSection = true }
         if let v = f.gain        { lines.append(row("Gain",         String(format: "%.0f", v)));       hasCameraSection = true }
         if let v = f.offset      { lines.append(row("Offset",       String(format: "%.0f", v)));       hasCameraSection = true }
+        if let v = f.egain       { lines.append(row("EGAIN",        String(format: "%.4f e⁻/ADU", v))); hasCameraSection = true }
         if let lo = f.temperatureMin, let hi = f.temperatureMax, abs(hi - lo) > 0.05 {
             lines.append(row("Temperature",  String(format: "%.1f … %.1f °C", lo, hi)));    hasCameraSection = true
         } else if let v = f.temperature {
@@ -382,8 +383,11 @@ struct ArchiveTools {
             }
             if let v = f.medianFWHM         { lines.append(row("FWHM",         String(format: "%.2f px", v))) }
             if let v = f.medianEccentricity { lines.append(row("Eccentricity", String(format: "%.3f", v))) }
-            if let v = f.backgroundNoise    { lines.append(row("Bg. noise",    String(format: "%.2f ADU", v))) }
-            if let v = f.hotPixelCount      { lines.append(row("Hot pixels",   "\(v)")) }
+            if let v = f.backgroundNoise {
+                let eStr = f.backgroundNoiseElectrons.map { String(format: "  (%.2f e⁻)", $0) } ?? ""
+                lines.append(row("Bg. noise", String(format: "%.2f ADU\(eStr)", v)))
+            }
+            if let v = f.hotPixelCount      { lines.append(row("Hot pixels",   "≈\(v)")) }
         }
 
         lines.append(row("Added at",   iso.string(from: f.addedAt)))
