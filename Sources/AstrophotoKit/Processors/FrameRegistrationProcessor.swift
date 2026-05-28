@@ -56,7 +56,7 @@ private struct RegistrationRow {
 /// **Recommended alternative for very sparse fields:** `frame_registration_triangle`
 /// pipeline, which uses 3-star triangle patterns (more patterns from the same star count).
 public struct FrameRegistrationProcessor: Processor {
-    public var id: String { "frame_registration" }
+    public var id: String { "frame_registration_quad" }
     public init() {}
 
     public func execute(
@@ -90,8 +90,9 @@ public struct FrameRegistrationProcessor: Processor {
         let maxScaleDeviation   = parameters["max_scale_deviation"]?.doubleValue ?? 0.05
         let ratioThreshold      = parameters["ratio_threshold"]?.doubleValue  ?? 0.8
         let minSuccessRate      = parameters["min_success_rate"]?.doubleValue ?? 0.75
-        let maxFWHMRatio        = parameters["max_fwhm_ratio"]?.doubleValue   ?? 2.5
-        let maxEccentricity     = parameters["max_eccentricity"]?.doubleValue ?? 0.0
+        let maxFWHMRatio              = parameters["max_fwhm_ratio"]?.doubleValue              ?? 2.5
+        let maxEccentricity           = parameters["max_eccentricity"]?.doubleValue           ?? 0.0
+        let minCentroidSubpixelOffset = parameters["min_centroid_subpixel_offset"]?.doubleValue ?? 0.05
 
         // ── Star detection ───────────────────────────────────────────────────────
         var perFrame: [(quads: [QuadDescriptor], stars: [StarPoint], stats: FrameStats)] = []
@@ -100,7 +101,8 @@ public struct FrameRegistrationProcessor: Processor {
                 frame: frame, device: device, commandQueue: commandQueue,
                 blurRadius: blurRadius, thresholdValue: thresholdValue,
                 erosionKernel: erosionKernel, dilationKernel: dilationKernel,
-                maxFWHMRatio: maxFWHMRatio, maxEccentricity: maxEccentricity
+                maxFWHMRatio: maxFWHMRatio, maxEccentricity: maxEccentricity,
+                minCentroidSubpixelOffset: minCentroidSubpixelOffset
             )
             let (quads, stars) = buildQuadsAndStars(from: starsTable, maxStars: maxStars,
                                                     minDistancePct: minDistancePct, kNeighbors: kNeighbors,

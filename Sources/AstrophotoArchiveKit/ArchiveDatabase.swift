@@ -142,7 +142,7 @@ actor ArchiveDatabase {
         ALTER TABLE frames ADD COLUMN median_fwhm REAL;
         ALTER TABLE frames ADD COLUMN background_noise REAL;
         """,
-        // v13: mean star eccentricity — populated by star_detection / frame_registration pipelines
+        // v13: mean star eccentricity — populated by star_detection / frame_registration_quad pipelines
         // or read from the FITS header MEDECCEN on import.
         "ALTER TABLE frames ADD COLUMN median_eccentricity REAL;",
         // v14: saturated star count (light frames) and hot pixel count (calibration frames).

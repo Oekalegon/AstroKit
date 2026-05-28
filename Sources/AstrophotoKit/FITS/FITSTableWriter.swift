@@ -144,7 +144,7 @@ public struct FITSTableWriter {
     ///   - pixelData: Row-major float32 pixel values (row 0 = top).
     ///   - width: Image width in pixels.
     ///   - height: Image height in pixels.
-    ///   - registrationTable: DataFrame from the frame_registration step.
+    ///   - registrationTable: DataFrame from the frame_registration_quad step.
     ///   - method: Combine method used (e.g. "average", "median").
     ///   - normalisation: Normalisation method used.
     ///   - rejection: Pixel rejection method used.

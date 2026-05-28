@@ -64,7 +64,8 @@ enum RegistrationCore {
         erosionKernel: Int,
         dilationKernel: Int,
         maxFWHMRatio: Double,
-        maxEccentricity: Double = 0.0
+        maxEccentricity: Double = 0.0,
+        minCentroidSubpixelOffset: Double = 0.05
     ) throws -> (starsTable: TableData, skyBackground: Double, skyNoise: Double) {
 
         // 1. Grayscale
@@ -154,20 +155,30 @@ enum RegistrationCore {
 
         // Extended-source filter — removes nebula blobs / gradient edges before pattern matching.
         // Skipped when maxFWHMRatio == 0 (FWHM) or maxEccentricity == 0 (eccentricity).
-        let starsTable = filterStars(rawStarsTable, maxFWHMRatio: maxFWHMRatio, maxEccentricity: maxEccentricity)
+        let starsTable = filterStars(rawStarsTable, maxFWHMRatio: maxFWHMRatio,
+                                     maxEccentricity: maxEccentricity,
+                                     minCentroidSubpixelOffset: minCentroidSubpixelOffset)
 
         return (starsTable: starsTable, skyBackground: skyBackground, skyNoise: skyNoise)
     }
 
     // MARK: - Extended-source filter
 
-    /// Removes detections that fail the FWHM or eccentricity filter.
+    /// Removes detections that fail the FWHM, eccentricity, or centroid-subpixel-offset filter.
     ///
     /// - `maxFWHMRatio > 0`: rejects detections whose average FWHM exceeds `maxFWHMRatio × median FWHM`.
     /// - `maxEccentricity > 0`: rejects detections whose eccentricity exceeds `maxEccentricity` (0 = circle, 1 = line).
-    ///
-    /// Either filter can be disabled independently by passing 0.
-    static func filterStars(_ table: TableData, maxFWHMRatio: Double, maxEccentricity: Double = 0.0) -> TableData {
+    /// - `minCentroidSubpixelOffset > 0`: rejects detections whose centroid is within this many pixels of an
+    ///   integer coordinate on both axes. Hot pixels have centroids at exactly integer positions because the
+    ///   Gaussian blur is symmetric around the pixel; real stars land at arbitrary sub-pixel positions.
+    ///   The default (0.05 px) is conservative — the probability of a real star being falsely rejected is < 1%.
+    ///   Set to 0 to disable.
+    static func filterStars(
+        _ table: TableData,
+        maxFWHMRatio: Double,
+        maxEccentricity: Double = 0.0,
+        minCentroidSubpixelOffset: Double = 0.05
+    ) -> TableData {
         guard let df = table.dataFrame, !df.rows.isEmpty else { return table }
 
         var avgFWHMs = [Double](repeating: 0.0, count: df.rows.count)
@@ -193,13 +204,26 @@ enum RegistrationCore {
             } else {
                 eccOk = true
             }
-            return fwhmOk && eccOk
+            // Hot-pixel test: real stars land at arbitrary sub-pixel positions; a hot pixel, after
+            // symmetric Gaussian blur and connected-components centroiding, always lands within a
+            // fraction of a pixel of the hot pixel's integer coordinate.
+            let hotPixelOk: Bool
+            if minCentroidSubpixelOffset > 0,
+               let cx = df.rows[i]["centroid_x"] as? Double,
+               let cy = df.rows[i]["centroid_y"] as? Double {
+                let dx = abs(cx - cx.rounded())
+                let dy = abs(cy - cy.rounded())
+                hotPixelOk = max(dx, dy) >= minCentroidSubpixelOffset
+            } else {
+                hotPixelOk = true
+            }
+            return fwhmOk && eccOk && hotPixelOk
         }
 
         let removedCount = df.rows.count - validIndices.count
         guard removedCount > 0 else { return table }
 
-        Logger.processor.info("RegistrationCore: source filter removed \(removedCount) source(s) (FWHM threshold: \(maxAllowed == .infinity ? "off" : String(format: "%.1f", maxAllowed)) px, eccentricity threshold: \(maxEccentricity > 0 ? String(format: "%.2f", maxEccentricity) : "off"))")
+        Logger.processor.info("RegistrationCore: source filter removed \(removedCount) source(s) (FWHM threshold: \(maxAllowed == .infinity ? "off" : String(format: "%.1f", maxAllowed)) px, eccentricity threshold: \(maxEccentricity > 0 ? String(format: "%.2f", maxEccentricity) : "off"), hot-pixel offset threshold: \(minCentroidSubpixelOffset > 0 ? String(format: "%.2f", minCentroidSubpixelOffset) : "off") px)")
 
         let hasSaturated    = df.columns.contains { $0.name == "saturated" }
         let hasMajorAxis    = df.columns.contains { $0.name == "major_axis" }

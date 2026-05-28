@@ -43,13 +43,13 @@ struct Tools {
         ],
         [
             "name": "run_pipeline",
-            "description": "Execute an astrophoto pipeline on one or more FITS files and return the analysis results. Frames can be supplied from the archive via input_frameset_id. Use input_paths (array) for ad-hoc multi-frame pipelines such as frame_registration.",
+            "description": "Execute an astrophoto pipeline on one or more FITS files and return the analysis results. Frames can be supplied from the archive via input_frameset_id. Use input_paths (array) for ad-hoc multi-frame pipelines such as frame_registration_quad.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "pipeline_id": [
                         "type": "string",
-                        "description": "Pipeline ID to run (e.g. 'star_detection', 'frame_registration').",
+                        "description": "Pipeline ID to run (e.g. 'star_detection', 'frame_registration_quad').",
                     ],
                     "input_frameset_id": [
                         "type": "string",
@@ -66,7 +66,7 @@ struct Tools {
                     "input_paths": [
                         "type": "array",
                         "items": ["type": "string"],
-                        "description": "Array of absolute FITS file paths for multi-frame pipelines (e.g. frame_registration). Takes precedence over input_path.",
+                        "description": "Array of absolute FITS file paths for multi-frame pipelines (e.g. frame_registration_quad). Takes precedence over input_path.",
                     ],
                     "input_dir": [
                         "type": "string",
@@ -82,7 +82,7 @@ struct Tools {
                     ],
                     "output_path": [
                         "type": "string",
-                        "description": "Optional file path to save the output. For stacking pipelines (e.g. frame_stacking) this writes a FITS file containing the stacked image and registration table. For analysis pipelines (e.g. frame_registration) it writes the result table. Use .csv extension with output_format=csv for a plain-text table.",
+                        "description": "Optional file path to save the output. For stacking pipelines (e.g. frame_stacking) this writes a FITS file containing the stacked image and registration table. For analysis pipelines (e.g. frame_registration_quad) it writes the result table. Use .csv extension with output_format=csv for a plain-text table.",
                     ],
                     "output_format": [
                         "type": "string",
@@ -582,7 +582,7 @@ struct Tools {
     /// Extracts quality metrics from pipeline output tables and stores them on the input archive
     /// frame(s). Handles two cases:
     ///
-    /// **Per-frame** (frame_registration / frame_stacking): the registration table has one row per
+    /// **Per-frame** (frame_registration_quad / frame_stacking): the registration table has one row per
     /// input frame with `file_path`, `star_count`, and `median_fwhm` columns. Each row is matched
     /// directly to an archive frame by its file path.
     ///
@@ -598,7 +598,7 @@ struct Tools {
         guard let config = try? ArchiveConfiguration.fromEnvironment() else { return nil }
         guard let archive = try? Archive(configuration: config) else { return nil }
 
-        // 1. Per-frame path: registration table produced by frame_registration / frame_stacking.
+        // 1. Per-frame path: registration table produced by frame_registration_quad / frame_stacking.
         let perFrame = Self.extractPerFrameQuality(from: tables)
         if !perFrame.isEmpty {
             var notes: [String] = []
@@ -674,7 +674,7 @@ struct Tools {
     /// Extracts per-frame quality metrics from a registration table.
     ///
     /// Identified by having `file_path`, `median_fwhm`, and `star_count` columns (produced by
-    /// `FrameRegistrationProcessor` inside frame_registration and frame_stacking pipelines).
+    /// `FrameRegistrationProcessor` inside frame_registration_quad and frame_stacking pipelines).
     /// `sky_noise` (per-frame registration ADU value) is not mapped to `backgroundNoise` here;
     /// the stacking summary handles it separately.
     static func extractPerFrameQuality(

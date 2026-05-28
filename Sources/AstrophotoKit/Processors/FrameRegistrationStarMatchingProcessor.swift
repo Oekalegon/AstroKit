@@ -56,8 +56,9 @@ public struct FrameRegistrationStarMatchingProcessor: Processor {
         let minDistancePct      = parameters["min_distance_percent"]?.doubleValue ?? 1.0
         let maxScaleDeviation   = parameters["max_scale_deviation"]?.doubleValue  ?? 0.05
         let minSuccessRate      = parameters["min_success_rate"]?.doubleValue ?? 0.75
-        let maxFWHMRatio        = parameters["max_fwhm_ratio"]?.doubleValue   ?? 2.5
-        let maxEccentricity     = parameters["max_eccentricity"]?.doubleValue ?? 0.0
+        let maxFWHMRatio              = parameters["max_fwhm_ratio"]?.doubleValue              ?? 2.5
+        let maxEccentricity           = parameters["max_eccentricity"]?.doubleValue           ?? 0.0
+        let minCentroidSubpixelOffset = parameters["min_centroid_subpixel_offset"]?.doubleValue ?? 0.05
 
         // ── Star detection ───────────────────────────────────────────────────────
         var perFrame: [(stars: [StarPoint], stats: FrameStats)] = []
@@ -66,7 +67,8 @@ public struct FrameRegistrationStarMatchingProcessor: Processor {
                 frame: frame, device: device, commandQueue: commandQueue,
                 blurRadius: blurRadius, thresholdValue: thresholdValue,
                 erosionKernel: erosionKernel, dilationKernel: dilationKernel,
-                maxFWHMRatio: maxFWHMRatio, maxEccentricity: maxEccentricity
+                maxFWHMRatio: maxFWHMRatio, maxEccentricity: maxEccentricity,
+                minCentroidSubpixelOffset: minCentroidSubpixelOffset
             )
             let imageWidth  = Double(frame.texture?.width  ?? 1)
             let imageHeight = Double(frame.texture?.height ?? 1)
