@@ -411,6 +411,26 @@ enum RegistrationCore {
         return msg
     }
 
+    /// Builds an informative error message for star-matching registration failure.
+    static func buildStarMatchingFailureMessage(
+        successCount: Int,
+        total: Int,
+        successRate: Double,
+        minSuccessRate: Double,
+        failedCount: Int
+    ) -> String {
+        var msg = String(
+            format: "Star-matching registration failed: only %d of %d frames (%.0f%%) were " +
+                    "successfully registered (minimum required: %.0f%%). ",
+            successCount, total, successRate * 100, minSuccessRate * 100
+        )
+        msg += "\(failedCount) frame(s) had fewer than the required minimum of matched stars. "
+        msg += "The field may be too sparse or the star detection threshold too strict. " +
+               "Consider reducing threshold_value, increasing max_stars, or using " +
+               "plate-solving (e.g. ASTAP or Astrometry.net)."
+        return msg
+    }
+
     // MARK: - Least-squares similarity transform
     // Solves: x' = a·x − b·y + tx,  y' = b·x + a·y + ty
     //         where a = scale·cos θ,  b = scale·sin θ
@@ -486,33 +506,80 @@ enum RegistrationCore {
         return (bestInliers, bestTransform)
     }
 
-    // MARK: - Transform verification
+    // MARK: - Direct star-position matching
 
-    /// Verifies a computed transform by direct star-to-star proximity check.
+    /// Finds the best similarity transform by exhaustive star-correspondence search.
     ///
-    /// Applies `transform` to every reference star and counts how many land within
-    /// `threshold` pixels of any target star. This catches false-match consensus —
-    /// a common failure mode in sparse fields where many triangles share similar
-    /// descriptor values and collectively vote for a geometrically wrong transform.
+    /// For every possible (refStar, tgtStar) pairing, treats the implied translation
+    /// as a candidate and counts how many other reference stars map within
+    /// `inlierThreshold` pixels of any target star. The candidate with the most
+    /// inliers wins. The final transform is then refined with least-squares over
+    /// those inliers to recover rotation and scale in addition to translation.
     ///
-    /// A correct transform should map at least `minMatches` reference stars onto
-    /// target stars. A spurious near-zero transform will typically map zero, because
-    /// the target stars are actually offset by the true (unrecovered) displacement.
-    static func verifyTransform(
-        _ transform: SimilarityTransform,
+    /// This approach is robust to the false-match consensus that plagues descriptor-
+    /// based matching in sparse emission-line fields: a spurious near-zero translation
+    /// can only win if it actually maps most reference stars onto target stars, which
+    /// a real inter-session offset cannot do.
+    ///
+    /// Complexity: O(n_ref² × n_tgt) — fine for up to ~150 stars per frame on CPU.
+    /// Returns nil when fewer than `minInliers` stars match under the best candidate.
+    static func starMatchingRANSAC(
         refStars: [StarPoint],
         tgtStars: [StarPoint],
-        threshold: Double
-    ) -> Int {
-        let thr2 = threshold * threshold
-        return refStars.filter { ref in
-            let px = transform.a * ref.x - transform.b * ref.y + transform.tx
-            let py = transform.b * ref.x + transform.a * ref.y + transform.ty
-            return tgtStars.contains { tgt in
-                let dx = px - tgt.x, dy = py - tgt.y
-                return dx*dx + dy*dy < thr2
+        inlierThreshold: Double,
+        maxScaleDeviation: Double,
+        minInliers: Int
+    ) -> (pairs: [(ref: StarPoint, tgt: StarPoint)], transform: SimilarityTransform)? {
+        guard refStars.count >= 2, tgtStars.count >= 2 else { return nil }
+
+        let thr2 = inlierThreshold * inlierThreshold
+        var bestPairs: [(ref: StarPoint, tgt: StarPoint)] = []
+
+        // Phase 1 — translation search: try every (ri → tj) as a pure translation hypothesis.
+        for ri in refStars {
+            for tj in tgtStars {
+                let tx = tj.x - ri.x, ty = tj.y - ri.y
+                var pairs: [(ref: StarPoint, tgt: StarPoint)] = []
+                for rk in refStars {
+                    let px = rk.x + tx, py = rk.y + ty
+                    var bestD2 = thr2, bestTgt: StarPoint? = nil
+                    for tk in tgtStars {
+                        let dx = tk.x - px, dy = tk.y - py
+                        let d2 = dx*dx + dy*dy
+                        if d2 < bestD2 { bestD2 = d2; bestTgt = tk }
+                    }
+                    if let match = bestTgt { pairs.append((rk, match)) }
+                }
+                if pairs.count > bestPairs.count { bestPairs = pairs }
             }
-        }.count
+        }
+
+        guard bestPairs.count >= minInliers else { return nil }
+
+        // Phase 2 — refinement: fit full similarity transform on translation inliers,
+        // then re-collect inliers under the refined transform.
+        let (coarse, _) = leastSquaresSimilarity(pairs: bestPairs)
+        guard abs(coarse.scale - 1.0) <= maxScaleDeviation else { return nil }
+
+        var refinedPairs: [(ref: StarPoint, tgt: StarPoint)] = []
+        for ref in refStars {
+            let px = coarse.a * ref.x - coarse.b * ref.y + coarse.tx
+            let py = coarse.b * ref.x + coarse.a * ref.y + coarse.ty
+            var bestD2 = thr2, bestTgt: StarPoint? = nil
+            for tgt in tgtStars {
+                let dx = tgt.x - px, dy = tgt.y - py
+                let d2 = dx*dx + dy*dy
+                if d2 < bestD2 { bestD2 = d2; bestTgt = tgt }
+            }
+            if let match = bestTgt { refinedPairs.append((ref, match)) }
+        }
+
+        guard refinedPairs.count >= minInliers else { return nil }
+
+        let (refined, _) = leastSquaresSimilarity(pairs: refinedPairs)
+        guard abs(refined.scale - 1.0) <= maxScaleDeviation else { return nil }
+
+        return (refinedPairs, refined)
     }
 
     /// Euclidean residual of applying `t` to `ref` and comparing with `tgt`.

@@ -8,6 +8,7 @@ import os
 /// Accepted values for `registration_algorithm`:
 /// - `"quad"` (default) — 4-star patterns via `FrameRegistrationProcessor`
 /// - `"triangle"` — 3-star patterns via `FrameRegistrationTriangleProcessor`
+/// - `"stars"` — direct star-position matching via `FrameRegistrationStarMatchingProcessor`
 ///
 /// All other parameters are forwarded verbatim to the chosen processor, so the full
 /// parameter sets of both processors are accepted here.
@@ -28,6 +29,12 @@ public struct FrameRegistrationDispatchProcessor: Processor {
         case "triangle":
             Logger.processor.info("FrameRegistrationDispatch: using triangle algorithm")
             try FrameRegistrationTriangleProcessor().execute(
+                inputs: inputs, outputs: &outputs,
+                parameters: parameters, device: device, commandQueue: commandQueue
+            )
+        case "stars":
+            Logger.processor.info("FrameRegistrationDispatch: using star-matching algorithm")
+            try FrameRegistrationStarMatchingProcessor().execute(
                 inputs: inputs, outputs: &outputs,
                 parameters: parameters, device: device, commandQueue: commandQueue
             )

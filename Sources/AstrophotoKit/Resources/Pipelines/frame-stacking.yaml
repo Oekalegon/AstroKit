@@ -22,7 +22,7 @@ steps:
       - name: registration_algorithm
         from: registration_algorithm
         default_value: quad
-        description: "Registration algorithm: quad (4-star patterns, default) | triangle (3-star patterns, better for sparse fields)"
+        description: "Registration algorithm: quad (4-star patterns, default) | triangle (3-star patterns) | stars (direct position matching, most robust for sparse fields)"
       - name: reference_frame
         from: reference_frame
         default_value: -1
