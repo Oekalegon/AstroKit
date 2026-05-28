@@ -63,7 +63,8 @@ enum RegistrationCore {
         thresholdValue: Double,
         erosionKernel: Int,
         dilationKernel: Int,
-        maxFWHMRatio: Double
+        maxFWHMRatio: Double,
+        maxEccentricity: Double = 0.0
     ) throws -> (starsTable: TableData, skyBackground: Double, skyNoise: Double) {
 
         // 1. Grayscale
@@ -152,20 +153,21 @@ enum RegistrationCore {
         let skyNoise = sqrt(max(0.0, skyBackground - biasADU))
 
         // Extended-source filter — removes nebula blobs / gradient edges before pattern matching.
-        // Skipped when maxFWHMRatio == 0.
-        let starsTable = maxFWHMRatio > 0
-            ? filterStarsByFWHM(rawStarsTable, maxFWHMRatio: maxFWHMRatio)
-            : rawStarsTable
+        // Skipped when maxFWHMRatio == 0 (FWHM) or maxEccentricity == 0 (eccentricity).
+        let starsTable = filterStars(rawStarsTable, maxFWHMRatio: maxFWHMRatio, maxEccentricity: maxEccentricity)
 
         return (starsTable: starsTable, skyBackground: skyBackground, skyNoise: skyNoise)
     }
 
     // MARK: - Extended-source filter
 
-    /// Removes detections whose average FWHM exceeds `maxFWHMRatio × median FWHM`.
-    /// This rejects nebula blobs, diffuse emission edges, and other non-stellar sources
-    /// that would corrupt quad/triangle descriptors and cause false pattern matches.
-    static func filterStarsByFWHM(_ table: TableData, maxFWHMRatio: Double) -> TableData {
+    /// Removes detections that fail the FWHM or eccentricity filter.
+    ///
+    /// - `maxFWHMRatio > 0`: rejects detections whose average FWHM exceeds `maxFWHMRatio × median FWHM`.
+    /// - `maxEccentricity > 0`: rejects detections whose eccentricity exceeds `maxEccentricity` (0 = circle, 1 = line).
+    ///
+    /// Either filter can be disabled independently by passing 0.
+    static func filterStars(_ table: TableData, maxFWHMRatio: Double, maxEccentricity: Double = 0.0) -> TableData {
         guard let df = table.dataFrame, !df.rows.isEmpty else { return table }
 
         var avgFWHMs = [Double](repeating: 0.0, count: df.rows.count)
@@ -175,15 +177,29 @@ enum RegistrationCore {
             avgFWHMs[i] = (maj + min) / 2.0
         }
 
-        let med = median(avgFWHMs.filter { $0 > 0 })
-        guard med > 0 else { return table }
-        let maxAllowed = maxFWHMRatio * med
+        let maxAllowed: Double
+        if maxFWHMRatio > 0 {
+            let med = median(avgFWHMs.filter { $0 > 0 })
+            maxAllowed = med > 0 ? maxFWHMRatio * med : Double.infinity
+        } else {
+            maxAllowed = Double.infinity
+        }
 
-        let validIndices = avgFWHMs.indices.filter { avgFWHMs[$0] <= maxAllowed }
+        let validIndices = avgFWHMs.indices.filter { i in
+            let fwhmOk = avgFWHMs[i] <= maxAllowed
+            let eccOk: Bool
+            if maxEccentricity > 0, let ecc = df.rows[i]["eccentricity"] as? Double {
+                eccOk = ecc <= maxEccentricity
+            } else {
+                eccOk = true
+            }
+            return fwhmOk && eccOk
+        }
+
         let removedCount = df.rows.count - validIndices.count
         guard removedCount > 0 else { return table }
 
-        Logger.processor.info("RegistrationCore: FWHM filter removed \(removedCount) extended source(s) (threshold: \(maxAllowed, format: .fixed(precision: 1)) px, median: \(med, format: .fixed(precision: 1)) px)")
+        Logger.processor.info("RegistrationCore: source filter removed \(removedCount) source(s) (FWHM threshold: \(maxAllowed == .infinity ? "off" : String(format: "%.1f", maxAllowed)) px, eccentricity threshold: \(maxEccentricity > 0 ? String(format: "%.2f", maxEccentricity) : "off"))")
 
         let hasSaturated    = df.columns.contains { $0.name == "saturated" }
         let hasMajorAxis    = df.columns.contains { $0.name == "major_axis" }

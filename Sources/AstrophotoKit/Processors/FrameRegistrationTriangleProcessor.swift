@@ -86,6 +86,7 @@ public struct FrameRegistrationTriangleProcessor: Processor {
         let ratioThreshold      = parameters["ratio_threshold"]?.doubleValue  ?? 0.8
         let minSuccessRate      = parameters["min_success_rate"]?.doubleValue ?? 0.75
         let maxFWHMRatio        = parameters["max_fwhm_ratio"]?.doubleValue   ?? 2.5
+        let maxEccentricity     = parameters["max_eccentricity"]?.doubleValue ?? 0.0
 
         // ── Star detection ───────────────────────────────────────────────────────
         var perFrame: [(triangles: [TriangleDescriptor], stars: [StarPoint], stats: FrameStats)] = []
@@ -94,7 +95,7 @@ public struct FrameRegistrationTriangleProcessor: Processor {
                 frame: frame, device: device, commandQueue: commandQueue,
                 blurRadius: blurRadius, thresholdValue: thresholdValue,
                 erosionKernel: erosionKernel, dilationKernel: dilationKernel,
-                maxFWHMRatio: maxFWHMRatio
+                maxFWHMRatio: maxFWHMRatio, maxEccentricity: maxEccentricity
             )
             let imageWidth  = Double(frame.texture?.width  ?? 1)
             let imageHeight = Double(frame.texture?.height ?? 1)
