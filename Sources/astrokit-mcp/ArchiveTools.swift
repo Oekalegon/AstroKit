@@ -381,7 +381,10 @@ struct ArchiveTools {
                 let satStr = f.saturatedStarCount.map { "  (\($0) saturated)" } ?? ""
                 lines.append(row("Stars",        "\(v)\(satStr)"))
             }
-            if let v = f.medianFWHM         { lines.append(row("FWHM",         String(format: "%.2f px", v))) }
+            if let v = f.medianFWHM {
+                let arcsecStr = f.medianFWHMArcsec.map { String(format: "  (%.2f\")", $0) } ?? ""
+                lines.append(row("FWHM", String(format: "%.2f px\(arcsecStr)", v)))
+            }
             if let v = f.medianEccentricity { lines.append(row("Eccentricity", String(format: "%.3f", v))) }
             if let v = f.backgroundNoise {
                 let eStr = f.backgroundNoiseElectrons.map { String(format: "  (%.2f e⁻)", $0) } ?? ""

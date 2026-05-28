@@ -58,6 +58,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var starCount: Int?
     /// Median FWHM in pixels, averaged over major and minor axes (populated by frame_quality / star_detection pipeline).
     public var medianFWHM: Double?
+    /// Median FWHM in arcseconds. Derived from `medianFWHM × pixelScale`.
+    /// Only available when both `medianFWHM` and `pixelScale` are known.
+    public var medianFWHMArcsec: Double? { medianFWHM.flatMap { fwhm in pixelScale.map { fwhm * $0 } } }
     /// Background level in ADU for light frames; noise sigma in ADU for calibration frames.
     /// Populated by frame_quality / calibration_quality pipeline or read from FITS header BACKNOIS.
     /// Note: frames analysed with older pipelines (star_detection, optical_quality) store a normalised

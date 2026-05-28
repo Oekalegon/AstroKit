@@ -398,18 +398,25 @@ struct Frameset: AsyncParsableCommand {
                     func memberRow(_ uuid: String, _ obj: String, _ filt: String,
                                    _ exp: String, _ stars: String, _ fwhm: String,
                                    _ ecc: String, _ date: String) {
-                        print(String(format: "  %-36@  %-14@  %-8@  %8@  %6@  %7@  %6@  %@",
+                        print(String(format: "  %-36@  %-14@  %-8@  %8@  %6@  %14@  %6@  %@",
                             uuid as NSString, obj as NSString, filt as NSString, exp as NSString,
                             stars as NSString, fwhm as NSString, ecc as NSString, date as NSString))
                     }
                     memberRow("UUID", "Object", "Filter", "Exposure", "Stars", "FWHM", "Ecc", "Date")
-                    print("  " + String(repeating: "─", count: 36 + 14 + 8 + 8 + 6 + 7 + 6 + 18))
+                    print("  " + String(repeating: "─", count: 36 + 14 + 8 + 8 + 6 + 14 + 6 + 18))
                     for f in frames {
                         let obj   = f.objectName ?? "-"
                         let filt  = f.filter ?? "-"
                         let exp   = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
                         let stars = f.starCount.map { "\($0)" } ?? "-"
-                        let fwhm  = f.medianFWHM.map { String(format: "%.2f", $0) } ?? "-"
+                        let fwhm: String
+                        if let px = f.medianFWHM {
+                            if let arcsec = f.medianFWHMArcsec {
+                                fwhm = String(format: "%.2fpx/%.2f\"", px, arcsec)
+                            } else {
+                                fwhm = String(format: "%.2fpx", px)
+                            }
+                        } else { fwhm = "-" }
                         let ecc   = f.medianEccentricity.map { String(format: "%.3f", $0) } ?? "-"
                         let date  = f.timestamp.map { String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ") } ?? "-"
                         memberRow(f.id.uuidString, obj, filt, exp, stars, fwhm, ecc, date)
