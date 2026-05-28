@@ -8,9 +8,9 @@ description: >
 
 steps:
   - id: registration
-    type: frame_registration
+    type: frame_registration_dispatch
     name: Frame Registration
-    description: Detects stars in each frame and computes similarity transforms relative to the best-quality reference frame.
+    description: Detects stars in each frame and computes similarity transforms relative to the best-quality reference frame. The algorithm is selected by the registration_algorithm parameter.
     dataInputs:
       - name: input_frames
         type: frameSet
@@ -19,6 +19,10 @@ steps:
         collection_mode: together
         description: Collection of light frames to register and stack
     parameters:
+      - name: registration_algorithm
+        from: registration_algorithm
+        default_value: quad
+        description: "Registration algorithm: quad (4-star patterns, default) | triangle (3-star patterns, better for sparse fields)"
       - name: reference_frame
         from: reference_frame
         default_value: -1
@@ -26,7 +30,7 @@ steps:
       - name: match_threshold
         from: match_threshold
         default_value: 0.05
-        description: Maximum L2 distance in quad descriptor space for a valid match
+        description: Maximum L2 distance in descriptor space for a valid match
       - name: min_matches
         from: min_matches
         default_value: 4
