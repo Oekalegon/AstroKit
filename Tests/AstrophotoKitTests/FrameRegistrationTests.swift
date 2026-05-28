@@ -137,7 +137,7 @@ func testChooseBestFrameSingle() {
     #expect(RegistrationCore.chooseBestFrame(frames) == 0)
 }
 
-@Test("filterStarsByFWHM removes extended sources above ratio × median FWHM")
+@Test("filterStars removes extended sources above ratio × median FWHM")
 func testFilterStarsByFWHM() throws {
     // 4 normal stars (FWHM avg ≈ 3.0) + 1 extended source (FWHM avg ≈ 14.5)
     var df = DataFrame()
@@ -152,18 +152,21 @@ func testFilterStarsByFWHM() throws {
     table.dataFrame = df
 
     // median avg FWHM ≈ 3.0; threshold = 2.5 × 3.0 = 7.5; extended source (14.5) is removed
-    let filtered = RegistrationCore.filterStarsByFWHM(table, maxFWHMRatio: 2.5)
+    let filtered = RegistrationCore.filterStars(table, maxFWHMRatio: 2.5,
+                                                maxEccentricity: 0, minCentroidSubpixelOffset: 0)
     #expect(filtered.dataFrame?.rows.count == 4, "Extended source should be filtered out")
 
     // High ratio: all 5 pass
-    let unfiltered = RegistrationCore.filterStarsByFWHM(table, maxFWHMRatio: 6.0)
+    let unfiltered = RegistrationCore.filterStars(table, maxFWHMRatio: 6.0,
+                                                  maxEccentricity: 0, minCentroidSubpixelOffset: 0)
     #expect(unfiltered.dataFrame?.rows.count == 5, "All stars should pass with a generous ratio")
 }
 
-@Test("filterStarsByFWHM is a no-op on an empty table")
+@Test("filterStars is a no-op on an empty table")
 func testFilterStarsByFWHMEmpty() {
     let empty = TableData()
-    let result = RegistrationCore.filterStarsByFWHM(empty, maxFWHMRatio: 2.5)
+    let result = RegistrationCore.filterStars(empty, maxFWHMRatio: 2.5,
+                                              maxEccentricity: 0, minCentroidSubpixelOffset: 0)
     #expect(result.dataFrame == nil)
 }
 
@@ -294,14 +297,14 @@ private func loadLuminanceFrames(device: MTLDevice) throws -> [Frame]? {
     return frames
 }
 
-@Test("frame_registration pipeline registers real luminance frames")
+@Test("frame_registration_quad pipeline registers real luminance frames")
 func testFrameRegistrationPipelineRegistersLuminanceFrames() async throws {
     guard let device = MTLCreateSystemDefaultDevice(),
           let commandQueue = device.makeCommandQueue()
     else { Issue.record("Metal not available"); return }
 
     guard let frames = try loadLuminanceFrames(device: device) else { return } // skip if no test FITS
-    guard let pipelineURL = getPipelineResourceURL(name: "frame-registration") else { return }
+    guard let pipelineURL = getPipelineResourceURL(name: "frame-registration-quad") else { return }
 
     let pipeline  = try Pipeline.load(from: pipelineURL)
     let runner    = PipelineRunner(pipeline: pipeline)
@@ -377,7 +380,7 @@ func testQuadAndTriangleProduceConsistentTransforms() async throws {
     else { Issue.record("Metal not available"); return }
 
     guard let frames = try loadLuminanceFrames(device: device) else { return }
-    guard let quadURL     = getPipelineResourceURL(name: "frame-registration"),
+    guard let quadURL     = getPipelineResourceURL(name: "frame-registration-quad"),
           let triangleURL = getPipelineResourceURL(name: "frame-registration-triangle")
     else { return }
 
