@@ -107,7 +107,10 @@ struct Info: AsyncParsableCommand {
                 let satStr = f.saturatedStarCount.map { "  (\($0) saturated)" } ?? ""
                 lines.append(row("Stars", "\(v)\(satStr)"))
             }
-            if let v = f.medianFWHM         { lines.append(row("FWHM",         String(format: "%.2f px", v))) }
+            if let v = f.medianFWHM {
+                let arcsecStr = f.medianFWHMArcsec.map { String(format: "  (%.2f\")", $0) } ?? ""
+                lines.append(row("FWHM", String(format: "%.2f px\(arcsecStr)", v)))
+            }
             if let v = f.medianEccentricity { lines.append(row("Eccentricity", String(format: "%.3f", v))) }
             if let v = f.backgroundNoise {
                 let eStr = f.backgroundNoiseElectrons.map { String(format: "  (%.2f e⁻)", $0) } ?? ""
@@ -179,6 +182,7 @@ struct Info: AsyncParsableCommand {
         if let v = f.starCount                { d["star_count"]                  = v }
         if let v = f.saturatedStarCount       { d["saturated_star_count"]        = v }
         if let v = f.medianFWHM               { d["median_fwhm"]                 = v }
+        if let v = f.medianFWHMArcsec         { d["median_fwhm_arcsec"]          = v }
         if let v = f.medianEccentricity       { d["median_eccentricity"]         = v }
         if let v = f.backgroundNoise          { d["background_noise"]            = v }
         if let v = f.backgroundNoiseElectrons { d["background_noise_electrons"]  = v }

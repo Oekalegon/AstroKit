@@ -125,7 +125,7 @@ struct Find: AsyncParsableCommand {
         let hasQuality = frames.contains { $0.starCount != nil || $0.medianFWHM != nil || $0.medianEccentricity != nil }
         print("Found \(frames.count) frame(s):\n")
         if hasQuality {
-            let header = String(format: "%-36@  %-14@  %-8@  %-8@  %8@  %6@  %7@  %6@  %-4@  %@",
+            let header = String(format: "%-36@  %-14@  %-8@  %-8@  %8@  %6@  %14@  %6@  %-4@  %@",
                 "ID" as NSString, "Object" as NSString, "Type" as NSString,
                 "Filter" as NSString, "Exposure" as NSString, "Stars" as NSString,
                 "FWHM" as NSString, "Ecc" as NSString, "Rej" as NSString, "File" as NSString)
@@ -136,11 +136,18 @@ struct Find: AsyncParsableCommand {
                 let filt  = f.filter ?? "-"
                 let exp   = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
                 let stars = f.starCount.map { "\($0)" } ?? "-"
-                let fwhm  = f.medianFWHM.map { String(format: "%.2f", $0) } ?? "-"
+                let fwhm: String
+                if let px = f.medianFWHM {
+                    if let arcsec = f.medianFWHMArcsec {
+                        fwhm = String(format: "%.2fpx/%.2f\"", px, arcsec)
+                    } else {
+                        fwhm = String(format: "%.2fpx", px)
+                    }
+                } else { fwhm = "-" }
                 let ecc   = f.medianEccentricity.map { String(format: "%.3f", $0) } ?? "-"
                 let rej   = f.rejected ? "✗" : ""
                 let file  = (f.filePath as NSString).lastPathComponent
-                print(String(format: "%-36@  %-14@  %-8@  %-8@  %8@  %6@  %7@  %6@  %-4@  %@",
+                print(String(format: "%-36@  %-14@  %-8@  %-8@  %8@  %6@  %14@  %6@  %-4@  %@",
                     f.id.uuidString as NSString, obj as NSString, f.frameType as NSString,
                     filt as NSString, exp as NSString, stars as NSString,
                     fwhm as NSString, ecc as NSString, rej as NSString, file as NSString))
