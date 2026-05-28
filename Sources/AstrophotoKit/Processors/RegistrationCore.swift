@@ -486,6 +486,35 @@ enum RegistrationCore {
         return (bestInliers, bestTransform)
     }
 
+    // MARK: - Transform verification
+
+    /// Verifies a computed transform by direct star-to-star proximity check.
+    ///
+    /// Applies `transform` to every reference star and counts how many land within
+    /// `threshold` pixels of any target star. This catches false-match consensus —
+    /// a common failure mode in sparse fields where many triangles share similar
+    /// descriptor values and collectively vote for a geometrically wrong transform.
+    ///
+    /// A correct transform should map at least `minMatches` reference stars onto
+    /// target stars. A spurious near-zero transform will typically map zero, because
+    /// the target stars are actually offset by the true (unrecovered) displacement.
+    static func verifyTransform(
+        _ transform: SimilarityTransform,
+        refStars: [StarPoint],
+        tgtStars: [StarPoint],
+        threshold: Double
+    ) -> Int {
+        let thr2 = threshold * threshold
+        return refStars.filter { ref in
+            let px = transform.a * ref.x - transform.b * ref.y + transform.tx
+            let py = transform.b * ref.x + transform.a * ref.y + transform.ty
+            return tgtStars.contains { tgt in
+                let dx = px - tgt.x, dy = py - tgt.y
+                return dx*dx + dy*dy < thr2
+            }
+        }.count
+    }
+
     /// Euclidean residual of applying `t` to `ref` and comparing with `tgt`.
     static func residual(_ t: SimilarityTransform, ref: StarPoint, tgt: StarPoint) -> Double {
         let cosA = t.scale * cos(t.rotation), sinA = t.scale * sin(t.rotation)

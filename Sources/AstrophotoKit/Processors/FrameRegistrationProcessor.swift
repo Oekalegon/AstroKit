@@ -361,6 +361,22 @@ public struct FrameRegistrationProcessor: Processor {
             Logger.processor.warning("FrameRegistration: frame rejected — computed scale \(transform.scale, format: .fixed(precision: 4)) deviates from 1.0 by more than \(maxScaleDeviation); likely a false-match consensus")
             return (.identity, matches.count, rmse, false)
         }
+
+        // Independent transform verification: apply the transform to every reference star
+        // and count how many land within inlierThreshold * 2 pixels of any target star.
+        var refKeys = Set<String>()
+        let refPool = reference.flatMap { [$0.s1, $0.s2, $0.s3, $0.s4] }
+            .filter { refKeys.insert("\($0.x),\($0.y)").inserted }
+        var tgtKeys = Set<String>()
+        let tgtPool = target.flatMap { [$0.s1, $0.s2, $0.s3, $0.s4] }
+            .filter { tgtKeys.insert("\($0.x),\($0.y)").inserted }
+        let verified = RegistrationCore.verifyTransform(transform, refStars: refPool,
+                                                        tgtStars: tgtPool, threshold: inlierThreshold * 2)
+        guard verified >= minMatches else {
+            Logger.processor.warning("FrameRegistration: transform rejected — only \(verified)/\(refPool.count) reference stars verified within \(inlierThreshold * 2, format: .fixed(precision: 1)) px (need \(minMatches)). Likely a false-match consensus on wrong displacement.")
+            return (.identity, matches.count, rmse, false)
+        }
+
         return (transform, matches.count, rmse, true)
     }
 

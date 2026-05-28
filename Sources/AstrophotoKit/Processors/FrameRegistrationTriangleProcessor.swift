@@ -338,6 +338,24 @@ public struct FrameRegistrationTriangleProcessor: Processor {
             Logger.processor.warning("FrameRegistrationTriangle: frame rejected — scale \(transform.scale, format: .fixed(precision: 4)) deviates from 1.0 by more than \(maxScaleDeviation)")
             return (.identity, matches.count, rmse, false)
         }
+
+        // Independent transform verification: apply the transform to every reference star
+        // and count how many land within inlierThreshold pixels of any target star.
+        // This catches false-match consensus — a spurious near-zero transform produced when
+        // many similar-ratio triangles in a sparse field agree on the wrong displacement.
+        var refKeys = Set<String>()
+        let refPool = reference.flatMap { [$0.s1, $0.s2, $0.s3] }
+            .filter { refKeys.insert("\($0.x),\($0.y)").inserted }
+        var tgtKeys = Set<String>()
+        let tgtPool = target.flatMap { [$0.s1, $0.s2, $0.s3] }
+            .filter { tgtKeys.insert("\($0.x),\($0.y)").inserted }
+        let verified = RegistrationCore.verifyTransform(transform, refStars: refPool,
+                                                        tgtStars: tgtPool, threshold: inlierThreshold * 2)
+        guard verified >= minMatches else {
+            Logger.processor.warning("FrameRegistrationTriangle: transform rejected — only \(verified)/\(refPool.count) reference stars verified within \(inlierThreshold * 2, format: .fixed(precision: 1)) px (need \(minMatches)). Likely a false-match consensus on wrong displacement.")
+            return (.identity, matches.count, rmse, false)
+        }
+
         return (transform, matches.count, rmse, true)
     }
 
