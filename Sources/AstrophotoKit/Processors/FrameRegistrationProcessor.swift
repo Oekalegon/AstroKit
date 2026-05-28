@@ -423,9 +423,4 @@ public struct FrameRegistrationProcessor: Processor {
         }
         return matches
     }
-
-    private func descriptorDistance(_ a: QuadDescriptor, _ b: QuadDescriptor) -> Double {
-        let d3x = a.dx3-b.dx3, d3y = a.dy3-b.dy3, d4x = a.dx4-b.dx4, d4y = a.dy4-b.dy4
-        return sqrt(d3x*d3x + d3y*d3y + d4x*d4x + d4y*d4y)
-    }
 }
