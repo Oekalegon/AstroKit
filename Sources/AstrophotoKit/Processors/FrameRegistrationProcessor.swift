@@ -50,6 +50,7 @@ private struct RegistrationRow {
     let matchCount: Int
     let rmse: Double
     let stats: FrameStats
+    let success: Bool
 }
 
 // MARK: - Processor
@@ -84,6 +85,16 @@ public struct FrameRegistrationProcessor: Processor {
         let maxStars            = parameters["max_stars"]?.intValue ?? 100
         let minDistancePct      = parameters["min_distance_percent"]?.doubleValue ?? 1.0
         let kNeighbors          = parameters["k_neighbors"]?.intValue ?? 5
+        // max deviation of the computed pixel-scale ratio from 1.0 (same-equipment constraint)
+        let maxScaleDeviation   = parameters["max_scale_deviation"]?.doubleValue ?? 0.05
+        // Lowe's ratio-test threshold: reject a match if best/second-best >= this value
+        let ratioThreshold      = parameters["ratio_threshold"]?.doubleValue ?? 0.8
+        // Minimum fraction of frames that must be successfully registered
+        let minSuccessRate      = parameters["min_success_rate"]?.doubleValue ?? 0.75
+        // Extended-source filter: reject detected sources whose avg FWHM exceeds this multiple
+        // of the per-frame median FWHM. Removes nebula blobs/gradients misidentified as stars.
+        // Set to 0 to disable.
+        let maxFWHMRatio        = parameters["max_fwhm_ratio"]?.doubleValue ?? 2.5
 
         // Run star detection on every frame
         var perFrame: [(quads: [QuadDescriptor], stats: FrameStats)] = []
@@ -98,7 +109,8 @@ public struct FrameRegistrationProcessor: Processor {
                 dilationKernel: dilationKernel,
                 maxStars: maxStars,
                 minDistancePct: minDistancePct,
-                kNeighbors: kNeighbors
+                kNeighbors: kNeighbors,
+                maxFWHMRatio: maxFWHMRatio
             )
             perFrame.append((quads: quads, stats: stats))
         }
@@ -112,6 +124,9 @@ public struct FrameRegistrationProcessor: Processor {
         }
         Logger.processor.info("FrameRegistration: reference frame = \(refIdx)")
 
+        // Equipment consistency check — runs before registration to give a clear early error
+        try checkEquipmentConsistency(frames: frameSet.frames, referenceIndex: refIdx)
+
         // Build registration rows
         var rows: [RegistrationRow] = []
         let refQuads = perFrame[refIdx].quads
@@ -123,26 +138,45 @@ public struct FrameRegistrationProcessor: Processor {
                     transform: .identity,
                     matchCount: frameData.quads.count,
                     rmse: 0,
-                    stats: frameData.stats
+                    stats: frameData.stats,
+                    success: true
                 ))
                 continue
             }
 
-            let (transform, matchCount, rmse) = computeTransform(
+            let (transform, matchCount, rmse, success) = computeTransform(
                 reference: refQuads,
                 target: frameData.quads,
                 matchThreshold: matchThreshold,
                 minMatches: minMatches,
                 ransacIterations: ransacIterations,
-                inlierThreshold: inlierThreshold
+                inlierThreshold: inlierThreshold,
+                maxScaleDeviation: maxScaleDeviation,
+                ratioThreshold: ratioThreshold
             )
             rows.append(RegistrationRow(
                 frameIndex: i,
                 transform: transform,
                 matchCount: matchCount,
                 rmse: rmse,
-                stats: frameData.stats
+                stats: frameData.stats,
+                success: success
             ))
+        }
+
+        // Check that enough frames were successfully registered
+        let successCount = rows.filter { $0.success }.count
+        let successRate  = Double(successCount) / Double(rows.count)
+        if successRate < minSuccessRate {
+            throw ProcessorExecutionError.executionFailed(
+                buildRegistrationFailureMessage(
+                    rows: rows,
+                    successCount: successCount,
+                    successRate: successRate,
+                    minSuccessRate: minSuccessRate,
+                    minMatches: minMatches
+                )
+            )
         }
 
         // Sort by frame index (reference may not be index 0)
@@ -191,6 +225,8 @@ public struct FrameRegistrationProcessor: Processor {
             contents: sortedRows.map { Int32($0.matchCount) }))
         df.append(column: Column(name: "rmse",
             contents: sortedRows.map { $0.rmse }))
+        df.append(column: Column(name: "registration_success",
+            contents: sortedRows.map { Int32($0.success ? 1 : 0) }))
         df.append(column: Column(name: "star_count",
             contents: sortedRows.map { Int32($0.stats.starCount) }))
         df.append(column: Column(name: "mean_fwhm",
@@ -240,6 +276,98 @@ public struct FrameRegistrationProcessor: Processor {
         return result
     }
 
+    // MARK: - Equipment consistency check
+
+    private func checkEquipmentConsistency(frames: [Frame], referenceIndex: Int) throws {
+        let refFrame = frames[referenceIndex]
+        let refWidth  = refFrame.texture?.width  ?? 0
+        let refHeight = refFrame.texture?.height ?? 0
+        let refScale  = refFrame.pixelScale
+
+        var dimMismatches:   [(index: Int, width: Int, height: Int)] = []
+        var scaleMismatches: [(index: Int, scale: Double)] = []
+
+        for (i, frame) in frames.enumerated() where i != referenceIndex {
+            let w = frame.texture?.width  ?? 0
+            let h = frame.texture?.height ?? 0
+            if w > 0 && h > 0 && refWidth > 0 && refHeight > 0 {
+                if w != refWidth || h != refHeight {
+                    dimMismatches.append((i, w, h))
+                }
+            }
+            if let rps = refScale, let fps = frame.pixelScale, rps > 0 {
+                if abs(rps - fps) / rps > 0.05 {
+                    scaleMismatches.append((i, fps))
+                }
+            }
+        }
+
+        if !dimMismatches.isEmpty {
+            let list = dimMismatches
+                .map { "frame \($0.index): \($0.width)×\($0.height)" }
+                .joined(separator: ", ")
+            throw ProcessorExecutionError.executionFailed(
+                "Equipment mismatch: the following frame(s) have different image dimensions " +
+                "than the reference frame (\(refWidth)×\(refHeight) px): \(list). " +
+                "Ensure all frames were captured with the same camera."
+            )
+        }
+
+        if !scaleMismatches.isEmpty {
+            let refStr  = refScale.map { String(format: "%.3f", $0) } ?? "unknown"
+            let list = scaleMismatches
+                .map { "frame \($0.index): \(String(format: "%.3f", $0.scale))\"/px" }
+                .joined(separator: ", ")
+            throw ProcessorExecutionError.executionFailed(
+                "Equipment mismatch: the following frame(s) have a different pixel scale " +
+                "than the reference frame (\(refStr)\"/px): \(list). " +
+                "Ensure all frames were captured with the same telescope and camera combination."
+            )
+        }
+    }
+
+    // MARK: - Informative failure message
+
+    private func buildRegistrationFailureMessage(
+        rows: [RegistrationRow],
+        successCount: Int,
+        successRate: Double,
+        minSuccessRate: Double,
+        minMatches: Int
+    ) -> String {
+        let total = rows.count
+        let failed = rows.filter { !$0.success }
+        let tooFewMatches = failed.filter { $0.matchCount < minMatches }.count
+        let badScale      = failed.filter { $0.matchCount >= minMatches }.count
+
+        var msg = String(
+            format: "Registration failed: only %d of %d frames (%.0f%%) were successfully registered " +
+                    "(minimum required: %.0f%%). ",
+            successCount, total, successRate * 100, minSuccessRate * 100
+        )
+
+        if tooFewMatches > 0 && badScale > 0 {
+            msg += "\(tooFewMatches) frame(s) had too few star matches and \(badScale) frame(s) had " +
+                   "an incorrect computed scale — suggesting a sparse star field with false quad matches. "
+        } else if badScale > 0 {
+            msg += "\(badScale) frame(s) had sufficient star matches but the computed scale deviated " +
+                   "from 1.0, indicating false quad matches rather than a true alignment. " +
+                   "This is a known failure mode of quad-based registration in sparse fields. "
+        } else {
+            msg += "\(tooFewMatches) frame(s) had too few star matches — the star field is too sparse " +
+                   "for the quad-matching algorithm to find reliable correspondences. "
+        }
+
+        msg += "Consider one of these alternatives better suited to sparse fields: " +
+               "(1) Phase-correlation registration — works without star detection, uses pixel-level " +
+               "cross-correlation; translation-only but robust to very low star counts. " +
+               "(2) Plate-solving registration (e.g. ASTAP or Astrometry.net) — matches stars against " +
+               "a catalog and is reliable with as few as 6–10 stars. " +
+               "(3) Manual reference-point registration — specify 2–3 star coordinates per frame manually."
+
+        return msg
+    }
+
     // MARK: - Star detection sub-pipeline
 
     private func detectStarsAndQuads(
@@ -252,7 +380,8 @@ public struct FrameRegistrationProcessor: Processor {
         dilationKernel: Int,
         maxStars: Int,
         minDistancePct: Double,
-        kNeighbors: Int
+        kNeighbors: Int,
+        maxFWHMRatio: Double
     ) throws -> (quads: [QuadDescriptor], stats: FrameStats) {
         // Helpers to run a processor and extract output frame/table
         func runFrame(_ processor: any Processor, inputs: [String: ProcessData], outputKey: String, params: [String: Parameter] = [:]) throws -> Frame {
@@ -354,9 +483,17 @@ public struct FrameRegistrationProcessor: Processor {
             device: device,
             commandQueue: commandQueue
         )
-        guard let starsTable = fwhmOutputs["pixel_coordinates"] as? TableData else {
+        guard let rawStarsTable = fwhmOutputs["pixel_coordinates"] as? TableData else {
             throw ProcessorExecutionError.executionFailed("FWHM: missing pixel_coordinates")
         }
+
+        // Filter out extended sources (nebula blobs, diffuse gradients) that the star
+        // detector picks up but that are not point sources. Done after FWHM so we have
+        // reliable size measurements. The filtered table is used for both quad generation
+        // and quality stats, so star_count reflects real point sources only.
+        let starsTable = maxFWHMRatio > 0
+            ? filterStarsByFWHM(rawStarsTable, maxFWHMRatio: maxFWHMRatio)
+            : rawStarsTable
 
         // 9. Quads
         var quadsOutputs: [String: ProcessData] = ["quads": TableData()]
@@ -392,6 +529,88 @@ public struct FrameRegistrationProcessor: Processor {
         let quads = extractQuadDescriptors(from: quadsTable)
         let stats = extractStats(from: starsTable, skyBackground: skyBackground, skyNoise: skyNoise)
         return (quads: quads, stats: stats)
+    }
+
+    // MARK: - Extended-source filter
+
+    /// Removes sources whose average FWHM exceeds `maxFWHMRatio` × the per-frame median FWHM.
+    /// Rejects nebula blobs, diffuse emission edges, and other non-stellar detections that
+    /// corrupt quad descriptors and cause false matches in sparse fields.
+    private func filterStarsByFWHM(_ table: TableData, maxFWHMRatio: Double) -> TableData {
+        guard let df = table.dataFrame, !df.rows.isEmpty else { return table }
+
+        // Compute average FWHM per row
+        var avgFWHMs = [Double](repeating: 0.0, count: df.rows.count)
+        for (i, row) in df.rows.enumerated() {
+            let maj = (row["fwhm_major"] as? Double) ?? 0
+            let min = (row["fwhm_minor"] as? Double) ?? 0
+            avgFWHMs[i] = (maj + min) / 2.0
+        }
+
+        let med = median(avgFWHMs.filter { $0 > 0 })
+        guard med > 0 else { return table }
+        let maxAllowed = maxFWHMRatio * med
+
+        let validIndices = avgFWHMs.indices.filter { avgFWHMs[$0] <= maxAllowed }
+        let removedCount = df.rows.count - validIndices.count
+        guard removedCount > 0 else { return table }
+
+        Logger.processor.info("FrameRegistration: FWHM filter removed \(removedCount) extended source(s) (threshold: \(maxAllowed, format: .fixed(precision: 1)) px, median: \(med, format: .fixed(precision: 1)) px)")
+
+        // Detect which optional columns are present
+        let hasSaturated    = df.columns.contains { $0.name == "saturated" }
+        let hasMajorAxis    = df.columns.contains { $0.name == "major_axis" }
+        let hasMinorAxis    = df.columns.contains { $0.name == "minor_axis" }
+        let hasEccentricity = df.columns.contains { $0.name == "eccentricity" }
+        let hasRotAngle     = df.columns.contains { $0.name == "rotation_angle" }
+
+        // Accumulate typed values for each valid row
+        var ids:       [Int]    = []; ids.reserveCapacity(validIndices.count)
+        var areas:     [Int]    = []; areas.reserveCapacity(validIndices.count)
+        var fluxes:    [Double] = []; fluxes.reserveCapacity(validIndices.count)
+        var centXs:    [Double] = []; centXs.reserveCapacity(validIndices.count)
+        var centYs:    [Double] = []; centYs.reserveCapacity(validIndices.count)
+        var fwhmMajs:  [Double] = []; fwhmMajs.reserveCapacity(validIndices.count)
+        var fwhmMins:  [Double] = []; fwhmMins.reserveCapacity(validIndices.count)
+        var sats:      [Bool]   = []; sats.reserveCapacity(validIndices.count)
+        var majAxes:   [Double] = []; majAxes.reserveCapacity(validIndices.count)
+        var minAxes:   [Double] = []; minAxes.reserveCapacity(validIndices.count)
+        var eccs:      [Double] = []; eccs.reserveCapacity(validIndices.count)
+        var rotAngles: [Double] = []; rotAngles.reserveCapacity(validIndices.count)
+
+        for i in validIndices {
+            let row = df.rows[i]
+            ids.append((row["id"] as? Int) ?? i)
+            areas.append((row["area"] as? Int) ?? 0)
+            fluxes.append((row["flux"] as? Double) ?? 0)
+            centXs.append((row["centroid_x"] as? Double) ?? 0)
+            centYs.append((row["centroid_y"] as? Double) ?? 0)
+            fwhmMajs.append((row["fwhm_major"] as? Double) ?? 0)
+            fwhmMins.append((row["fwhm_minor"] as? Double) ?? 0)
+            if hasSaturated    { sats.append((row["saturated"] as? Bool) ?? false) }
+            if hasMajorAxis    { majAxes.append((row["major_axis"] as? Double) ?? 0) }
+            if hasMinorAxis    { minAxes.append((row["minor_axis"] as? Double) ?? 0) }
+            if hasEccentricity { eccs.append((row["eccentricity"] as? Double) ?? 0) }
+            if hasRotAngle     { rotAngles.append((row["rotation_angle"] as? Double) ?? 0) }
+        }
+
+        var newDF = DataFrame()
+        newDF.append(column: Column(name: "id",         contents: ids))
+        newDF.append(column: Column(name: "area",       contents: areas))
+        newDF.append(column: Column(name: "flux",       contents: fluxes))
+        newDF.append(column: Column(name: "centroid_x", contents: centXs))
+        newDF.append(column: Column(name: "centroid_y", contents: centYs))
+        newDF.append(column: Column(name: "fwhm_major", contents: fwhmMajs))
+        newDF.append(column: Column(name: "fwhm_minor", contents: fwhmMins))
+        if hasSaturated    { newDF.append(column: Column(name: "saturated",      contents: sats)) }
+        if hasMajorAxis    { newDF.append(column: Column(name: "major_axis",     contents: majAxes)) }
+        if hasMinorAxis    { newDF.append(column: Column(name: "minor_axis",     contents: minAxes)) }
+        if hasEccentricity { newDF.append(column: Column(name: "eccentricity",   contents: eccs)) }
+        if hasRotAngle     { newDF.append(column: Column(name: "rotation_angle", contents: rotAngles)) }
+
+        var result = table
+        result.dataFrame = newDF
+        return result
     }
 
     private func emptyFrame() -> Frame {
@@ -550,12 +769,19 @@ public struct FrameRegistrationProcessor: Processor {
         matchThreshold: Double,
         minMatches: Int,
         ransacIterations: Int,
-        inlierThreshold: Double
-    ) -> (transform: SimilarityTransform, matchCount: Int, rmse: Double) {
-        let matches = matchQuads(reference: reference, target: target, threshold: matchThreshold)
+        inlierThreshold: Double,
+        maxScaleDeviation: Double,
+        ratioThreshold: Double
+    ) -> (transform: SimilarityTransform, matchCount: Int, rmse: Double, success: Bool) {
+        let matches = matchQuads(
+            reference: reference,
+            target: target,
+            threshold: matchThreshold,
+            ratioThreshold: ratioThreshold
+        )
         guard matches.count >= minMatches else {
             Logger.processor.warning("FrameRegistration: only \(matches.count) quad matches (need \(minMatches)) — using identity")
-            return (.identity, matches.count, 0)
+            return (.identity, matches.count, 0, false)
         }
 
         // Build all point correspondences: 4 pairs per matched quad
@@ -567,11 +793,12 @@ public struct FrameRegistrationProcessor: Processor {
             pairs.append((ref: refQ.s4, tgt: tgtQ.s4))
         }
 
-        // RANSAC
+        // Scale-constrained RANSAC
         let (bestInliers, _) = ransac(
             pairs: pairs,
             iterations: ransacIterations,
-            inlierThreshold: inlierThreshold
+            inlierThreshold: inlierThreshold,
+            maxScaleDeviation: maxScaleDeviation
         )
 
         let transform: SimilarityTransform
@@ -582,30 +809,66 @@ public struct FrameRegistrationProcessor: Processor {
             (transform, rmse) = leastSquaresSimilarity(pairs: pairs)
         }
 
-        return (transform: transform, matchCount: matches.count, rmse: rmse)
+        // Final scale sanity check — catches fallback path where RANSAC found no valid consensus
+        guard abs(transform.scale - 1.0) <= maxScaleDeviation else {
+            Logger.processor.warning("FrameRegistration: frame rejected — computed scale \(transform.scale, format: .fixed(precision: 4)) deviates from 1.0 by more than \(maxScaleDeviation); likely a false-match consensus")
+            return (.identity, matches.count, rmse, false)
+        }
+
+        return (transform: transform, matchCount: matches.count, rmse: rmse, success: true)
     }
 
-    // MARK: - Quad matching
+    // MARK: - Quad matching with ratio test and mutual cross-check
 
     private func matchQuads(
         reference: [QuadDescriptor],
         target: [QuadDescriptor],
-        threshold: Double
+        threshold: Double,
+        ratioThreshold: Double
     ) -> [(QuadDescriptor, QuadDescriptor)] {
-        var matches: [(QuadDescriptor, QuadDescriptor)] = []
-        for tq in target {
-            var bestDist = Double.infinity
-            var bestRef: QuadDescriptor?
-            for rq in reference {
+        guard !reference.isEmpty, !target.isEmpty else { return [] }
+
+        // Forward pass: for each target quad track its best and second-best reference match
+        var fwdBestIdx  = [Int](repeating: -1,        count: target.count)
+        var fwdBestDist = [Double](repeating: .infinity, count: target.count)
+        var fwdSecDist  = [Double](repeating: .infinity, count: target.count)
+
+        for (ti, tq) in target.enumerated() {
+            for (ri, rq) in reference.enumerated() {
                 let d = descriptorDistance(tq, rq)
-                if d < bestDist {
-                    bestDist = d
-                    bestRef = rq
+                if d < fwdBestDist[ti] {
+                    fwdSecDist[ti]  = fwdBestDist[ti]
+                    fwdBestDist[ti] = d
+                    fwdBestIdx[ti]  = ri
+                } else if d < fwdSecDist[ti] {
+                    fwdSecDist[ti] = d
                 }
             }
-            if bestDist < threshold, let ref = bestRef {
-                matches.append((ref, tq))
+        }
+
+        // Backward pass: for each reference quad find the best target match
+        var bwdBestIdx  = [Int](repeating: -1,        count: reference.count)
+        var bwdBestDist = [Double](repeating: .infinity, count: reference.count)
+
+        for (ti, tq) in target.enumerated() {
+            for (ri, rq) in reference.enumerated() {
+                let d = descriptorDistance(tq, rq)
+                if d < bwdBestDist[ri] {
+                    bwdBestDist[ri] = d
+                    bwdBestIdx[ri]  = ti
+                }
             }
+        }
+
+        var matches: [(QuadDescriptor, QuadDescriptor)] = []
+        for (ti, tq) in target.enumerated() {
+            let ri = fwdBestIdx[ti]
+            guard ri >= 0, fwdBestDist[ti] < threshold else { continue }
+            // Lowe's ratio test: reject if second-best is nearly as good (ambiguous match)
+            if fwdSecDist[ti] < .infinity && fwdBestDist[ti] / fwdSecDist[ti] >= ratioThreshold { continue }
+            // Mutual cross-check: only keep if the reference quad's best match is also this target quad
+            guard bwdBestIdx[ri] == ti else { continue }
+            matches.append((reference[ri], tq))
         }
         return matches
     }
@@ -618,12 +881,13 @@ public struct FrameRegistrationProcessor: Processor {
         return sqrt(d3x*d3x + d3y*d3y + d4x*d4x + d4y*d4y)
     }
 
-    // MARK: - RANSAC
+    // MARK: - Scale-constrained RANSAC
 
     private func ransac(
         pairs: [(ref: StarPoint, tgt: StarPoint)],
         iterations: Int,
-        inlierThreshold: Double
+        inlierThreshold: Double,
+        maxScaleDeviation: Double
     ) -> (inliers: [(ref: StarPoint, tgt: StarPoint)], transform: SimilarityTransform) {
         guard pairs.count >= 4 else { return (pairs, .identity) }
 
@@ -641,10 +905,14 @@ public struct FrameRegistrationProcessor: Processor {
             }
 
             let (candidate, _) = leastSquaresSimilarity(pairs: sample)
+
+            // Reject candidates that imply a physically impossible scale for same-equipment frames
+            guard abs(candidate.scale - 1.0) <= maxScaleDeviation else { continue }
+
             let inliers = pairs.filter { residual(candidate, ref: $0.ref, tgt: $0.tgt) < inlierThreshold }
 
             if inliers.count > bestInliers.count {
-                bestInliers = inliers
+                bestInliers   = inliers
                 bestTransform = candidate
             }
         }
