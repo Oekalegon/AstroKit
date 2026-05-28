@@ -8,7 +8,7 @@ struct ArchiveRejectionTests {
     private func makeTestDatabase() throws -> (ArchiveDatabase, URL) {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("rejection-\(UUID().uuidString).sqlite")
-        return (try ArchiveDatabase(url: url), url)
+        return (try ArchiveDatabase(url: url, archiveRootPath: FileManager.default.temporaryDirectory.path), url)
     }
 
     private func makeFrame(
