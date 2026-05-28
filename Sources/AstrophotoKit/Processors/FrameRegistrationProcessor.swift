@@ -134,7 +134,8 @@ public struct FrameRegistrationProcessor: Processor {
                 reference: refQuads, target: frameData.quads,
                 matchThreshold: matchThreshold, minMatches: minMatches,
                 ransacIterations: ransacIterations, inlierThreshold: inlierThreshold,
-                maxScaleDeviation: maxScaleDeviation, ratioThreshold: ratioThreshold
+                maxScaleDeviation: maxScaleDeviation, ratioThreshold: ratioThreshold,
+                device: device, commandQueue: commandQueue
             )
             rows.append(RegistrationRow(frameIndex: i, transform: transform,
                                         matchCount: matchCount, rmse: rmse,
@@ -328,10 +329,13 @@ public struct FrameRegistrationProcessor: Processor {
         ransacIterations:  Int,
         inlierThreshold:   Double,
         maxScaleDeviation: Double,
-        ratioThreshold:    Double
+        ratioThreshold:    Double,
+        device:            MTLDevice,
+        commandQueue:      MTLCommandQueue
     ) -> (transform: SimilarityTransform, matchCount: Int, rmse: Double, success: Bool) {
         let matches = matchQuads(reference: reference, target: target,
-                                 threshold: matchThreshold, ratioThreshold: ratioThreshold)
+                                 threshold: matchThreshold, ratioThreshold: ratioThreshold,
+                                 device: device, commandQueue: commandQueue)
         guard matches.count >= minMatches else {
             Logger.processor.warning("FrameRegistration: only \(matches.count) quad matches (need \(minMatches)) — using identity")
             return (.identity, matches.count, 0, false)
@@ -362,53 +366,59 @@ public struct FrameRegistrationProcessor: Processor {
 
     // MARK: - Quad matching (ratio test + mutual cross-check)
 
-    /// Matches quads between the reference and target descriptor sets.
+    /// Matches quads using the GPU when available, falling back to CPU.
     ///
-    /// Three filters are applied to suppress false positives in sparse fields:
-    /// 1. **Distance threshold**: raw L2 distance in 4-D descriptor space must be < `threshold`.
-    /// 2. **Lowe's ratio test**: best distance / second-best distance must be < `ratioThreshold`
-    ///    (0.8 by default). Rejects matches where the descriptor space is ambiguous.
-    /// 3. **Mutual cross-check**: a match (target_i → ref_j) is only accepted when ref_j's
-    ///    best match also points back to target_i. Eliminates one-sided false positives.
+    /// Three filters suppress false positives:
+    /// 1. Distance threshold — raw L2 in 4D descriptor space must be < `threshold`.
+    /// 2. Lowe's ratio test — best / second-best distance must be < `ratioThreshold`.
+    /// 3. Mutual cross-check — match is only kept when both directions agree.
     private func matchQuads(
         reference: [QuadDescriptor],
         target:    [QuadDescriptor],
         threshold:      Double,
-        ratioThreshold: Double
+        ratioThreshold: Double,
+        device:         MTLDevice,
+        commandQueue:   MTLCommandQueue
     ) -> [(QuadDescriptor, QuadDescriptor)] {
         guard !reference.isEmpty, !target.isEmpty else { return [] }
 
-        // Forward pass: best and second-best reference match for each target quad
-        var fwdBestIdx  = [Int](repeating: -1,        count: target.count)
-        var fwdBestDist = [Double](repeating: .infinity, count: target.count)
-        var fwdSecDist  = [Double](repeating: .infinity, count: target.count)
-        for (ti, tq) in target.enumerated() {
-            for (ri, rq) in reference.enumerated() {
-                let d = descriptorDistance(tq, rq)
-                if d < fwdBestDist[ti] {
-                    fwdSecDist[ti] = fwdBestDist[ti]; fwdBestDist[ti] = d; fwdBestIdx[ti] = ri
-                } else if d < fwdSecDist[ti] {
-                    fwdSecDist[ti] = d
+        let fwdBestIdx:  [Int32]
+        let fwdBestDist: [Float]
+        let fwdSecDist:  [Float]
+        let bwdBestIdx:  [Int32]
+
+        let refDesc = reference.map { (Float($0.dx3), Float($0.dy3), Float($0.dx4), Float($0.dy4)) }
+        let tgtDesc = target.map    { (Float($0.dx3), Float($0.dy3), Float($0.dx4), Float($0.dy4)) }
+
+        if let gpu = RegistrationCore.metalMatch4D(refDesc: refDesc, tgtDesc: tgtDesc,
+                                                   device: device, commandQueue: commandQueue) {
+            (fwdBestIdx, fwdBestDist, fwdSecDist, bwdBestIdx) = gpu
+        } else {
+            // CPU fallback
+            var fi  = [Int32](repeating: -1,       count: target.count)
+            var fd  = [Float](repeating: .infinity, count: target.count)
+            var sd  = [Float](repeating: .infinity, count: target.count)
+            var bi  = [Int32](repeating: -1,       count: reference.count)
+            var bd  = [Float](repeating: .infinity, count: reference.count)
+            for (ti, tq) in tgtDesc.enumerated() {
+                for (ri, rq) in refDesc.enumerated() {
+                    let d3x = tq.0-rq.0, d3y = tq.1-rq.1, d4x = tq.2-rq.2, d4y = tq.3-rq.3
+                    let d   = (d3x*d3x + d3y*d3y + d4x*d4x + d4y*d4y).squareRoot()
+                    if d < fd[ti] { sd[ti] = fd[ti]; fd[ti] = d; fi[ti] = Int32(ri) }
+                    else if d < sd[ti] { sd[ti] = d }
+                    if d < bd[ri] { bd[ri] = d; bi[ri] = Int32(ti) }
                 }
             }
+            fwdBestIdx = fi; fwdBestDist = fd; fwdSecDist = sd; bwdBestIdx = bi
         }
 
-        // Backward pass: best target match for each reference quad
-        var bwdBestIdx  = [Int](repeating: -1,        count: reference.count)
-        var bwdBestDist = [Double](repeating: .infinity, count: reference.count)
-        for (ti, tq) in target.enumerated() {
-            for (ri, rq) in reference.enumerated() {
-                let d = descriptorDistance(tq, rq)
-                if d < bwdBestDist[ri] { bwdBestDist[ri] = d; bwdBestIdx[ri] = ti }
-            }
-        }
-
+        let thresh = Float(threshold), ratio = Float(ratioThreshold)
         var matches: [(QuadDescriptor, QuadDescriptor)] = []
         for (ti, tq) in target.enumerated() {
-            let ri = fwdBestIdx[ti]
-            guard ri >= 0, fwdBestDist[ti] < threshold else { continue }
-            if fwdSecDist[ti] < .infinity && fwdBestDist[ti] / fwdSecDist[ti] >= ratioThreshold { continue }
-            guard bwdBestIdx[ri] == ti else { continue }
+            let ri = Int(fwdBestIdx[ti])
+            guard ri >= 0, fwdBestDist[ti] < thresh else { continue }
+            if fwdSecDist[ti] < .infinity && fwdBestDist[ti] / fwdSecDist[ti] >= ratio { continue }
+            guard bwdBestIdx[ri] == Int32(ti) else { continue }
             matches.append((reference[ri], tq))
         }
         return matches
