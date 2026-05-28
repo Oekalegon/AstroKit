@@ -114,7 +114,7 @@ private func makeFrame(
 private func makeTestDatabase() throws -> (ArchiveDatabase, URL) {
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent("archivetest-\(UUID().uuidString).sqlite")
-    return (try ArchiveDatabase(url: url), url)
+    return (try ArchiveDatabase(url: url, archiveRootPath: FileManager.default.temporaryDirectory.path), url)
 }
 
 // MARK: - Duplicate detection tests

@@ -12,11 +12,38 @@ public actor Archive {
 
     public init(configuration: ArchiveConfiguration) throws {
         self.configuration = configuration
-        self.database = try ArchiveDatabase(url: configuration.databaseURL)
+        self.database = try ArchiveDatabase(
+            url: configuration.databaseURL,
+            archiveRootPath: configuration.rootURL.path
+        )
         try FileManager.default.createDirectory(
             at: configuration.rootURL,
             withIntermediateDirectories: true
         )
+    }
+
+    // MARK: - Path helpers
+
+    private func toRelativePath(_ url: URL) -> String {
+        let root = configuration.rootURL.path
+        let path = url.path
+        guard path.hasPrefix(root + "/") else { return path }
+        return String(path.dropFirst(root.count + 1))
+    }
+
+    private func toAbsolutePath(_ relative: String) -> String {
+        guard !relative.hasPrefix("/") else { return relative }
+        return configuration.rootURL.path + "/" + relative
+    }
+
+    private func expandPath(_ frame: ArchivedFrame?) -> ArchivedFrame? {
+        guard var f = frame else { return nil }
+        f.filePath = toAbsolutePath(f.filePath)
+        return f
+    }
+
+    private func expandPaths(_ frames: [ArchivedFrame]) -> [ArchivedFrame] {
+        frames.map { var f = $0; f.filePath = toAbsolutePath(f.filePath); return f }
     }
 
     // MARK: - Ingestion
@@ -73,7 +100,7 @@ public actor Archive {
             at: dest.deletingLastPathComponent(), withIntermediateDirectories: true
         )
         try FileManager.default.copyItem(at: url, to: dest)
-        let filePath = dest.path
+        let filePath = toRelativePath(dest)
 
         let frame = ArchivedFrame(
             id: frameID,
@@ -125,10 +152,10 @@ public actor Archive {
                 exposureTime: meta.exposureTime
             )
             if let existing = try await database.frameBySignature(sig) {
-                return (existing, false)
+                return (expandPath(existing)!, false)
             }
         }
-        return (frame, isNew)
+        return (expandPath(frame)!, isNew)
     }
 
     // MARK: - Processing runs
@@ -159,7 +186,10 @@ public actor Archive {
 
     /// Returns a single frame by its absolute file path on disk.
     public func frame(filePath: String) async throws -> ArchivedFrame? {
-        try await database.frameByFilePath(filePath)
+        let relative = filePath.hasPrefix(configuration.rootURL.path + "/")
+            ? String(filePath.dropFirst(configuration.rootURL.path.count + 1))
+            : filePath
+        return expandPath(try await database.frameByFilePath(relative))
     }
 
     /// Returns the processing run that produced a frame, together with its input references.
@@ -220,18 +250,18 @@ public actor Archive {
                 inclusive: true
             )
         }
-        return try await database.queryFrames(query, healpixPixels: healpixPixels)
+        return expandPaths(try await database.queryFrames(query, healpixPixels: healpixPixels))
     }
 
     /// Returns a single frame by its archive ID.
     public func frame(id: UUID) async throws -> ArchivedFrame? {
-        try await database.frameByID(id)
+        expandPath(try await database.frameByID(id))
     }
 
     /// Returns the most recently archived frames, newest first.
     /// - Parameter limit: Maximum number of frames to return (default 15).
     public func recentFrames(limit: Int = 15) async throws -> [ArchivedFrame] {
-        try await database.recentFrames(limit: limit)
+        expandPaths(try await database.recentFrames(limit: limit))
     }
 
     /// Returns all archived objects with frame counts.
@@ -406,7 +436,7 @@ public actor Archive {
         for fid in frameIDs {
             if let f = try await database.frameByID(fid) { result.append(f) }
         }
-        return result
+        return expandPaths(result)
     }
 
     /// Deletes a frame set. Member frames are not affected.
@@ -539,8 +569,8 @@ public actor Archive {
     /// Removes a frame from the archive index.
     /// - Parameter deleteFile: Also deletes the FITS file from disk.
     public func remove(id: UUID, deleteFile: Bool = false) async throws {
-        if deleteFile, let path = try await database.frameFilePath(id: id) {
-            let url = URL(fileURLWithPath: path)
+        if deleteFile, let relative = try await database.frameFilePath(id: id) {
+            let url = URL(fileURLWithPath: toAbsolutePath(relative))
             if FileManager.default.fileExists(atPath: url.path) {
                 try FileManager.default.removeItem(at: url)
             }

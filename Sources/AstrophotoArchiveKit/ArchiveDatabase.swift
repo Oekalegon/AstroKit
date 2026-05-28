@@ -6,8 +6,10 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 
 actor ArchiveDatabase {
     private var db: OpaquePointer?
+    let archiveRootPath: String
 
-    init(url: URL) throws {
+    init(url: URL, archiveRootPath: String) throws {
+        self.archiveRootPath = archiveRootPath
         try FileManager.default.createDirectory(
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -22,6 +24,8 @@ actor ArchiveDatabase {
         sqlite3_exec(database, "PRAGMA foreign_keys = ON", nil, nil, nil)
         // Apply migrations directly — init has exclusive access to self.
         try ArchiveDatabase.applyMigrations(db: database)
+        // Normalize any legacy absolute paths to archive-root-relative paths.
+        ArchiveDatabase.normalizeFilePaths(db: database, archiveRootPath: archiveRootPath)
     }
 
     // Each entry is one schema version. Index 0 → version 1, index 1 → version 2, …
@@ -205,6 +209,37 @@ actor ArchiveDatabase {
             // PRAGMA user_version doesn't support ? binding; integer interpolation is safe.
             sqlite3_exec(db, "PRAGMA user_version = \(targetVersion)", nil, nil, nil)
         }
+    }
+
+    // Strips the archive root prefix from any file_path rows that still carry an absolute path.
+    // Idempotent — rows already stored as relative paths are unaffected.
+    private static func normalizeFilePaths(db: OpaquePointer, archiveRootPath: String) {
+        let prefix = archiveRootPath + "/"
+        let sql = """
+            UPDATE frames
+               SET file_path = SUBSTR(file_path, ?)
+             WHERE file_path LIKE ?
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+        // SUBSTR start position is 1-based; skip the root + trailing slash.
+        sqlite3_bind_int(stmt, 1, Int32(prefix.utf8.count + 1))
+        sqlite3_bind_text(stmt, 2, prefix + "%", -1, SQLITE_TRANSIENT)
+        sqlite3_step(stmt)
+
+        // Same normalization for fits_tables.
+        let tableSQL = """
+            UPDATE fits_tables
+               SET file_path = SUBSTR(file_path, ?)
+             WHERE file_path LIKE ?
+            """
+        var tstmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, tableSQL, -1, &tstmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(tstmt) }
+        sqlite3_bind_int(tstmt, 1, Int32(prefix.utf8.count + 1))
+        sqlite3_bind_text(tstmt, 2, prefix + "%", -1, SQLITE_TRANSIENT)
+        sqlite3_step(tstmt)
     }
 
     deinit {
