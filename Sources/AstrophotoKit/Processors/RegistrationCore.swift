@@ -494,6 +494,92 @@ enum RegistrationCore {
         return sqrt((px-tgt.x)*(px-tgt.x) + (py-tgt.y)*(py-tgt.y))
     }
 
+    // MARK: - GPU-accelerated descriptor matching
+
+    /// Runs the forward and backward nearest-neighbour passes for 2D float descriptors
+    /// on the GPU using the `triangle_match_forward` and `triangle_match_backward` Metal kernels.
+    ///
+    /// The ratio test and mutual cross-check are left to the caller; this function only
+    /// returns the raw index/distance arrays so it can be shared by any 2D descriptor matcher.
+    ///
+    /// Returns nil if the Metal pipeline cannot be created — caller should fall back to CPU.
+    static func metalMatch2D(
+        refDesc: [(Float, Float)],
+        tgtDesc: [(Float, Float)],
+        device: MTLDevice,
+        commandQueue: MTLCommandQueue
+    ) -> (fwdBestIdx: [Int32], fwdBestDist: [Float], fwdSecDist: [Float], bwdBestIdx: [Int32])? {
+        guard !refDesc.isEmpty, !tgtDesc.isEmpty else { return nil }
+        guard let library  = AstrophotoKit.makeShaderLibrary(device: device),
+              let fwdFn    = library.makeFunction(name: "triangle_match_forward"),
+              let bwdFn    = library.makeFunction(name: "triangle_match_backward"),
+              let fwdPipeline = try? device.makeComputePipelineState(function: fwdFn),
+              let bwdPipeline = try? device.makeComputePipelineState(function: bwdFn)
+        else { return nil }
+
+        let nRef = refDesc.count, nTgt = tgtDesc.count
+
+        // Pack as flat Float32 arrays (each descriptor = 2 × Float32 = 8 bytes)
+        var refFlat = refDesc.flatMap { [$0.0, $0.1] }
+        var tgtFlat = tgtDesc.flatMap { [$0.0, $0.1] }
+        var counts  = SIMD2<UInt32>(UInt32(nRef), UInt32(nTgt))
+
+        guard
+            let refBuf     = device.makeBuffer(bytes: &refFlat, length: nRef * 8, options: .storageModeShared),
+            let tgtBuf     = device.makeBuffer(bytes: &tgtFlat, length: nTgt * 8, options: .storageModeShared),
+            let cntBuf     = device.makeBuffer(bytes: &counts,  length: 8,        options: .storageModeShared),
+            let fwdIdxBuf  = device.makeBuffer(length: nTgt * 4, options: .storageModeShared),
+            let fwdBestBuf = device.makeBuffer(length: nTgt * 4, options: .storageModeShared),
+            let fwdSecBuf  = device.makeBuffer(length: nTgt * 4, options: .storageModeShared),
+            let bwdIdxBuf  = device.makeBuffer(length: nRef * 4, options: .storageModeShared),
+            let cmdBuf     = commandQueue.makeCommandBuffer()
+        else { return nil }
+
+        // Forward pass — one thread per target descriptor
+        if let enc = cmdBuf.makeComputeCommandEncoder() {
+            enc.setComputePipelineState(fwdPipeline)
+            enc.setBuffer(refBuf,     offset: 0, index: 0)
+            enc.setBuffer(tgtBuf,     offset: 0, index: 1)
+            enc.setBuffer(fwdIdxBuf,  offset: 0, index: 2)
+            enc.setBuffer(fwdBestBuf, offset: 0, index: 3)
+            enc.setBuffer(fwdSecBuf,  offset: 0, index: 4)
+            enc.setBuffer(cntBuf,     offset: 0, index: 5)
+            let tgW = min(fwdPipeline.maxTotalThreadsPerThreadgroup, nTgt)
+            let gcW = (nTgt + tgW - 1) / tgW
+            enc.dispatchThreadgroups(MTLSize(width: gcW, height: 1, depth: 1),
+                                     threadsPerThreadgroup: MTLSize(width: tgW, height: 1, depth: 1))
+            enc.endEncoding()
+        }
+
+        // Backward pass — one thread per reference descriptor (reuses same counts buffer)
+        if let enc = cmdBuf.makeComputeCommandEncoder() {
+            enc.setComputePipelineState(bwdPipeline)
+            enc.setBuffer(refBuf,    offset: 0, index: 0)
+            enc.setBuffer(tgtBuf,    offset: 0, index: 1)
+            enc.setBuffer(bwdIdxBuf, offset: 0, index: 2)
+            enc.setBuffer(cntBuf,    offset: 0, index: 3)
+            let tgW = min(bwdPipeline.maxTotalThreadsPerThreadgroup, nRef)
+            let gcW = (nRef + tgW - 1) / tgW
+            enc.dispatchThreadgroups(MTLSize(width: gcW, height: 1, depth: 1),
+                                     threadsPerThreadgroup: MTLSize(width: tgW, height: 1, depth: 1))
+            enc.endEncoding()
+        }
+
+        cmdBuf.commit()
+        cmdBuf.waitUntilCompleted()
+
+        let fwdBestIdx  = Array(UnsafeBufferPointer(
+            start: fwdIdxBuf.contents().assumingMemoryBound(to: Int32.self), count: nTgt))
+        let fwdBestDist = Array(UnsafeBufferPointer(
+            start: fwdBestBuf.contents().assumingMemoryBound(to: Float.self), count: nTgt))
+        let fwdSecDist  = Array(UnsafeBufferPointer(
+            start: fwdSecBuf.contents().assumingMemoryBound(to: Float.self), count: nTgt))
+        let bwdBestIdx  = Array(UnsafeBufferPointer(
+            start: bwdIdxBuf.contents().assumingMemoryBound(to: Int32.self), count: nRef))
+
+        return (fwdBestIdx, fwdBestDist, fwdSecDist, bwdBestIdx)
+    }
+
     // MARK: - Statistics
 
     static func median(_ values: [Double]) -> Double {

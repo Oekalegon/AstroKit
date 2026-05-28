@@ -137,7 +137,8 @@ public struct FrameRegistrationTriangleProcessor: Processor {
                 reference: refTriangles, target: frameData.triangles,
                 matchThreshold: matchThreshold, minMatches: minMatches,
                 ransacIterations: ransacIterations, inlierThreshold: inlierThreshold,
-                maxScaleDeviation: maxScaleDeviation, ratioThreshold: ratioThreshold
+                maxScaleDeviation: maxScaleDeviation, ratioThreshold: ratioThreshold,
+                device: device, commandQueue: commandQueue
             )
             rows.append(RegistrationRow(frameIndex: i, transform: transform,
                                         matchCount: matchCount, rmse: rmse,
@@ -306,10 +307,13 @@ public struct FrameRegistrationTriangleProcessor: Processor {
         ransacIterations:  Int,
         inlierThreshold:   Double,
         maxScaleDeviation: Double,
-        ratioThreshold:    Double
+        ratioThreshold:    Double,
+        device:            MTLDevice,
+        commandQueue:      MTLCommandQueue
     ) -> (transform: SimilarityTransform, matchCount: Int, rmse: Double, success: Bool) {
         let matches = matchTriangles(reference: reference, target: target,
-                                     threshold: matchThreshold, ratioThreshold: ratioThreshold)
+                                     threshold: matchThreshold, ratioThreshold: ratioThreshold,
+                                     device: device, commandQueue: commandQueue)
         guard matches.count >= minMatches else {
             Logger.processor.warning("FrameRegistrationTriangle: only \(matches.count) triangle matches (need \(minMatches)) — using identity")
             return (.identity, matches.count, 0, false)
@@ -339,51 +343,64 @@ public struct FrameRegistrationTriangleProcessor: Processor {
 
     // MARK: - Triangle matching (ratio test + mutual cross-check)
 
+    /// Matches triangle descriptors using the GPU when available, falling back to CPU.
+    ///
+    /// GPU path: dispatches `triangle_match_forward` and `triangle_match_backward` Metal
+    /// kernels to compute the full pairwise distance matrix in parallel, then applies the
+    /// ratio test and mutual cross-check on CPU from the small result arrays.
+    ///
+    /// CPU path: identical O(|ref| × |tgt|) scan, used when Metal pipeline creation fails.
     private func matchTriangles(
         reference:      [TriangleDescriptor],
         target:         [TriangleDescriptor],
         threshold:      Double,
-        ratioThreshold: Double
+        ratioThreshold: Double,
+        device:         MTLDevice,
+        commandQueue:   MTLCommandQueue
     ) -> [(TriangleDescriptor, TriangleDescriptor)] {
         guard !reference.isEmpty, !target.isEmpty else { return [] }
 
-        var fwdBestIdx  = [Int](repeating: -1,          count: target.count)
-        var fwdBestDist = [Double](repeating: .infinity, count: target.count)
-        var fwdSecDist  = [Double](repeating: .infinity, count: target.count)
-        for (ti, tq) in target.enumerated() {
-            for (ri, rq) in reference.enumerated() {
-                let d = descriptorDistance(tq, rq)
-                if d < fwdBestDist[ti] {
-                    fwdSecDist[ti] = fwdBestDist[ti]; fwdBestDist[ti] = d; fwdBestIdx[ti] = ri
-                } else if d < fwdSecDist[ti] {
-                    fwdSecDist[ti] = d
+        let fwdBestIdx:  [Int32]
+        let fwdBestDist: [Float]
+        let fwdSecDist:  [Float]
+        let bwdBestIdx:  [Int32]
+
+        let refDesc = reference.map { (Float($0.ratio1), Float($0.ratio2)) }
+        let tgtDesc = target.map    { (Float($0.ratio1), Float($0.ratio2)) }
+
+        if let gpu = RegistrationCore.metalMatch2D(refDesc: refDesc, tgtDesc: tgtDesc,
+                                                   device: device, commandQueue: commandQueue) {
+            (fwdBestIdx, fwdBestDist, fwdSecDist, bwdBestIdx) = gpu
+        } else {
+            // CPU fallback
+            var fi  = [Int32](repeating: -1,   count: target.count)
+            var fd  = [Float](repeating: .infinity, count: target.count)
+            var sd  = [Float](repeating: .infinity, count: target.count)
+            var bi  = [Int32](repeating: -1,   count: reference.count)
+            var bd  = [Float](repeating: .infinity, count: reference.count)
+            for (ti, tq) in tgtDesc.enumerated() {
+                for (ri, rq) in refDesc.enumerated() {
+                    let d1 = tq.0 - rq.0, d2 = tq.1 - rq.1
+                    let d  = (d1*d1 + d2*d2).squareRoot()
+                    if d < fd[ti] { sd[ti] = fd[ti]; fd[ti] = d; fi[ti] = Int32(ri) }
+                    else if d < sd[ti] { sd[ti] = d }
+                    if d < bd[ri] { bd[ri] = d; bi[ri] = Int32(ti) }
                 }
             }
+            fwdBestIdx = fi; fwdBestDist = fd; fwdSecDist = sd; bwdBestIdx = bi
         }
 
-        var bwdBestIdx  = [Int](repeating: -1,          count: reference.count)
-        var bwdBestDist = [Double](repeating: .infinity, count: reference.count)
-        for (ti, tq) in target.enumerated() {
-            for (ri, rq) in reference.enumerated() {
-                let d = descriptorDistance(tq, rq)
-                if d < bwdBestDist[ri] { bwdBestDist[ri] = d; bwdBestIdx[ri] = ti }
-            }
-        }
-
+        // Ratio test + mutual cross-check (CPU, tiny arrays)
+        let thresh = Float(threshold), ratio = Float(ratioThreshold)
         var matches: [(TriangleDescriptor, TriangleDescriptor)] = []
         for (ti, tq) in target.enumerated() {
-            let ri = fwdBestIdx[ti]
-            guard ri >= 0, fwdBestDist[ti] < threshold else { continue }
-            if fwdSecDist[ti] < .infinity && fwdBestDist[ti] / fwdSecDist[ti] >= ratioThreshold { continue }
-            guard bwdBestIdx[ri] == ti else { continue }
+            let ri = Int(fwdBestIdx[ti])
+            guard ri >= 0, fwdBestDist[ti] < thresh else { continue }
+            if fwdSecDist[ti] < .infinity && fwdBestDist[ti] / fwdSecDist[ti] >= ratio { continue }
+            guard bwdBestIdx[ri] == Int32(ti) else { continue }
             matches.append((reference[ri], tq))
         }
         return matches
-    }
-
-    private func descriptorDistance(_ a: TriangleDescriptor, _ b: TriangleDescriptor) -> Double {
-        let d1 = a.ratio1 - b.ratio1, d2 = a.ratio2 - b.ratio2
-        return sqrt(d1*d1 + d2*d2)
     }
 
     // MARK: - Output table (same schema as FrameRegistrationProcessor)
