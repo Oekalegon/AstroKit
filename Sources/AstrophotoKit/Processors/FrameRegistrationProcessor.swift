@@ -21,12 +21,13 @@ private struct QuadDescriptor {
 }
 
 private struct RegistrationRow {
-    let frameIndex: Int
-    let transform:  SimilarityTransform
-    let matchCount: Int
-    let rmse:       Double
-    let stats:      FrameStats
-    let success:    Bool
+    let frameIndex:    Int
+    let transform:     SimilarityTransform
+    let matchCount:    Int
+    let rawMatchCount: Int
+    let rmse:          Double
+    let stats:         FrameStats
+    let success:       Bool
 }
 
 // MARK: - Processor
@@ -93,7 +94,7 @@ public struct FrameRegistrationProcessor: Processor {
         let maxEccentricity     = parameters["max_eccentricity"]?.doubleValue ?? 0.0
 
         // ── Star detection ───────────────────────────────────────────────────────
-        var perFrame: [(quads: [QuadDescriptor], stats: FrameStats)] = []
+        var perFrame: [(quads: [QuadDescriptor], stars: [StarPoint], stats: FrameStats)] = []
         for frame in frameSet.frames {
             let (starsTable, skyBg, skyNoise) = try RegistrationCore.detectStars(
                 frame: frame, device: device, commandQueue: commandQueue,
@@ -101,12 +102,12 @@ public struct FrameRegistrationProcessor: Processor {
                 erosionKernel: erosionKernel, dilationKernel: dilationKernel,
                 maxFWHMRatio: maxFWHMRatio, maxEccentricity: maxEccentricity
             )
-            let quads = buildQuads(from: starsTable, maxStars: maxStars,
-                                   minDistancePct: minDistancePct, kNeighbors: kNeighbors,
-                                   device: device, commandQueue: commandQueue)
+            let (quads, stars) = buildQuadsAndStars(from: starsTable, maxStars: maxStars,
+                                                    minDistancePct: minDistancePct, kNeighbors: kNeighbors,
+                                                    device: device, commandQueue: commandQueue)
             let stats = RegistrationCore.extractStats(from: starsTable,
                                                       skyBackground: skyBg, skyNoise: skyNoise)
-            perFrame.append((quads: quads, stats: stats))
+            perFrame.append((quads: quads, stars: stars, stats: stats))
         }
 
         // ── Reference frame ──────────────────────────────────────────────────────
@@ -123,14 +124,18 @@ public struct FrameRegistrationProcessor: Processor {
         // ── Per-frame registration ───────────────────────────────────────────────
         var rows: [RegistrationRow] = []
         let refQuads = perFrame[refIdx].quads
+        let refStars = perFrame[refIdx].stars
 
         for (i, frameData) in perFrame.enumerated() {
             if i == refIdx {
                 rows.append(RegistrationRow(frameIndex: i, transform: .identity,
-                                            matchCount: frameData.quads.count, rmse: 0,
-                                            stats: frameData.stats, success: true))
+                                            matchCount: frameData.quads.count, rawMatchCount: frameData.stars.count,
+                                            rmse: 0, stats: frameData.stats, success: true))
                 continue
             }
+            let rawMatchCount = RegistrationCore.countRawMatches(
+                refStars: refStars, tgtStars: frameData.stars, threshold: inlierThreshold)
+            Logger.processor.info("FrameRegistration: frame \(i) — raw overlap (no transform): \(rawMatchCount)/\(refStars.count) ref stars within \(inlierThreshold, format: .fixed(precision: 1)) px of a target star")
             let (transform, matchCount, rmse, success) = computeTransform(
                 reference: refQuads, target: frameData.quads,
                 matchThreshold: matchThreshold, minMatches: minMatches,
@@ -139,8 +144,8 @@ public struct FrameRegistrationProcessor: Processor {
                 device: device, commandQueue: commandQueue
             )
             rows.append(RegistrationRow(frameIndex: i, transform: transform,
-                                        matchCount: matchCount, rmse: rmse,
-                                        stats: frameData.stats, success: success))
+                                        matchCount: matchCount, rawMatchCount: rawMatchCount,
+                                        rmse: rmse, stats: frameData.stats, success: success))
         }
 
         // ── Success-rate gate ────────────────────────────────────────────────────
@@ -224,6 +229,8 @@ public struct FrameRegistrationProcessor: Processor {
             contents: sortedRows.map { $0.transform.scale }))
         df.append(column: Column(name: "match_count",
             contents: sortedRows.map { Int32($0.matchCount) }))
+        df.append(column: Column(name: "raw_match_count",
+            contents: sortedRows.map { Int32($0.rawMatchCount) }))
         df.append(column: Column(name: "rmse",
             contents: sortedRows.map { $0.rmse }))
         df.append(column: Column(name: "registration_success",
@@ -253,6 +260,29 @@ public struct FrameRegistrationProcessor: Processor {
     }
 
     // MARK: - Quad formation
+
+    /// Builds quads and also returns the raw star positions for raw-overlap diagnostics.
+    private func buildQuadsAndStars(
+        from starsTable: TableData,
+        maxStars: Int,
+        minDistancePct: Double,
+        kNeighbors: Int,
+        device: MTLDevice,
+        commandQueue: MTLCommandQueue
+    ) -> ([QuadDescriptor], [StarPoint]) {
+        let quads = buildQuads(from: starsTable, maxStars: maxStars,
+                               minDistancePct: minDistancePct, kNeighbors: kNeighbors,
+                               device: device, commandQueue: commandQueue)
+        var stars: [StarPoint] = []
+        if let df = starsTable.dataFrame {
+            for row in df.rows {
+                if let x = row["centroid_x"] as? Double, let y = row["centroid_y"] as? Double {
+                    stars.append(StarPoint(x: x, y: y))
+                }
+            }
+        }
+        return (quads, stars)
+    }
 
     /// Builds the quad descriptor set for one frame by running QuadsProcessor on the
     /// FWHM-measured star table.

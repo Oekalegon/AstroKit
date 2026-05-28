@@ -294,6 +294,26 @@ enum RegistrationCore {
                           meanFlux: meanFlux, skyBackground: skyBackground, skyNoise: skyNoise)
     }
 
+    // MARK: - Raw star overlap check
+
+    /// Counts how many reference stars have at least one target star within `threshold` pixels,
+    /// with NO transform applied. A high count means the two frames are already co-pointed;
+    /// a low count means the frames are genuinely offset from each other.
+    ///
+    /// Use this as a sanity check after computing transforms: if `raw_match_count` is already
+    /// high, a near-zero computed transform may be correct (truly co-pointed session) or it
+    /// may indicate a false-match consensus producing a wrong near-zero result. Compare against
+    /// the post-transform RMSE to disambiguate.
+    static func countRawMatches(refStars: [StarPoint], tgtStars: [StarPoint], threshold: Double) -> Int {
+        let thr2 = threshold * threshold
+        return refStars.filter { ref in
+            tgtStars.contains { tgt in
+                let dx = tgt.x - ref.x, dy = tgt.y - ref.y
+                return dx*dx + dy*dy <= thr2
+            }
+        }.count
+    }
+
     // MARK: - Reference frame selection
 
     /// Picks the frame with the best combined score (most stars + sharpest FWHM).

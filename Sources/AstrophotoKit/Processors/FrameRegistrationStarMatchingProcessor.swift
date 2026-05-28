@@ -97,10 +97,14 @@ public struct FrameRegistrationStarMatchingProcessor: Processor {
         for (i, frameData) in perFrame.enumerated() {
             if i == refIdx {
                 rows.append(RegistrationRow(frameIndex: i, transform: .identity,
-                                            matchCount: refStars.count, rmse: 0,
-                                            stats: frameData.stats, success: true))
+                                            matchCount: refStars.count, rawMatchCount: refStars.count,
+                                            rmse: 0, stats: frameData.stats, success: true))
                 continue
             }
+
+            let rawMatchCount = RegistrationCore.countRawMatches(
+                refStars: refStars, tgtStars: frameData.stars, threshold: inlierThreshold)
+            Logger.processor.info("FrameRegistrationStarMatching: frame \(i) — raw overlap (no transform): \(rawMatchCount)/\(refStars.count) ref stars within \(inlierThreshold, format: .fixed(precision: 1)) px of a target star")
 
             guard let result = RegistrationCore.starMatchingRANSAC(
                 refStars: refStars, tgtStars: frameData.stars,
@@ -110,16 +114,16 @@ public struct FrameRegistrationStarMatchingProcessor: Processor {
             ) else {
                 Logger.processor.warning("FrameRegistrationStarMatching: frame \(i) — fewer than \(minMatches) stars matched, using identity")
                 rows.append(RegistrationRow(frameIndex: i, transform: .identity,
-                                            matchCount: 0, rmse: 0,
-                                            stats: frameData.stats, success: false))
+                                            matchCount: 0, rawMatchCount: rawMatchCount,
+                                            rmse: 0, stats: frameData.stats, success: false))
                 continue
             }
 
             let (_, rmse) = RegistrationCore.leastSquaresSimilarity(pairs: result.pairs)
             Logger.processor.info("FrameRegistrationStarMatching: frame \(i) — \(result.pairs.count) matched stars, rmse \(rmse, format: .fixed(precision: 2)) px")
             rows.append(RegistrationRow(frameIndex: i, transform: result.transform,
-                                        matchCount: result.pairs.count, rmse: rmse,
-                                        stats: frameData.stats, success: true))
+                                        matchCount: result.pairs.count, rawMatchCount: rawMatchCount,
+                                        rmse: rmse, stats: frameData.stats, success: true))
         }
 
         // ── Success-rate gate ────────────────────────────────────────────────────
@@ -235,6 +239,8 @@ public struct FrameRegistrationStarMatchingProcessor: Processor {
             contents: sortedRows.map { $0.transform.scale }))
         df.append(column: Column(name: "match_count",
             contents: sortedRows.map { Int32($0.matchCount) }))
+        df.append(column: Column(name: "raw_match_count",
+            contents: sortedRows.map { Int32($0.rawMatchCount) }))
         df.append(column: Column(name: "rmse",
             contents: sortedRows.map { $0.rmse }))
         df.append(column: Column(name: "registration_success",
@@ -267,10 +273,11 @@ public struct FrameRegistrationStarMatchingProcessor: Processor {
 // MARK: - Private types (mirrors FrameRegistrationTriangleProcessor)
 
 private struct RegistrationRow {
-    let frameIndex: Int
-    let transform:  SimilarityTransform
-    let matchCount: Int
-    let rmse:       Double
-    let stats:      FrameStats
-    let success:    Bool
+    let frameIndex:   Int
+    let transform:    SimilarityTransform
+    let matchCount:   Int
+    let rawMatchCount: Int
+    let rmse:         Double
+    let stats:        FrameStats
+    let success:      Bool
 }

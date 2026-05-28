@@ -22,12 +22,13 @@ private struct TriangleDescriptor {
 }
 
 private struct RegistrationRow {
-    let frameIndex: Int
-    let transform:  SimilarityTransform
-    let matchCount: Int
-    let rmse:       Double
-    let stats:      FrameStats
-    let success:    Bool
+    let frameIndex:    Int
+    let transform:     SimilarityTransform
+    let matchCount:    Int
+    let rawMatchCount: Int
+    let rmse:          Double
+    let stats:         FrameStats
+    let success:       Bool
 }
 
 // MARK: - Processor
@@ -126,14 +127,18 @@ public struct FrameRegistrationTriangleProcessor: Processor {
         // ── Per-frame registration ───────────────────────────────────────────────
         var rows: [RegistrationRow] = []
         let refTriangles = perFrame[refIdx].triangles
+        let refStars     = perFrame[refIdx].stars
 
         for (i, frameData) in perFrame.enumerated() {
             if i == refIdx {
                 rows.append(RegistrationRow(frameIndex: i, transform: .identity,
-                                            matchCount: frameData.triangles.count, rmse: 0,
-                                            stats: frameData.stats, success: true))
+                                            matchCount: frameData.triangles.count, rawMatchCount: frameData.stars.count,
+                                            rmse: 0, stats: frameData.stats, success: true))
                 continue
             }
+            let rawMatchCount = RegistrationCore.countRawMatches(
+                refStars: refStars, tgtStars: frameData.stars, threshold: inlierThreshold)
+            Logger.processor.info("FrameRegistrationTriangle: frame \(i) — raw overlap (no transform): \(rawMatchCount)/\(refStars.count) ref stars within \(inlierThreshold, format: .fixed(precision: 1)) px of a target star")
             let (transform, matchCount, rmse, success) = computeTransform(
                 reference: refTriangles, target: frameData.triangles,
                 matchThreshold: matchThreshold, minMatches: minMatches,
@@ -142,8 +147,8 @@ public struct FrameRegistrationTriangleProcessor: Processor {
                 device: device, commandQueue: commandQueue
             )
             rows.append(RegistrationRow(frameIndex: i, transform: transform,
-                                        matchCount: matchCount, rmse: rmse,
-                                        stats: frameData.stats, success: success))
+                                        matchCount: matchCount, rawMatchCount: rawMatchCount,
+                                        rmse: rmse, stats: frameData.stats, success: success))
         }
 
         // ── Success-rate gate ────────────────────────────────────────────────────
@@ -450,6 +455,8 @@ public struct FrameRegistrationTriangleProcessor: Processor {
             contents: sortedRows.map { $0.transform.scale }))
         df.append(column: Column(name: "match_count",
             contents: sortedRows.map { Int32($0.matchCount) }))
+        df.append(column: Column(name: "raw_match_count",
+            contents: sortedRows.map { Int32($0.rawMatchCount) }))
         df.append(column: Column(name: "rmse",
             contents: sortedRows.map { $0.rmse }))
         df.append(column: Column(name: "registration_success",
