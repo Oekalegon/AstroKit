@@ -81,6 +81,12 @@ extension Frame {
             egain = v
         }
 
+        // Extract plate scale in arcseconds per pixel from PIXSCALE or SCALE.
+        var pixelScale: Double? = nil
+        for key in ["PIXSCALE", "SCALE"] {
+            if let v = fitsImage.metadata[key]?.doubleValue, v > 0 { pixelScale = v; break }
+        }
+
         // Extract camera offset / bias pedestal.
         var offset: Double? = nil
         if let v = fitsImage.metadata["OFFSET"]?.doubleValue {
@@ -108,7 +114,8 @@ extension Frame {
             filterName: filterName,
             fitsMinValue: Double(fitsImage.originalMinValue),
             fitsMaxValue: Double(fitsImage.originalMaxValue),
-            egain: egain
+            egain: egain,
+            pixelScale: pixelScale
         )
     }
 

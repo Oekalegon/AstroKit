@@ -5,19 +5,7 @@ import os
 
 // MARK: - Internal types
 
-private struct SimilarityTransform {
-    let tx: Double
-    let ty: Double
-    let rotation: Double  // radians
-    let scale: Double
-
-    var a: Double { scale * cos(rotation) }
-    var b: Double { scale * sin(rotation) }
-
-    static let identity = SimilarityTransform(tx: 0, ty: 0, rotation: 0, scale: 1)
-}
-
-private struct FrameStats {
+private struct FrameImageStats {
     let background: Float
     let scale: Float
     let std: Float
@@ -428,7 +416,7 @@ public struct FrameStackingProcessor: Processor {
         from texture: MTLTexture,
         device: MTLDevice,
         commandQueue: MTLCommandQueue
-    ) -> FrameStats {
+    ) -> FrameImageStats {
         let sampleW = min(texture.width,  512)
         let sampleH = min(texture.height, 512)
         let originX = (texture.width  - sampleW) / 2
@@ -439,7 +427,7 @@ public struct FrameStackingProcessor: Processor {
         guard let buf = device.makeBuffer(length: bufferSize, options: .storageModeShared),
               let cmdBuf = commandQueue.makeCommandBuffer(),
               let blit = cmdBuf.makeBlitCommandEncoder() else {
-            return FrameStats(background: 0, scale: 1, std: 1)
+            return FrameImageStats(background:0, scale: 1, std: 1)
         }
         blit.copy(from: texture, sourceSlice: 0, sourceLevel: 0,
                   sourceOrigin: MTLOrigin(x: originX, y: originY, z: 0),
@@ -457,8 +445,8 @@ public struct FrameStackingProcessor: Processor {
         return computeStats(pixels)
     }
 
-    private func computeStats(_ pixels: [Float]) -> FrameStats {
-        guard !pixels.isEmpty else { return FrameStats(background: 0, scale: 1, std: 1) }
+    private func computeStats(_ pixels: [Float]) -> FrameImageStats {
+        guard !pixels.isEmpty else { return FrameImageStats(background:0, scale: 1, std: 1) }
         let sorted = pixels.sorted()
         let n = sorted.count
 
@@ -490,7 +478,7 @@ public struct FrameStackingProcessor: Processor {
         let scaleStart = n / 2
         let scaleEnd   = min(n - 1, n * 95 / 100)
         let scale = scaleStart <= scaleEnd ? sorted[(scaleStart + scaleEnd) / 2] : sorted[n / 2]
-        return FrameStats(background: background, scale: max(1e-7, scale), std: std)
+        return FrameImageStats(background:background, scale: max(1e-7, scale), std: std)
     }
 
     // MARK: - GPU stacking

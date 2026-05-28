@@ -131,7 +131,8 @@ ap run star_detection --input M51.fits --json
 | `autofocus_focused` | Autofocus curve for focused images |
 | `autofocus_donut` | Autofocus curve for donut (defocused) images |
 | `dark_calibration` | Dark frame calibration |
-| `frame_registration` | Register multiple frames against a reference |
+| `frame_registration` | Register multiple frames — 4-star quad patterns |
+| `frame_registration_triangle` | Register multiple frames — 3-star triangle patterns (sparse fields) |
 | `frame_stacking` | Register and stack multiple frames into a master light |
 
 ---
@@ -162,6 +163,43 @@ ap run frame_registration \
 ```
 
 The output FITS contains a `REGISTRATION` BINTABLE extension with columns for each frame's translation, rotation, scale, star count, FWHM, and match quality.
+
+---
+
+### `frame_registration_triangle`
+
+Aligns a set of frames using **3-star triangle pattern matching** instead of 4-star quads. Triangle patterns produce C(n,3) combinations vs C(n,4) for quads, so the pattern space is roughly `n/4` times larger for the same star count. This makes triangle registration the better choice when the star field is sparse and `frame_registration` cannot find enough quad matches.
+
+The output schema is identical to `frame_registration` — the same `registration_table` columns and optional `reference_stars` table — so both pipelines are drop-in interchangeable.
+
+```bash
+# Sparse-field registration with triangle patterns:
+ap run frame_registration_triangle \
+  --input input_frames:/path/to/lights/ \
+  --output registration.fits
+
+# Increase k-neighbours for even more pattern coverage:
+ap run frame_registration_triangle \
+  --input input_frames:/path/to/lights/ \
+  --param k_neighbors=12 \
+  --output registration.fits
+```
+
+**Parameters unique to triangle registration:**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `k_neighbors` | `8` | Nearest neighbours per star used to form triangles (each star contributes C(k,2) triangles) |
+
+All other parameters (`match_threshold`, `min_matches`, `ransac_iterations`, `inlier_threshold`, `blur_radius`, `threshold_value`, `erosion_kernel_size`, `dilation_kernel_size`, `max_stars`, `min_distance_percent`, `max_scale_deviation`, `ratio_threshold`, `min_success_rate`, `max_fwhm_ratio`, `reference_frame`) are identical to `frame_registration`.
+
+**When to use each algorithm:**
+
+| Situation | Recommended pipeline |
+|-----------|----------------------|
+| Dense star field (≥ 10 bright stars per frame) | `frame_registration` |
+| Sparse field or galaxy/nebula centres (5–10 stars) | `frame_registration_triangle` |
+| Very sparse (< 5 stars) or translation-only | Phase-correlation or plate-solving |
 
 ---
 

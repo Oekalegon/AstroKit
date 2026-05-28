@@ -8,9 +8,9 @@ description: >
 
 steps:
   - id: registration
-    type: frame_registration
+    type: frame_registration_dispatch
     name: Frame Registration
-    description: Detects stars in each frame and computes similarity transforms relative to the best-quality reference frame.
+    description: Detects stars in each frame and computes similarity transforms relative to the best-quality reference frame. The algorithm is selected by the registration_algorithm parameter.
     dataInputs:
       - name: input_frames
         type: frameSet
@@ -19,6 +19,10 @@ steps:
         collection_mode: together
         description: Collection of light frames to register and stack
     parameters:
+      - name: registration_algorithm
+        from: registration_algorithm
+        default_value: quad
+        description: "Registration algorithm: quad (4-star patterns, default) | triangle (3-star patterns) | stars (direct position matching, most robust for sparse fields)"
       - name: reference_frame
         from: reference_frame
         default_value: -1
@@ -26,7 +30,7 @@ steps:
       - name: match_threshold
         from: match_threshold
         default_value: 0.05
-        description: Maximum L2 distance in quad descriptor space for a valid match
+        description: Maximum L2 distance in descriptor space for a valid match
       - name: min_matches
         from: min_matches
         default_value: 4
@@ -67,6 +71,18 @@ steps:
         from: k_neighbors
         default_value: 5
         description: Number of nearest neighbours used to form quads
+      - name: max_fwhm_ratio
+        from: max_fwhm_ratio
+        default_value: 2.5
+        description: Extended-source filter — removes detections with FWHM > ratio × median FWHM (0 = disabled)
+      - name: max_eccentricity
+        from: max_eccentricity
+        default_value: 0.0
+        description: Roundness filter — removes detections with eccentricity > threshold (0 = disabled; 0 = circle, 1 = line; try 0.5 for sparse emission-line fields)
+      - name: min_centroid_subpixel_offset
+        from: min_centroid_subpixel_offset
+        default_value: 0.05
+        description: Hot-pixel filter — rejects sources whose centroid is within this many pixels of an integer coordinate on both axes (hot pixels centre on exact pixel positions; real stars do not). Set to 0 to disable.
     outputs:
       - name: registration_table
         type: table

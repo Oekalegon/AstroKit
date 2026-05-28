@@ -68,7 +68,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
     /// Cross-camera comparable (independent of gain setting and bit depth).
     public var backgroundNoiseElectrons: Double?
     /// Median star eccentricity (0 = circular, 1 = line; populated by frame_quality / star_detection
-    /// / frame_registration pipeline or read from FITS header MEDECCEN).
+    /// / frame_registration_quad pipeline or read from FITS header MEDECCEN).
     public var medianEccentricity: Double?
     /// Number of saturated stars (peak pixel ≥ 90 % full-scale).
     /// Populated by frame_quality pipeline or read from FITS header NSATSTAR.

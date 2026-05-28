@@ -124,6 +124,21 @@ public actor ProcessorRegistry {
             register(frameRegistration)
         }
 
+        let frameRegistrationTriangle = FrameRegistrationTriangleProcessor()
+        if implementations[frameRegistrationTriangle.id] == nil {
+            register(frameRegistrationTriangle)
+        }
+
+        let frameRegistrationStarMatching = FrameRegistrationStarMatchingProcessor()
+        if implementations[frameRegistrationStarMatching.id] == nil {
+            register(frameRegistrationStarMatching)
+        }
+
+        let frameRegistrationDispatch = FrameRegistrationDispatchProcessor()
+        if implementations[frameRegistrationDispatch.id] == nil {
+            register(frameRegistrationDispatch)
+        }
+
         let frameStacking = FrameStackingProcessor()
         if implementations[frameStacking.id] == nil {
             register(frameStacking)

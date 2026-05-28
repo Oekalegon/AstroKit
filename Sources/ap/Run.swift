@@ -18,7 +18,7 @@ extension AP {
               ap run dark-calibration --input light_frame:light.fits --input dark_frame:dark.fits
 
             Multi-frame (FrameSet) pipeline — repeat the same name:
-              ap run frame_registration --input input_frames:frame1.fits --input input_frames:frame2.fits
+              ap run frame_registration_quad --input input_frames:frame1.fits --input input_frames:frame2.fits
 
             Archive frame input (by UUID):
               ap run star_detection --input input_frame:@frame:3F7A1234-…
@@ -31,8 +31,8 @@ extension AP {
               ap run star-detection --input image.fits --param threshold_value=4.0
 
             Save output table:
-              ap run frame_registration --input input_frames:f1.fits --input input_frames:f2.fits --output reg.fits
-              ap run frame_registration ... --output reg.csv --format csv
+              ap run frame_registration_quad --input input_frames:f1.fits --input input_frames:f2.fits --output reg.fits
+              ap run frame_registration_quad ... --output reg.csv --format csv
             """
         )
 
@@ -305,8 +305,12 @@ extension AP {
 
             // Save output if requested
             if let outputPath = output {
-                if let firstFrame = frames.first, let firstTable = tables.first,
-                   let df = firstTable.dataFrame, format.lowercased() != "csv" {
+                // A registration table is identified by its frame_index column.
+                let regTable = tables.first(where: {
+                    $0.dataFrame?.columns.contains(where: { $0.name == "frame_index" }) == true
+                })
+                if let firstFrame = frames.first, let regDF = regTable?.dataFrame,
+                   format.lowercased() != "csv" {
                     // Stacked image + registration table → combined FITS
                     guard let texture = firstFrame.texture else {
                         throw APError("Output frame has no texture data")
@@ -324,7 +328,7 @@ extension AP {
                     let stackRejHigh    = parameters["rejection_high"]?.doubleValue   ?? 3.0
                     try FITSTableWriter.writeStackedOutput(
                         pixelData: pixels, width: w, height: h,
-                        registrationTable: df,
+                        registrationTable: regDF,
                         method: stackMethod,
                         normalisation: stackNorm,
                         rejection: stackRej,
@@ -334,11 +338,34 @@ extension AP {
                     )
                     if !json {
                         print("Saved stacked FITS to \(outputPath)")
-                        printStackSummary(pixels: pixels, registrationTable: df,
+                        printStackSummary(pixels: pixels, registrationTable: regDF,
                                           inputFrameSet: pipelineInputs["input_frames"] as? FrameSet)
                     }
+                } else if let firstFrame = frames.first {
+                    // Frame output without registration table (e.g. star_detection_diagnostic)
+                    guard let texture = firstFrame.texture else {
+                        throw APError("Output frame has no texture data")
+                    }
+                    let w = texture.width, h = texture.height
+                    let bytesPerPixel = texture.pixelFormat == .rgba32Float ? 4 : 1
+                    let bytesPerRow   = w * bytesPerPixel * MemoryLayout<Float>.size
+                    var rawPixels = [Float](repeating: 0, count: w * h * bytesPerPixel)
+                    texture.getBytes(&rawPixels, bytesPerRow: bytesPerRow,
+                                     from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+                    let pixels: [Float] = bytesPerPixel > 1
+                        ? stride(from: 0, to: rawPixels.count, by: bytesPerPixel).map { rawPixels[$0] }
+                        : rawPixels
+                    try FITSTableWriter.writeResultFrame(
+                        pixelData: pixels, width: w, height: h,
+                        pipelineID: pipelineID,
+                        imageType: "Light Frame",
+                        filterName: firstFrame.filterName,
+                        stacked: false,
+                        to: outputPath
+                    )
+                    if !json { print("Saved frame to \(outputPath)") }
                 } else if let firstTable = tables.first, let df = firstTable.dataFrame {
-                    // Table-only output (e.g. frame_registration)
+                    // Table-only output (e.g. frame_registration_quad)
                     let outputFormat: FITSTableWriter.OutputFormat = (format.lowercased() == "csv") ? .csv : .fits
                     try FITSTableWriter.writeRegistrationTable(df, to: outputPath, format: outputFormat)
                     if !json { print("Saved table to \(outputPath) (\(format.lowercased()))") }
@@ -387,7 +414,7 @@ extension AP {
         /// if the pipeline did not produce recognisable quality tables.
         ///
         /// Handles two cases:
-        /// - **Per-frame** (registration table from frame_registration / frame_stacking): each row
+        /// - **Per-frame** (registration table from frame_registration_quad / frame_stacking): each row
         ///   is matched to an archive frame by its `file_path` column.
         /// - **Single-frame** (summary tables from star_detection / optical_quality / autofocus):
         ///   the aggregate result is applied to each archive frame found among `pipelineInputs`.
@@ -413,7 +440,7 @@ extension AP {
             guard let config = try? ArchiveConfiguration.fromEnvironment(),
                   let archive = try? Archive(configuration: config) else { return }
 
-            // 1. Per-frame path: registration table from frame_registration / frame_stacking.
+            // 1. Per-frame path: registration table from frame_registration_quad / frame_stacking.
             let perFrame = extractPerFrameQuality(from: tables)
             if !perFrame.isEmpty {
                 for entry in perFrame {
@@ -494,7 +521,7 @@ extension AP {
             }
         }
 
-        /// Extracts per-frame quality metrics from a registration table (frame_registration /
+        /// Extracts per-frame quality metrics from a registration table (frame_registration_quad /
         /// frame_stacking). Identified by `file_path`, `median_fwhm`, and `star_count` columns.
         /// `sky_noise` is not mapped to `backgroundNoise` because it is in ADU, not normalised 0–1.
         private func extractPerFrameQuality(
@@ -701,11 +728,16 @@ extension AP {
                 for frame in frames {
                     guard let texture = frame.texture else { continue }
                     let w = texture.width, h = texture.height
-                    var pixels = [Float](repeating: 0, count: w * h)
-                    texture.getBytes(&pixels,
-                                     bytesPerRow: w * MemoryLayout<Float>.size,
+                    let bytesPerPixel = texture.pixelFormat == .rgba32Float ? 4 : 1
+                    let bytesPerRow   = w * bytesPerPixel * MemoryLayout<Float>.size
+                    var rawPixels = [Float](repeating: 0, count: w * h * bytesPerPixel)
+                    texture.getBytes(&rawPixels,
+                                     bytesPerRow: bytesPerRow,
                                      from: MTLRegionMake2D(0, 0, w, h),
                                      mipmapLevel: 0)
+                    let pixels: [Float] = bytesPerPixel > 1
+                        ? stride(from: 0, to: rawPixels.count, by: bytesPerPixel).map { rawPixels[$0] }
+                        : rawPixels
 
                     // Reuse the user's output file if there's exactly one result frame.
                     let tempURL: URL?

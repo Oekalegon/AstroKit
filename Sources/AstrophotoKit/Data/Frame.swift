@@ -138,6 +138,12 @@ public struct Frame: ProcessData {
         return metadata(for: FrameMetadataKey.egain) as? Double
     }
 
+    /// The plate scale in arcseconds per pixel, from the FITS `PIXSCALE` keyword.
+    /// Reflects the combined optical system (telescope focal length + sensor pixel size).
+    public var pixelScale: Double? {
+        return metadata(for: FrameMetadataKey.pixelScale) as? Double
+    }
+
     /// Injects an EGAIN value from an external source (e.g. the archive camera_profiles table)
     /// when the FITS header did not carry an `EGAIN` keyword. Has no effect if egain is already set.
     public mutating func injectEgainIfMissing(_ egain: Double) {
@@ -207,6 +213,7 @@ public struct Frame: ProcessData {
     /// - Parameter offset: The camera offset, if available.
     /// - Parameter filterName: The canonical display name of the filter, if available.
     /// - Parameter egain: The electron conversion factor in e⁻/ADU (FITS `EGAIN`), if available.
+    /// - Parameter pixelScale: The plate scale in arcseconds per pixel (FITS `PIXSCALE`), if available.
     public init(
         type: FrameType,
         filter: Filter = .none,
@@ -223,7 +230,8 @@ public struct Frame: ProcessData {
         filterName: String? = nil,
         fitsMinValue: Double? = nil,
         fitsMaxValue: Double? = nil,
-        egain: Double? = nil
+        egain: Double? = nil,
+        pixelScale: Double? = nil
     ) {
         self.instantiatedAt = texture != nil ? Date() : nil
         self.texture = texture
@@ -241,6 +249,7 @@ public struct Frame: ProcessData {
         if let fitsMinValue = fitsMinValue { metadata[FrameMetadataKey.fitsMinValue] = fitsMinValue }
         if let fitsMaxValue = fitsMaxValue { metadata[FrameMetadataKey.fitsMaxValue] = fitsMaxValue }
         if let egain        = egain        { metadata[FrameMetadataKey.egain]        = egain }
+        if let pixelScale   = pixelScale   { metadata[FrameMetadataKey.pixelScale]   = pixelScale }
         self.metadata = metadata
         self.outputLink = outputProcess
         self.inputLinks = inputProcesses
@@ -348,6 +357,9 @@ public enum FrameMetadataKey: String, MetadataKey {
     /// The maximum pixel value (ADU) from the original FITS file, before [0,1] normalization.
     case fitsMaxValue
 
+    /// The plate scale in arcseconds per pixel (FITS `PIXSCALE`), if available.
+    case pixelScale
+
     /// The identifier for the metadata key.
     public var id: String {
         return "\(String(describing: Self.self)).\(rawValue)"
@@ -379,6 +391,8 @@ public enum FrameMetadataKey: String, MetadataKey {
         case .filterName:
             return String.self
         case .fitsMinValue, .fitsMaxValue:
+            return Double.self
+        case .pixelScale:
             return Double.self
         }
     }
