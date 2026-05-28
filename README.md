@@ -107,7 +107,8 @@ Claude can then run pipelines and query the archive directly.
 | `autofocus_focused` | Autofocus curve for focused images |
 | `autofocus_donut` | Autofocus curve for donut (defocused) images |
 | `dark_calibration` | Dark frame calibration |
-| `frame_registration` | Align multiple frames to a common reference |
+| `frame_registration` | Align multiple frames to a common reference (4-star quad patterns) |
+| `frame_registration_triangle` | Same as above using 3-star triangle patterns — better for sparse star fields |
 | `frame_stacking` | Register and stack frames into a master light |
 
 ## Requirements

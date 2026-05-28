@@ -77,7 +77,8 @@ public struct AstrophotoKit {
             "HFDShader",
             "HoughCircleShader",
             "WarpShader",
-            "StackShader"
+            "StackShader",
+            "RegistrationMatchingShader"
         ]
         if let shaderSource = loadShaderSource(requiredShaders: essentialShaders) {
             Logger.swiftfitsio.debug("Attempting to compile Metal library from source...")
@@ -111,7 +112,7 @@ public struct AstrophotoKit {
             "GrayscaleShader", "BackgroundSubtractionShader", "ThresholdShader",
             "LocalMedianShader", "StatisticsShader", "ErosionShader", "DilationShader",
             "ConnectedComponentsShader", "StarDetectionOverlayShader", "WaveletDonutShader",
-            "FWHMShader", "HFDShader", "HoughCircleShader"
+            "FWHMShader", "HFDShader", "HoughCircleShader", "RegistrationMatchingShader"
         ]
         let shaderFiles = requiredShaders ?? allShaderFiles
         Logger.swiftfitsio.debug(
