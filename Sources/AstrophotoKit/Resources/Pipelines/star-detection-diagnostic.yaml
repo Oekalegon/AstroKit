@@ -207,4 +207,4 @@ steps:
         description: Input frame annotated with ellipses at every detected source position
         metadata:
           processing_stage: visualization
-          frame_type: processedLight
+          frame_type: diagnostic

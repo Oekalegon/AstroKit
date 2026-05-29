@@ -203,11 +203,12 @@ enum FITSHeaderReader {
     // MARK: - Frame type
 
     private static func parseFrameType(_ lowercased: String) -> String {
-        if lowercased.contains("bias")    { return "bias" }
-        if lowercased.contains("dark")    { return "dark" }
-        if lowercased.contains("flat")    { return "flat" }
-        if lowercased.contains("light")   { return "light" }
-        if lowercased.contains("science") { return "light" }
+        if lowercased.contains("bias")       { return "bias" }
+        if lowercased.contains("dark")       { return "dark" }
+        if lowercased.contains("flat")       { return "flat" }
+        if lowercased.contains("diagnostic") { return "diagnostic" }
+        if lowercased.contains("light")      { return "light" }
+        if lowercased.contains("science")    { return "light" }
         return lowercased.isEmpty ? "unknown" : lowercased
     }
 

@@ -254,6 +254,7 @@ extension AP {
                         await autoArchiveResults(
                             frames: frameResults,
                             pipelineID: pipelineID,
+                            pipeline: pipeline,
                             parameters: parameters,
                             pipelineInputs: perFrameInputs,
                             existingOutputPath: nil,
@@ -364,7 +365,7 @@ extension AP {
                     try FITSTableWriter.writeResultFrame(
                         pixelData: pixels, width: w, height: h,
                         pipelineID: pipelineID,
-                        imageType: "Light Frame",
+                        imageType: imageType(for: firstFrame, in: pipeline),
                         filterName: firstFrame.filterName,
                         stacked: false,
                         to: outputPath
@@ -387,6 +388,7 @@ extension AP {
                 await autoArchiveResults(
                     frames: resultFrames,
                     pipelineID: pipelineID,
+                    pipeline: pipeline,
                     parameters: parameters,
                     pipelineInputs: pipelineInputs,
                     usedFilePaths: outcomes?.used,
@@ -439,6 +441,23 @@ extension AP {
                 let stepPart   = String(stepLinkID.split(separator: ".").first ?? Substring(stepLinkID))
                 let baseStepID = String(stepPart.split(separator: "[").first ?? Substring(stepPart))
                 return baseStepID == lastStepID
+            }
+        }
+
+        /// Resolves the FITS IMAGETYP string for a result frame by reading the `frame_type`
+        /// metadata declared on the matching output in the pipeline YAML definition.
+        private func imageType(for frame: Frame, in pipeline: Pipeline) -> String {
+            guard let outputLink = frame.outputLink,
+                  case .output(_, _, _, let stepLinkID) = outputLink else { return "Light Frame" }
+            let parts      = stepLinkID.split(separator: ".", maxSplits: 1)
+            let stepPart   = String(parts.first ?? Substring(stepLinkID))
+            let outputName = parts.count > 1 ? String(parts[1]) : ""
+            let baseStepID = String(stepPart.split(separator: "[").first ?? Substring(stepPart))
+            guard let step   = pipeline.steps.first(where: { $0.id == baseStepID }),
+                  let output = step.outputs.first(where: { $0.name == outputName }) else { return "Light Frame" }
+            switch output.getMetadata()["frame_type"] as? String {
+            case "diagnostic": return "Diagnostic Frame"
+            default:           return "Light Frame"
             }
         }
 
@@ -768,6 +787,7 @@ extension AP {
         private func autoArchiveResults(
             frames: [Frame],
             pipelineID: String,
+            pipeline: Pipeline,
             parameters: [String: Parameter],
             pipelineInputs: [String: Any],
             usedFilePaths: Set<String>? = nil,
@@ -880,7 +900,7 @@ extension AP {
                         try FITSTableWriter.writeResultFrame(
                             pixelData: pixels, width: w, height: h,
                             pipelineID: pipelineID,
-                            imageType: "Light Frame",
+                            imageType: imageType(for: frame, in: pipeline),
                             filterName: stackFilter ?? frame.filterName,
                             stacked: pipelineID == "frame_stacking",
                             nframes: inputCount > 0 ? inputCount : nil,
