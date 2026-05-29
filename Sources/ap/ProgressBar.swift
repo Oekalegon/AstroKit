@@ -1,6 +1,6 @@
 import Foundation
 
-struct ProgressBar {
+final class ProgressBar {
     let total: Int
     private(set) var current: Int = 0
     private let barWidth = 30
@@ -16,9 +16,18 @@ struct ProgressBar {
         }
     }
 
-    mutating func advance() {
+    func advance() {
         current = min(current + 1, total)
         if isTTY { render() }
+    }
+
+    /// Prints a message above the sticky bar: clears the bar line, emits the
+    /// message with a newline, then redraws the bar on the new current line.
+    /// Falls back to plain print() when not on a TTY.
+    func log(_ message: String) {
+        guard isTTY else { print(message); return }
+        print("\r\(String(repeating: " ", count: barWidth + 20))\r\(message)")
+        render()
     }
 
     func finish(summary: String) {
