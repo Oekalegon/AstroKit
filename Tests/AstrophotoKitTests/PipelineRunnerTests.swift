@@ -73,7 +73,7 @@ func starDetectionPipelineCreatesCorrectStacks() async throws {
         }
     }
     
-    // The star-detection pipeline has 10 steps:
+    // The star-detection pipeline has 11 steps:
     // 1. grayscale
     // 2. blur
     // 3. background
@@ -82,9 +82,10 @@ func starDetectionPipelineCreatesCorrectStacks() async throws {
     // 6. dilation
     // 7. connected_components
     // 8. fwhm
-    // 9. quads
-    // 10. overlay
-    #expect(processes.count == 10)
+    // 9. fits_catalog_writer
+    // 10. quads
+    // 11. overlay
+    #expect(processes.count == 11)
 
     // Verify each process has the correct processor identifier
     let expectedTypes = [
@@ -96,6 +97,7 @@ func starDetectionPipelineCreatesCorrectStacks() async throws {
         "dilation",
         "connected_components",
         "fwhm",
+        "fits_star_catalog_writer",
         "quads",
         "star_detection_overlay"
     ]
@@ -107,7 +109,7 @@ func starDetectionPipelineCreatesCorrectStacks() async throws {
 
     // Verify all processes are in pending status initially
     let pendingProcesses = await runner.processStack.getPending()
-    #expect(pendingProcesses.count == 10)
+    #expect(pendingProcesses.count == 11)
     
     // Verify the data stack
     // We provided "input_frame" as input, so the data stack should contain at least one item
@@ -142,9 +144,13 @@ func starDetectionPipelineCreatesCorrectStacks() async throws {
     #expect(dataCount >= 1, "Data stack should contain at least the input_frame")
     
     // Verify that processes have correct input/output data links
+    // Side-effect processors (e.g. fits_star_catalog_writer) intentionally produce no outputs.
+    let sideEffectProcessors: Set<String> = ["fits_star_catalog_writer"]
     for process in processes {
-        // Each process should have at least one output
-        #expect(!process.outputData.isEmpty)
+        // Each process should have at least one output, except side-effect processors
+        if !sideEffectProcessors.contains(process.processorIdentifier) {
+            #expect(!process.outputData.isEmpty)
+        }
         
         // Verify output data links have the correct type
         for outputLink in process.outputData {
