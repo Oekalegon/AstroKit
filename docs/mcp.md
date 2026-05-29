@@ -270,7 +270,7 @@ Searches the archive and returns matching frames.
 |----------|------|----------|-------------|
 | `object_name` | string | | Partial object name match (e.g. `"M51"`) |
 | `camera` | string | | Camera name (exact match) |
-| `frame_types` | array | | Frame types: `["light"]`, `["dark","flat"]`, etc. |
+| `frame_types` | array | | Frame types: `["light"]`, `["dark","flat"]`, `["diagnostic"]`, etc. |
 | `filters` | array | | Filters: `["Ha","SII"]`, `["R","G","B"]`, etc. |
 | `processing_level` | string | | `"raw"`, `"calibrated"`, `"stacked"`, or `"stretched"` |
 | `calibrated` | boolean | | Only calibrated frames |
@@ -431,7 +431,7 @@ Dry-run: shows which frames would form a frame set and reports property distribu
 
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
-| `frame_type` | string | | Frame type: `"light"`, `"dark"`, `"flat"`, `"bias"` |
+| `frame_type` | string | | Frame type: `"light"`, `"dark"`, `"flat"`, `"bias"`, `"diagnostic"` |
 | `object_name` | string | | Partial object name match |
 | `filters` | array | | Optical filters to include |
 | `camera` | string | | Camera name (exact match) |
@@ -484,7 +484,7 @@ Creates a frame set from all non-rejected frames matching a query. Errors if the
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
 | `name` | string | | Name for the frame set (auto-generated from query if omitted) |
-| `frame_type` | string | | Frame type: `"light"`, `"dark"`, `"flat"`, `"bias"` |
+| `frame_type` | string | ✓ | Frame type: `"light"`, `"dark"`, `"flat"`, `"bias"`, `"diagnostic"` |
 | `object_name` | string | | Partial object name match |
 | `filters` | array | | Optical filters to include |
 | `camera` | string | | Camera name (exact match) |
