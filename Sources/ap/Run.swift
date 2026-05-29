@@ -876,6 +876,35 @@ extension AP {
                         }
                     }
                 }
+
+                // Mark registration-failed frames as excluded in their parent frame sets.
+                // This mirrors the ASTR-18 "include but flag" pattern so they appear in
+                // `frameset show` (in orange) and can be manually reviewed or overridden.
+                if let usedPaths = usedFilePaths {
+                    for (_, value) in pipelineInputs {
+                        let allPaths: [String]
+                        if let fs = value as? FrameSet {
+                            allPaths = fs.frames.compactMap { $0.filePath }
+                        } else if let f = value as? Frame, let p = f.filePath {
+                            allPaths = [p]
+                        } else {
+                            allPaths = []
+                        }
+                        for path in allPaths where !usedPaths.contains(path) {
+                            guard let af = try? await archive.frame(filePath: path) else { continue }
+                            let fsIDs = (try? await archive.frameSetIDs(forFrame: af.id)) ?? []
+                            for fsID in fsIDs {
+                                try? await archive.setMemberExcluded(
+                                    frameSetID: fsID, frameID: af.id,
+                                    excluded: true, reason: "registration failed"
+                                )
+                            }
+                            if !json && !fsIDs.isEmpty {
+                                print("  Excluded \(af.id) from \(fsIDs.count) frameset(s): registration failed")
+                            }
+                        }
+                    }
+                }
             } catch {
                 if !json { print("Warning: auto-archive failed: \(error.localizedDescription)") }
             }
