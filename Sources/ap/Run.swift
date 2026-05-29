@@ -256,7 +256,7 @@ extension AP {
                         )
                     }
                     if !frameTables.isEmpty {
-                        await backUpdateQuality(tables: frameTables, pipelineInputs: perFrameInputs)
+                        await backUpdateQuality(tables: frameTables, pipelineInputs: perFrameInputs, parameters: parameters)
                     }
 
                     if json {
@@ -377,11 +377,14 @@ extension AP {
             // by earlier steps and must not be stored as archive entries.
             let resultFrames = terminalFrames(from: frames, pipeline: pipeline)
             if !resultFrames.isEmpty {
+                let outcomes = extractRegistrationOutcomes(from: tables)
                 await autoArchiveResults(
                     frames: resultFrames,
                     pipelineID: pipelineID,
                     parameters: parameters,
                     pipelineInputs: pipelineInputs,
+                    usedFilePaths: outcomes?.used,
+                    registrationFailureReasons: outcomes?.failureReasons ?? [:],
                     existingOutputPath: (output?.hasSuffix(".fits") == true || output?.hasSuffix(".fit") == true) ? output : nil
                 )
             }
@@ -389,7 +392,7 @@ extension AP {
             // Back-update quality metrics on the input archive frame(s) when an analysis
             // pipeline produces star/FWHM/background data.
             if !tables.isEmpty {
-                await backUpdateQuality(tables: tables, pipelineInputs: pipelineInputs)
+                await backUpdateQuality(tables: tables, pipelineInputs: pipelineInputs, parameters: parameters)
             }
 
             if json {
@@ -435,10 +438,14 @@ extension AP {
 
         private func backUpdateQuality(
             tables: [TableData],
-            pipelineInputs: [String: Any]
+            pipelineInputs: [String: Any],
+            parameters: [String: Parameter] = [:]
         ) async {
             guard let config = try? ArchiveConfiguration.fromEnvironment(),
                   let archive = try? Archive(configuration: config) else { return }
+
+            let maxFWHM         = parameters["max_fwhm"]?.doubleValue
+            let maxEccentricity = parameters["max_eccentricity"]?.doubleValue
 
             // 1. Per-frame path: registration table from frame_registration_quad / frame_stacking.
             let perFrame = extractPerFrameQuality(from: tables)
@@ -460,6 +467,14 @@ extension AP {
                             if let v = entry.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
                             print("Quality → \(af.id): \(parts.joined(separator: ", "))")
                         }
+                        await applyFrameSetExclusion(
+                            archive: archive,
+                            frameID: af.id,
+                            fwhm: entry.medianFWHM,
+                            eccentricity: entry.medianEccentricity,
+                            maxFWHM: maxFWHM,
+                            maxEccentricity: maxEccentricity
+                        )
                     } catch {
                         if !json { print("Warning: quality update failed: \(error.localizedDescription)") }
                     }
@@ -515,8 +530,55 @@ extension AP {
                         if let v = metrics.hotPixelCount      { parts.append("hot_px: \(v)") }
                         print("Quality → \(af.id): \(parts.joined(separator: ", "))")
                     }
+                    await applyFrameSetExclusion(
+                        archive: archive,
+                        frameID: af.id,
+                        fwhm: metrics.medianFWHM,
+                        eccentricity: metrics.medianEccentricity,
+                        maxFWHM: maxFWHM,
+                        maxEccentricity: maxEccentricity
+                    )
                 } catch {
                     if !json { print("Warning: quality update failed for \(path): \(error.localizedDescription)") }
+                }
+            }
+        }
+
+        /// After updating quality metrics on an archived frame, marks the frame as excluded
+        /// (or re-includes it) in any frame sets it belongs to, based on FWHM/eccentricity thresholds.
+        private func applyFrameSetExclusion(
+            archive: Archive,
+            frameID: UUID,
+            fwhm: Double?,
+            eccentricity: Double?,
+            maxFWHM: Double?,
+            maxEccentricity: Double?
+        ) async {
+            guard maxFWHM != nil || maxEccentricity != nil else { return }
+            let exceedsFWHM = maxFWHM.map { (fwhm ?? .infinity) > $0 } ?? false
+            let exceedsEcc  = maxEccentricity.map { (eccentricity ?? .infinity) > $0 } ?? false
+            let shouldExclude = exceedsFWHM || exceedsEcc
+
+            guard let fsIDs = try? await archive.frameSetIDs(forFrame: frameID), !fsIDs.isEmpty else { return }
+
+            var reason: String? = nil
+            if exceedsFWHM, let f = fwhm, let max = maxFWHM {
+                reason = String(format: "FWHM %.2fpx exceeds threshold %.2fpx", f, max)
+            } else if exceedsEcc, let e = eccentricity, let max = maxEccentricity {
+                reason = String(format: "eccentricity %.3f exceeds threshold %.3f", e, max)
+            }
+
+            for fsID in fsIDs {
+                do {
+                    try await archive.setMemberExcluded(
+                        frameSetID: fsID, frameID: frameID,
+                        excluded: shouldExclude, reason: shouldExclude ? reason : nil
+                    )
+                    if !json && shouldExclude {
+                        print("  Excluded from frameset \(fsID): \(reason ?? "quality threshold")")
+                    }
+                } catch {
+                    if !json { print("Warning: frameset exclusion update failed: \(error.localizedDescription)") }
                 }
             }
         }
@@ -644,11 +706,60 @@ extension AP {
             return (starCount, medianFWHM, backgroundNoise, backgroundNoiseIsADU, backgroundNoiseElectrons, medianEccentricity, saturatedStarCount, hotPixelCount)
         }
 
+        /// Scans output tables for a registration table (identified by `file_path` +
+        /// `registration_success` columns). Returns the set of file paths that were
+        /// actually composited (success=1) and a per-path failure reason for the rest.
+        /// Returns nil when no registration table is found (all inputs were used).
+        private func extractRegistrationOutcomes(
+            from tables: [TableData]
+        ) -> (used: Set<String>, failureReasons: [String: String])? {
+            for table in tables {
+                guard let df = table.dataFrame else { continue }
+                let colNames = Set(df.columns.map { $0.name })
+                guard colNames.contains("file_path"),
+                      colNames.contains("registration_success") else { continue }
+
+                var used = Set<String>()
+                var failureReasons: [String: String] = [:]
+
+                for row in df.rows {
+                    guard let path = row["file_path"] as? String, !path.isEmpty else { continue }
+                    let success: Bool
+                    if      let v = row["registration_success"] as? Int32 { success = v != 0 }
+                    else if let v = row["registration_success"] as? Int   { success = v != 0 }
+                    else                                                   { success = true }
+
+                    if success {
+                        used.insert(path)
+                    } else {
+                        func dbl(_ key: String) -> Double? {
+                            if let v = row[key] as? Double { return v }
+                            if let v = row[key] as? Float  { return Double(v) }
+                            return nil
+                        }
+                        func int32(_ key: String) -> Int? {
+                            if let v = row[key] as? Int32 { return Int(v) }
+                            if let v = row[key] as? Int   { return v }
+                            return nil
+                        }
+                        var parts: [String] = ["registration failed"]
+                        if let matches = int32("match_count") { parts.append("\(matches) star matches") }
+                        if let rmse = dbl("rmse"), rmse > 0   { parts.append(String(format: "RMSE %.2f px", rmse)) }
+                        failureReasons[path] = parts.joined(separator: "; ")
+                    }
+                }
+                return (used, failureReasons)
+            }
+            return nil
+        }
+
         private func autoArchiveResults(
             frames: [Frame],
             pipelineID: String,
             parameters: [String: Parameter],
             pipelineInputs: [String: Any],
+            usedFilePaths: Set<String>? = nil,
+            registrationFailureReasons: [String: String] = [:],
             existingOutputPath: String?
         ) async {
             guard let config = try? ArchiveConfiguration.fromEnvironment() else { return }
@@ -680,12 +791,17 @@ extension AP {
                     } else {
                         pathsAndFrames = []
                     }
-                    for (pos, (path, inputFrame)) in pathsAndFrames.enumerated() {
+                    var pos = 0
+                    for (path, inputFrame) in pathsAndFrames {
+                        // When a registration table is present, only record frames that were
+                        // actually composited into the stack (registration_success=1).
+                        if let used = usedFilePaths, !used.contains(path) { continue }
                         let af = try? await archive.frame(filePath: path)
                         runInputs.append(ProcessingRunInputRef(
                             inputName: name, frameID: af?.id, filePath: path, position: pos
                         ))
-                        if pos == 0 { refRA = af?.ra; refDec = af?.dec }
+                        if refRA == nil { refRA = af?.ra; refDec = af?.dec }
+                        pos += 1
                         inputCount += 1
                         if let v = af?.objectName { objectNamesSet.insert(v) }
                         let fn = af?.filter ?? inputFrame?.filterName
@@ -784,6 +900,36 @@ extension AP {
                             print("Archived result → \(archived.id)")
                         } else {
                             print("Result already in archive: \(archived.id)")
+                        }
+                    }
+                }
+
+                // Mark registration-failed frames as excluded in their parent frame sets.
+                // This mirrors the ASTR-18 "include but flag" pattern so they appear in
+                // `frameset show` (in orange) and can be manually reviewed or overridden.
+                if let usedPaths = usedFilePaths {
+                    for (_, value) in pipelineInputs {
+                        let allPaths: [String]
+                        if let fs = value as? FrameSet {
+                            allPaths = fs.frames.compactMap { $0.filePath }
+                        } else if let f = value as? Frame, let p = f.filePath {
+                            allPaths = [p]
+                        } else {
+                            allPaths = []
+                        }
+                        for path in allPaths where !usedPaths.contains(path) {
+                            guard let af = try? await archive.frame(filePath: path) else { continue }
+                            let fsIDs = (try? await archive.frameSetIDs(forFrame: af.id)) ?? []
+                            let reason = registrationFailureReasons[path] ?? "registration failed"
+                            for fsID in fsIDs {
+                                try? await archive.setMemberExcluded(
+                                    frameSetID: fsID, frameID: af.id,
+                                    excluded: true, reason: reason
+                                )
+                            }
+                            if !json && !fsIDs.isEmpty {
+                                print("  Excluded \(af.id) from \(fsIDs.count) frameset(s): \(reason)")
+                            }
                         }
                     }
                 }

@@ -1,7 +1,9 @@
 id: optical_quality
 name: Optical Quality Analysis Pipeline
 description: Detects stars, measures their eccentricity and position angle, then analyses
-  the spatial variation across the image to diagnose sensor tilt, coma, or backfocus errors.
+  the spatial variation across the image to diagnose sensor tilt, coma, or backfocus
+  errors. Accepted quality-threshold parameters (applied to any frame sets the input
+  belongs to) -- max_fwhm (pixels), max_eccentricity (0-1).
 
 steps:
   - id: grayscale

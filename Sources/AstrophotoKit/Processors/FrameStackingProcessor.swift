@@ -76,24 +76,38 @@ public struct FrameStackingProcessor: Processor {
             "FrameStacking: \(nFrames) frames \(width)×\(height), method=\(method) norm=\(normStr) rejection=\(rejStr)"
         )
 
-        // 1. Extract per-frame transforms from the registration table
-        let transforms = extractTransforms(from: regDF, frameCount: nFrames)
+        // 1. Extract per-frame transforms and registration success flags from the table.
+        let (transforms, regSuccess) = extractRegistrationData(from: regDF, frameCount: nFrames)
 
-        // 2. Warp every frame into the reference coordinate system (GPU, CPU fallback)
+        // Skip frames whose registration failed — stacking them unaligned would corrupt the result.
+        let activeIndices = (0..<nFrames).filter { regSuccess[$0] }
+        let skippedCount  = nFrames - activeIndices.count
+        guard !activeIndices.isEmpty else {
+            throw ProcessorExecutionError.executionFailed(
+                "FrameStacking: no successfully registered frames to stack."
+            )
+        }
+        if skippedCount > 0 {
+            Logger.processor.warning(
+                "FrameStacking: skipping \(skippedCount) frame(s) with registration_success=0"
+            )
+        }
+
+        // 2. Warp only successfully registered frames into the reference coordinate system.
         var warpedTextures: [MTLTexture] = []
-        warpedTextures.reserveCapacity(nFrames)
-        for (i, frame) in frameSet.frames.enumerated() {
-            let t = i < transforms.count ? transforms[i] : .identity
+        warpedTextures.reserveCapacity(activeIndices.count)
+        for i in activeIndices {
             let warped = try warpFrame(
-                frame, transform: t, width: width, height: height,
+                frameSet.frames[i], transform: transforms[i], width: width, height: height,
                 device: device, commandQueue: commandQueue
             )
             warpedTextures.append(warped)
         }
 
-        // 2b. Alignment check — verify warped frames using reference star centroids
-        let refIdx = transforms.firstIndex {
-            abs($0.tx) < 0.5 && abs($0.ty) < 0.5 && abs($0.rotation) < 1e-4 && abs($0.scale - 1) < 1e-4
+        // 2b. Alignment check — find reference frame index within the active-frame array.
+        let refWarpedIdx = activeIndices.firstIndex { i in
+            let t = transforms[i]
+            return abs(t.tx) < 0.5 && abs(t.ty) < 0.5 && abs(t.rotation) < 1e-4 && abs(t.scale - 1) < 1e-4
         } ?? 0
         let refStars: [(x: Double, y: Double)]
         if let refStarsData = inputs["reference_stars"] as? TableData, let refDF = refStarsData.dataFrame {
@@ -104,19 +118,23 @@ public struct FrameStackingProcessor: Processor {
         } else {
             refStars = []
         }
-        let alignResults = checkStarAlignment(warpedTextures: warpedTextures, referenceIndex: refIdx, referenceStars: refStars)
+        let alignResults = checkStarAlignment(warpedTextures: warpedTextures, referenceIndex: refWarpedIdx, referenceStars: refStars)
 
-        // 3. Compute per-frame normalisation coefficients from pixel samples
+        // 3. Compute per-frame normalisation coefficients from active frames only.
         let normCoeffs = computeNormCoeffs(
             from: warpedTextures, method: normStr,
             device: device, commandQueue: commandQueue
         )
 
-        // 4. Stack on GPU with normalisation and pixel rejection baked into the kernel
+        // 4. Stack on GPU with normalisation and pixel rejection baked into the kernel.
         let outTexture = try stackOnGPU(
             frames: warpedTextures, normCoeffs: normCoeffs,
             method: method, rejection: rejStr, rejLow: rejLow, rejHigh: rejHigh,
             width: width, height: height, device: device, commandQueue: commandQueue
+        )
+
+        Logger.processor.info(
+            "FrameStacking: stacked \(activeIndices.count) frame(s)\(skippedCount > 0 ? " (\(skippedCount) skipped)" : "")"
         )
 
         // 5. Write texture into the existing placeholder Frame (preserves UUID for DataStack.update)
@@ -128,8 +146,11 @@ public struct FrameStackingProcessor: Processor {
 
         // 6. Pass registration table through, augmented with per-frame star-alignment results.
         // Must mutate the existing placeholder (preserves its UUID for DataStack.update).
-        let alignByFrame = Dictionary(uniqueKeysWithValues: alignResults.map {
-            ($0.frameIndex, (residual: $0.meanResidual, matched: $0.matchedCount, missing: $0.missingCount))
+        // alignResults[j].frameIndex is the position within warpedTextures (active frames only);
+        // map back to original frame index via activeIndices[j].
+        let alignByOriginalIdx = Dictionary(uniqueKeysWithValues: alignResults.map {
+            (activeIndices[$0.frameIndex],
+             (residual: $0.meanResidual, matched: $0.matchedCount, missing: $0.missingCount))
         })
         var residualVals = [Double](), matchedVals = [Int](), missingVals = [Int]()
         for row in regDF.rows {
@@ -137,7 +158,7 @@ public struct FrameStackingProcessor: Processor {
             if      let v = row["frame_index"] as? Int32 { fi = Int(v) }
             else if let v = row["frame_index"] as? Int   { fi = v }
             else                                          { fi = -1 }
-            let a = alignByFrame[fi] ?? (residual: 0.0, matched: 0, missing: 0)
+            let a = alignByOriginalIdx[fi] ?? (residual: 0.0, matched: 0, missing: 0)
             residualVals.append(a.residual)
             matchedVals.append(a.matched)
             missingVals.append(a.missing)
@@ -151,34 +172,42 @@ public struct FrameStackingProcessor: Processor {
             outputs["stacked_registration_table"] = outTable
         }
 
-        Logger.processor.info("FrameStacking: completed")
     }
 
     // MARK: - Transform extraction
 
-    private func extractTransforms(from df: DataFrame, frameCount: Int) -> [SimilarityTransform] {
-        var result = [SimilarityTransform](repeating: .identity, count: frameCount)
+    /// Returns per-frame similarity transforms and registration success flags.
+    /// Frames absent from the table (or with no `registration_success` column) default to
+    /// identity transform / success=true so old registration tables remain compatible.
+    private func extractRegistrationData(
+        from df: DataFrame,
+        frameCount: Int
+    ) -> (transforms: [SimilarityTransform], success: [Bool]) {
+        var transforms = [SimilarityTransform](repeating: .identity, count: frameCount)
+        var success    = [Bool](repeating: true, count: frameCount)
+        let hasSuccess = df.columns.contains { $0.name == "registration_success" }
         for row in df.rows {
-            // TabularData can bridge Int32 through NSNumber on macOS, so try both Int32 and Int.
             let i: Int
             if      let v = row["frame_index"] as? Int32 { i = Int(v) }
             else if let v = row["frame_index"] as? Int   { i = v }
             else                                          { continue }
             guard i >= 0, i < frameCount else { continue }
 
-            // Similarly, Double columns may come back as Float on some paths.
             func dbl(_ key: String, fallback: Double = 0) -> Double {
                 if let v = row[key] as? Double { return v }
                 if let v = row[key] as? Float  { return Double(v) }
                 return fallback
             }
-            let tx     = dbl("translation_x")
-            let ty     = dbl("translation_y")
-            let rotDeg = dbl("rotation_deg")
-            let scale  = dbl("scale", fallback: 1)
-            result[i] = SimilarityTransform(tx: tx, ty: ty, rotation: rotDeg * .pi / 180, scale: scale)
+            transforms[i] = SimilarityTransform(
+                tx: dbl("translation_x"), ty: dbl("translation_y"),
+                rotation: dbl("rotation_deg") * .pi / 180, scale: dbl("scale", fallback: 1)
+            )
+            if hasSuccess {
+                if      let v = row["registration_success"] as? Int32 { success[i] = v != 0 }
+                else if let v = row["registration_success"] as? Int   { success[i] = v != 0 }
+            }
         }
-        return result
+        return (transforms, success)
     }
 
     // MARK: - GPU warp (returns MTLTexture; CPU fallback writes into shared texture)

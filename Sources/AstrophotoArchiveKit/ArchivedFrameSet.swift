@@ -13,7 +13,10 @@ public struct ArchivedFrameSet: Sendable, Identifiable {
     public var frameType: String
     public var processingLevel: ProcessingLevel
     public var createdAt: Date
+    /// Total number of member frames, including excluded ones.
     public var frameCount: Int
+    /// Number of members with the excluded flag set.
+    public var excludedFrameCount: Int
 
     // Shared scalar properties — nil when member frames disagree.
     public var objectName: String?
@@ -40,7 +43,7 @@ public struct ArchivedFrameSet: Sendable, Identifiable {
 
     public init(
         id: UUID, name: String, frameType: String, processingLevel: ProcessingLevel,
-        createdAt: Date, frameCount: Int,
+        createdAt: Date, frameCount: Int, excludedFrameCount: Int = 0,
         objectName: String?, filter: String?, camera: String?,
         exposureTime: Double?, gain: Double?, offset: Double?,
         width: Int?, height: Int?,
@@ -54,6 +57,7 @@ public struct ArchivedFrameSet: Sendable, Identifiable {
         self.processingLevel = processingLevel
         self.createdAt = createdAt
         self.frameCount = frameCount
+        self.excludedFrameCount = excludedFrameCount
         self.objectName = objectName
         self.filter = filter
         self.camera = camera

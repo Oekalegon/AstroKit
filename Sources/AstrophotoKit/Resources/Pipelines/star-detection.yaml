@@ -1,6 +1,9 @@
 id: star_detection
 name: Star Detection Pipeline
-description: Detects stars in astronomical images using Gaussian blur, background estimation, thresholding, erosion, dilation, connected components analysis, quads, and draws ellipses around detected stars
+description: Detects stars in astronomical images using Gaussian blur, background estimation,
+  thresholding, erosion, dilation, connected components analysis, quads, and draws
+  ellipses around detected stars. Accepted quality-threshold parameters (applied to
+  any frame sets the input belongs to) -- max_fwhm (pixels), max_eccentricity (0-1).
 
 
 steps:

@@ -7,7 +7,7 @@ struct Frameset: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "frameset",
         abstract: "Manage frame sets.",
-        subcommands: [Create.self, List.self, Show.self, Delete.self]
+        subcommands: [Create.self, List.self, Show.self, Exclude.self, Include.self, Delete.self]
     )
 
     // MARK: - Shared query options
@@ -74,11 +74,23 @@ struct Frameset: AsyncParsableCommand {
                 let tol = tempTolerance ?? 2.0
                 query.temperatureRange = (center - tol)...(center + tol)
             }
+            // maxFwhm and maxEccentricity are NOT added to the query for frameset creation —
+            // they become per-member exclusion thresholds instead (include-but-exclude semantics).
+            // They ARE still added here so the same QueryOptions can be used for general queries.
             query.maxFWHM            = maxFwhm
             query.minStarCount       = minStars
             query.maxBackgroundNoise = maxBackgroundNoise
             query.maxEccentricity    = maxEccentricity
             return query
+        }
+
+        /// Query without FWHM/eccentricity filters — used for frameset creation where those
+        /// thresholds are applied as per-member exclusion flags rather than hard filters.
+        func makeBaseQuery() -> FrameQuery {
+            var q = makeQuery()
+            q.maxFWHM         = nil
+            q.maxEccentricity = nil
+            return q
         }
     }
 
@@ -107,20 +119,26 @@ struct Frameset: AsyncParsableCommand {
         func run() async throws {
             let config  = try archiveOptions.makeConfiguration()
             let archive = try Archive(configuration: config)
-            let query   = queryOptions.makeQuery()
-            let hasQualityFilter = queryOptions.maxFwhm != nil
-                || queryOptions.minStars != nil
-                || queryOptions.maxBackgroundNoise != nil
-                || queryOptions.maxEccentricity != nil
+            // Base query excludes maxFwhm/maxEccentricity — those are exclusion thresholds, not filters.
+            let baseQuery = queryOptions.makeBaseQuery()
+            let hasOtherQualityFilter = queryOptions.minStars != nil || queryOptions.maxBackgroundNoise != nil
+            let hasExclusionThreshold = queryOptions.maxFwhm != nil || queryOptions.maxEccentricity != nil
 
             // Always inspect first so warnings are printed before any error is thrown.
-            let preInspection = try await archive.inspectFrameSet(query: query)
+            let preInspection = try await archive.inspectFrameSet(
+                query: baseQuery,
+                maxFWHM: queryOptions.maxFwhm,
+                maxEccentricity: queryOptions.maxEccentricity
+            )
 
             if dryRun {
                 if !json {
-                    try await printRejectedWarnings(archive: archive, inspection: preInspection, query: query)
-                    if hasQualityFilter {
+                    try await printRejectedWarnings(archive: archive, inspection: preInspection, query: baseQuery)
+                    if hasOtherQualityFilter {
                         try await printMissingQualityWarnings(archive: archive, inspection: preInspection)
+                    }
+                    if hasExclusionThreshold && !preInspection.excludedFrames.isEmpty {
+                        printExcludedWarnings(preInspection.excludedFrames)
                     }
                 }
                 if json {
@@ -133,9 +151,12 @@ struct Frameset: AsyncParsableCommand {
 
             // Print warnings before attempting creation so they appear even when creation fails.
             if !json {
-                try await printRejectedWarnings(archive: archive, inspection: preInspection, query: query)
-                if hasQualityFilter {
+                try await printRejectedWarnings(archive: archive, inspection: preInspection, query: baseQuery)
+                if hasOtherQualityFilter {
                     try await printMissingQualityWarnings(archive: archive, inspection: preInspection)
+                }
+                if hasExclusionThreshold && !preInspection.excludedFrames.isEmpty {
+                    printExcludedWarnings(preInspection.excludedFrames)
                 }
                 // Flush the C stdio buffer so warnings appear before any error written to stderr.
                 fflush(Darwin.stdout)
@@ -143,7 +164,11 @@ struct Frameset: AsyncParsableCommand {
 
             let setName = name ?? autoName(queryOptions)
             let (frameSet, inspection) = try await archive.createFrameSet(
-                name: setName, query: query, force: force
+                name: setName,
+                query: baseQuery,
+                force: force,
+                maxFWHM: queryOptions.maxFwhm,
+                maxEccentricity: queryOptions.maxEccentricity
             )
 
             if json {
@@ -153,6 +178,23 @@ struct Frameset: AsyncParsableCommand {
                 print("")
                 print(inspection.formatted(isDryRun: false))
             }
+        }
+
+        private func printExcludedWarnings(_ excluded: [ArchivedFrame]) {
+            let n    = excluded.count
+            let noun = n == 1 ? "frame" : "frames"
+            let verb = n == 1 ? "was"   : "were"
+            print(orangeText("⚠  \(n) \(noun) \(verb) included but marked as excluded (quality threshold exceeded):"))
+            for f in excluded.prefix(5) {
+                let filename = (f.filePath as NSString).lastPathComponent
+                var metrics: [String] = []
+                if let v = f.medianFWHM         { metrics.append(String(format: "FWHM %.2fpx", v)) }
+                if let v = f.medianEccentricity  { metrics.append(String(format: "ecc %.3f", v)) }
+                print(orangeText("   \(filename)  (\(metrics.joined(separator: ", ")))"))
+            }
+            if excluded.count > 5 { print(orangeText("   …and \(excluded.count - 5) more")) }
+            print(orangeText("   Use 'ap-archive frameset include <set-id> <frame-id>' to re-enable a frame."))
+            print("")
         }
 
         /// Queries for rejected frames that pass every other filter and prints an orange warning.
@@ -188,29 +230,27 @@ struct Frameset: AsyncParsableCommand {
             print("")
         }
 
-        /// Queries for all frames that match the base criteria (ignoring quality filters) and
-        /// prints an orange warning for any that were excluded solely because quality data is absent.
+        /// Queries for all frames that match the base criteria (ignoring hard quality filters)
+        /// and prints an orange warning for any that were excluded solely because quality data is absent.
+        /// Note: maxFwhm/maxEccentricity are exclusion thresholds, not hard filters — this method
+        /// only handles minStars and maxBackgroundNoise which still exclude frames entirely.
         private func printMissingQualityWarnings(
             archive: Archive,
             inspection: FrameSetInspection
         ) async throws {
             // Re-run the query without quality filters to find every candidate frame.
-            var baseQuery = queryOptions.makeQuery()
-            baseQuery.maxFWHM            = nil
-            baseQuery.minStarCount       = nil
-            baseQuery.maxBackgroundNoise = nil
-            baseQuery.maxEccentricity    = nil
-            let allFrames   = try await archive.frames(matching: baseQuery)
+            var noQualityQuery = queryOptions.makeBaseQuery()
+            noQualityQuery.minStarCount       = nil
+            noQualityQuery.maxBackgroundNoise = nil
+            let allFrames   = try await archive.frames(matching: noQualityQuery)
             let includedIDs = Set(inspection.frames.map { $0.id })
 
             // A frame is "missing quality data" if it is not included in the quality-filtered
-            // result AND has a nil value for at least one of the active filter fields.
+            // result AND has a nil value for at least one of the active hard-filter fields.
             let excluded = allFrames.filter { f in
                 !includedIDs.contains(f.id) &&
-                ((queryOptions.maxFwhm != nil            && f.medianFWHM        == nil) ||
-                 (queryOptions.minStars != nil           && f.starCount          == nil) ||
-                 (queryOptions.maxBackgroundNoise != nil && f.backgroundNoise    == nil) ||
-                 (queryOptions.maxEccentricity != nil    && f.medianEccentricity == nil))
+                ((queryOptions.minStars != nil           && f.starCount       == nil) ||
+                 (queryOptions.maxBackgroundNoise != nil && f.backgroundNoise == nil))
             }
             guard !excluded.isEmpty else { return }
 
@@ -220,10 +260,8 @@ struct Frameset: AsyncParsableCommand {
             print(orangeText("⚠  \(n) \(noun) matched the query but \(verb) excluded — no quality data for the active filter(s):"))
             for f in excluded.prefix(5) {
                 var missing: [String] = []
-                if queryOptions.maxFwhm != nil            && f.medianFWHM        == nil { missing.append("FWHM") }
-                if queryOptions.minStars != nil           && f.starCount          == nil { missing.append("star count") }
-                if queryOptions.maxBackgroundNoise != nil && f.backgroundNoise    == nil { missing.append("bg. noise") }
-                if queryOptions.maxEccentricity != nil    && f.medianEccentricity == nil { missing.append("eccentricity") }
+                if queryOptions.minStars != nil           && f.starCount       == nil { missing.append("star count") }
+                if queryOptions.maxBackgroundNoise != nil && f.backgroundNoise == nil { missing.append("bg. noise") }
                 let filename = (f.filePath as NSString).lastPathComponent
                 print(orangeText("   \(filename)  (no \(missing.joined(separator: ", ")))"))
             }
@@ -340,19 +378,24 @@ struct Frameset: AsyncParsableCommand {
                 printError("No frame set with id \(id).")
                 throw ExitCode.failure
             }
-            let memberFrames = try await archive.frames(inFrameSet: uuid)
+            let members = try await archive.members(inFrameSet: uuid)
 
             if json {
                 let iso = ISO8601DateFormatter()
                 var d = frameSetDict(fs, iso: iso)
-                d["members"] = memberFrames.map { frameBriefDict($0, iso: iso) }
+                d["members"] = members.map { m in
+                    var entry = frameBriefDict(m.frame, iso: iso)
+                    entry["excluded"] = m.excluded
+                    if let r = m.excludedReason { entry["excluded_reason"] = r }
+                    return entry
+                }
                 writeJSON(d)
             } else {
-                printTable(fs, frames: memberFrames)
+                printTable(fs, members: members)
             }
         }
 
-        private func printTable(_ fs: ArchivedFrameSet, frames: [ArchivedFrame]) {
+        private func printTable(_ fs: ArchivedFrameSet, members: [FrameSetMember]) {
             let iso = ISO8601DateFormatter()
             func row(_ label: String, _ value: String) {
                 print(String(format: "  %-14@ %@", (label + ":") as NSString, value as NSString))
@@ -363,7 +406,8 @@ struct Frameset: AsyncParsableCommand {
             row("Name",   fs.name)
             row("Type",   fs.frameType)
             row("Level",  fs.processingLevel.rawValue)
-            row("Frames", "\(fs.frameCount)")
+            let framesSuffix = fs.excludedFrameCount > 0 ? " (\(fs.excludedFrameCount) excluded)" : ""
+            row("Frames", "\(fs.frameCount)\(framesSuffix)")
             if let v = fs.objectName    { row("Object",   v) }
             if let v = fs.filter {
                 let label = v.contains(",") ? "Filters" : "Filter"
@@ -390,21 +434,22 @@ struct Frameset: AsyncParsableCommand {
             }
             row("Created", iso.string(from: fs.createdAt))
 
-            if !frames.isEmpty {
+            if !members.isEmpty {
+                let frames = members.map { $0.frame }
                 let hasQuality = frames.contains { $0.starCount != nil || $0.medianFWHM != nil || $0.medianEccentricity != nil }
                 print("")
-                print("Members (\(frames.count)):")
+                print("Members (\(members.count)):")
                 if hasQuality {
-                    func memberRow(_ uuid: String, _ obj: String, _ filt: String,
-                                   _ exp: String, _ stars: String, _ fwhm: String,
-                                   _ ecc: String, _ date: String) {
-                        print(String(format: "  %-36@  %-14@  %-8@  %8@  %6@  %14@  %6@  %@",
-                            uuid as NSString, obj as NSString, filt as NSString, exp as NSString,
-                            stars as NSString, fwhm as NSString, ecc as NSString, date as NSString))
+                    func memberRow(_ line: String, excluded: Bool) {
+                        print(excluded ? orangeText(line) : line)
                     }
-                    memberRow("UUID", "Object", "Filter", "Exposure", "Stars", "FWHM", "Ecc", "Date")
+                    let header = String(format: "  %-36@  %-14@  %-8@  %8@  %6@  %14@  %6@  %@",
+                        "UUID" as NSString, "Object" as NSString, "Filter" as NSString, "Exposure" as NSString,
+                        "Stars" as NSString, "FWHM" as NSString, "Ecc" as NSString, "Date" as NSString)
+                    print(header)
                     print("  " + String(repeating: "─", count: 36 + 14 + 8 + 8 + 6 + 14 + 6 + 18))
-                    for f in frames {
+                    for m in members {
+                        let f = m.frame
                         let obj   = f.objectName ?? "-"
                         let filt  = f.filter ?? "-"
                         let exp   = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
@@ -419,26 +464,102 @@ struct Frameset: AsyncParsableCommand {
                         } else { fwhm = "-" }
                         let ecc   = f.medianEccentricity.map { String(format: "%.3f", $0) } ?? "-"
                         let date  = f.timestamp.map { String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ") } ?? "-"
-                        memberRow(f.id.uuidString, obj, filt, exp, stars, fwhm, ecc, date)
+                        let line = String(format: "  %-36@  %-14@  %-8@  %8@  %6@  %14@  %6@  %@",
+                            f.id.uuidString as NSString, obj as NSString, filt as NSString,
+                            exp as NSString, stars as NSString, fwhm as NSString,
+                            ecc as NSString, date as NSString)
+                        memberRow(line, excluded: m.excluded)
                     }
                 } else {
-                    func memberRow(_ uuid: String, _ obj: String, _ filt: String,
-                                   _ exp: String, _ date: String) {
-                        print(String(format: "  %-36@  %-14@  %-8@  %8@  %@",
-                            uuid as NSString, obj as NSString, filt as NSString,
-                            exp as NSString, date as NSString))
+                    func memberRow(_ line: String, excluded: Bool) {
+                        print(excluded ? orangeText(line) : line)
                     }
-                    memberRow("UUID", "Object", "Filter", "Exposure", "Date")
+                    let header = String(format: "  %-36@  %-14@  %-8@  %8@  %@",
+                        "UUID" as NSString, "Object" as NSString, "Filter" as NSString,
+                        "Exposure" as NSString, "Date" as NSString)
+                    print(header)
                     print("  " + String(repeating: "─", count: 36 + 14 + 8 + 8 + 16))
-                    for f in frames {
+                    for m in members {
+                        let f = m.frame
                         let obj  = f.objectName ?? "-"
                         let filt = f.filter ?? "-"
                         let exp  = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
                         let date = f.timestamp.map { String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ") } ?? "-"
-                        memberRow(f.id.uuidString, obj, filt, exp, date)
+                        let line = String(format: "  %-36@  %-14@  %-8@  %8@  %@",
+                            f.id.uuidString as NSString, obj as NSString, filt as NSString,
+                            exp as NSString, date as NSString)
+                        memberRow(line, excluded: m.excluded)
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Exclude / Include
+
+    struct Exclude: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Mark a frame as excluded within a specific frame set. Excluded frames are skipped during processing but remain in the set."
+        )
+
+        @OptionGroup var archiveOptions: ArchivePathOption
+
+        @Argument(help: "Frame set UUID.")
+        var frameSetID: String
+
+        @Argument(help: "Frame UUID to exclude.")
+        var frameID: String
+
+        @Option(name: .long, help: "Optional reason for exclusion.")
+        var reason: String?
+
+        func run() async throws {
+            guard let setUUID = UUID(uuidString: frameSetID) else {
+                printError("Invalid frame set UUID: \(frameSetID)")
+                throw ExitCode.failure
+            }
+            guard let frmUUID = UUID(uuidString: frameID) else {
+                printError("Invalid frame UUID: \(frameID)")
+                throw ExitCode.failure
+            }
+            let config  = try archiveOptions.makeConfiguration()
+            let archive = try Archive(configuration: config)
+            try await archive.setMemberExcluded(
+                frameSetID: setUUID, frameID: frmUUID, excluded: true, reason: reason
+            )
+            let reasonSuffix = reason.map { ": \($0)" } ?? ""
+            print("Frame \(frameID) marked as excluded in frame set \(frameSetID)\(reasonSuffix).")
+        }
+    }
+
+    struct Include: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Clear the excluded flag for a frame within a specific frame set, re-enabling it for processing."
+        )
+
+        @OptionGroup var archiveOptions: ArchivePathOption
+
+        @Argument(help: "Frame set UUID.")
+        var frameSetID: String
+
+        @Argument(help: "Frame UUID to re-include.")
+        var frameID: String
+
+        func run() async throws {
+            guard let setUUID = UUID(uuidString: frameSetID) else {
+                printError("Invalid frame set UUID: \(frameSetID)")
+                throw ExitCode.failure
+            }
+            guard let frmUUID = UUID(uuidString: frameID) else {
+                printError("Invalid frame UUID: \(frameID)")
+                throw ExitCode.failure
+            }
+            let config  = try archiveOptions.makeConfiguration()
+            let archive = try Archive(configuration: config)
+            try await archive.setMemberExcluded(
+                frameSetID: setUUID, frameID: frmUUID, excluded: false
+            )
+            print("Frame \(frameID) re-included in frame set \(frameSetID).")
         }
     }
 
@@ -476,6 +597,7 @@ private func frameSetDict(_ fs: ArchivedFrameSet, iso: ISO8601DateFormatter) -> 
         "frame_type": fs.frameType,
         "processing_level": fs.processingLevel.rawValue,
         "frame_count": fs.frameCount,
+        "excluded_frame_count": fs.excludedFrameCount,
         "created_at": iso.string(from: fs.createdAt),
     ]
     if let v = fs.objectName    { d["object_name"]    = v }

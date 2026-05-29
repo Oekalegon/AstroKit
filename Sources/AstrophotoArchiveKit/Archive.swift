@@ -334,33 +334,75 @@ public actor Archive {
     /// Inspects which frames would be included in a frame set matching `query`,
     /// reporting property distributions and any validation issues — without writing
     /// anything to the database.
-    public func inspectFrameSet(query: FrameQuery) async throws -> FrameSetInspection {
+    ///
+    /// - Parameters:
+    ///   - query: Frame filter. `maxFWHM` and `maxEccentricity` on the query are treated as
+    ///     exclusion thresholds (frames are shown but marked as would-be-excluded).
+    ///   - maxFWHM: Frames exceeding this FWHM (pixels) are shown as would-be-excluded.
+    ///   - maxEccentricity: Frames exceeding this eccentricity are shown as would-be-excluded.
+    public func inspectFrameSet(
+        query: FrameQuery,
+        maxFWHM: Double? = nil,
+        maxEccentricity: Double? = nil
+    ) async throws -> FrameSetInspection {
         var q = query
         q.rejectionFilter = .excludeRejected
         q.limit = nil
+        // Strip quality threshold filters so all frames are returned for inspection.
+        q.maxFWHM = nil
+        q.maxEccentricity = nil
         let matchedFrames = try await frames(matching: q)
-        return buildInspection(from: matchedFrames)
+        let excludedByQuality = matchedFrames.filter { f in
+            if let max = maxFWHM,        let v = f.medianFWHM,        v > max { return true }
+            if let max = maxEccentricity, let v = f.medianEccentricity, v > max { return true }
+            return false
+        }
+        return buildInspection(from: matchedFrames, excludedFrames: excludedByQuality)
     }
 
     /// Creates a frame set from all non-rejected frames matching `query`.
     ///
+    /// Frames that exceed `maxFWHM` or `maxEccentricity` thresholds are **included** in the
+    /// set but have their `excluded` flag set so that processing pipelines skip them by default.
+    /// This differs from passing these values as `query.maxFWHM` / `query.maxEccentricity`,
+    /// which would filter them out entirely.
+    ///
     /// - Parameters:
     ///   - name: Display name for the set.
-    ///   - query: Frame filter — rejected frames are always excluded.
-    ///   - force: When `true`, allows mixed optical filters (stored as a comma-separated
-    ///     list). Mixed frame types and processing levels are always fatal.
+    ///   - query: Frame filter — rejected frames and any quality constraints (except FWHM/eccentricity)
+    ///     are applied. Pass `maxFWHM`/`maxEccentricity` directly here, not via the query, to get
+    ///     the "include-but-exclude" behaviour.
+    ///   - force: When `true`, allows mixed optical filters.
+    ///   - maxFWHM: Frames whose `medianFWHM` exceeds this value (pixels) are included but
+    ///     marked as excluded. Frames without FWHM data are included and not marked.
+    ///   - maxEccentricity: Frames whose `medianEccentricity` exceeds this value are included
+    ///     but marked as excluded.
     /// - Returns: The persisted frame set together with its inspection report.
     @discardableResult
     public func createFrameSet(
         name: String,
         query: FrameQuery,
-        force: Bool = false
+        force: Bool = false,
+        maxFWHM: Double? = nil,
+        maxEccentricity: Double? = nil
     ) async throws -> (frameSet: ArchivedFrameSet, inspection: FrameSetInspection) {
         var q = query
         q.rejectionFilter = .excludeRejected
         q.limit = nil
+        // Strip quality threshold filters from the query — they are applied as exclusion flags instead.
+        q.maxFWHM = nil
+        q.maxEccentricity = nil
         let matchedFrames = try await frames(matching: q)
-        let inspection = buildInspection(from: matchedFrames)
+
+        // Determine which frames should be excluded based on quality thresholds.
+        let excludedByQuality = matchedFrames.filter { f in
+            if let max = maxFWHM,        let v = f.medianFWHM,        v > max { return true }
+            if let max = maxEccentricity, let v = f.medianEccentricity, v > max { return true }
+            return false
+        }
+        let excludedIDs = Set(excludedByQuality.map { $0.id })
+
+        let inspection = buildInspection(from: matchedFrames, excludedFrames: excludedByQuality)
 
         guard !matchedFrames.isEmpty else {
             throw ArchiveError.frameSetError("No frames match the query.")
@@ -395,9 +437,23 @@ public actor Archive {
             return nil
         }()
 
+        // Build per-frame exclusion reasons.
+        var excludedReasons: [UUID: String] = [:]
+        for f in excludedByQuality {
+            var reasons: [String] = []
+            if let max = maxFWHM, let v = f.medianFWHM, v > max {
+                reasons.append(String(format: "FWHM %.2f px > max %.2f px", v, max))
+            }
+            if let max = maxEccentricity, let v = f.medianEccentricity, v > max {
+                reasons.append(String(format: "eccentricity %.3f > max %.3f", v, max))
+            }
+            if !reasons.isEmpty { excludedReasons[f.id] = reasons.joined(separator: "; ") }
+        }
+
         let frameSet = ArchivedFrameSet(
             id: UUID(), name: name, frameType: frameType, processingLevel: processingLevel,
             createdAt: Date(), frameCount: matchedFrames.count,
+            excludedFrameCount: excludedIDs.count,
             objectName:   sharedString(matchedFrames.map { $0.objectName }),
             filter:       filterValue,
             camera:       sharedString(matchedFrames.map { $0.camera }),
@@ -415,7 +471,12 @@ public actor Archive {
             temperatureMin:  inspection.temperatureMin,
             temperatureMax:  inspection.temperatureMax
         )
-        try await database.insertFrameSet(frameSet, frameIDs: matchedFrames.map { $0.id })
+        try await database.insertFrameSet(
+            frameSet,
+            frameIDs: matchedFrames.map { $0.id },
+            excludedIDs: excludedIDs,
+            excludedReasons: excludedReasons
+        )
         return (frameSet, inspection)
     }
 
@@ -429,14 +490,55 @@ public actor Archive {
         try await database.frameSetByID(id)
     }
 
-    /// Returns the member frames of a frame set in their stored order.
+    /// Returns the active (non-excluded) member frames of a frame set in stored order.
+    ///
+    /// This is the right method to use when feeding frames into a pipeline — excluded members
+    /// are omitted. Use `members(inFrameSet:)` when you need the full membership including
+    /// the exclusion state.
     public func frames(inFrameSet id: UUID) async throws -> [ArchivedFrame] {
-        let frameIDs = try await database.frameIDsForSet(id)
+        let frameIDs = try await database.frameIDsForSet(id, activeOnly: true)
         var result: [ArchivedFrame] = []
         for fid in frameIDs {
             if let f = try await database.frameByID(fid) { result.append(f) }
         }
         return expandPaths(result)
+    }
+
+    /// Returns all member frames of a frame set, including excluded ones, together with
+    /// their per-set exclusion state. Use this for display purposes.
+    public func members(inFrameSet id: UUID) async throws -> [FrameSetMember] {
+        let rows = try await database.membersForSet(id)
+        var result: [FrameSetMember] = []
+        for (frameID, excluded, reason) in rows {
+            guard let f = try await database.frameByID(frameID) else { continue }
+            var expanded = f
+            expanded.filePath = toAbsolutePath(f.filePath)
+            result.append(FrameSetMember(frame: expanded, excluded: excluded, excludedReason: reason))
+        }
+        return result
+    }
+
+    /// Sets or clears the excluded flag for a single frame within a frame set.
+    ///
+    /// This is a per-frameset flag — the same frame can be excluded from one set while
+    /// remaining active in another. It does not affect `ArchivedFrame.rejected`.
+    public func setMemberExcluded(
+        frameSetID: UUID,
+        frameID: UUID,
+        excluded: Bool,
+        reason: String? = nil
+    ) async throws {
+        try await database.updateMemberExcluded(
+            frameSetID: frameSetID,
+            frameID: frameID,
+            excluded: excluded,
+            reason: excluded ? reason : nil
+        )
+    }
+
+    /// Returns all frame set IDs that contain the given frame.
+    public func frameSetIDs(forFrame frameID: UUID) async throws -> [UUID] {
+        try await database.frameSetIDsForFrame(frameID)
     }
 
     /// Deletes a frame set. Member frames are not affected.
@@ -446,7 +548,10 @@ public actor Archive {
 
     // MARK: - Inspection builder
 
-    private func buildInspection(from matchedFrames: [ArchivedFrame]) -> FrameSetInspection {
+    private func buildInspection(
+        from matchedFrames: [ArchivedFrame],
+        excludedFrames: [ArchivedFrame] = []
+    ) -> FrameSetInspection {
         func dist<T: Hashable>(_ values: [T?], nilLabel: String) -> [FrameSetInspection.Entry] {
             var counts: [String: Int] = [:]
             for v in values {
@@ -538,7 +643,8 @@ public actor Archive {
             temperatureMin: temperatureMin, temperatureMax: temperatureMax,
             temperatureMean: temperatureMean,
             canCreate: canCreate, needsForce: needsForce, issues: issues,
-            frames: matchedFrames
+            frames: matchedFrames,
+            excludedFrames: excludedFrames
         )
     }
 
