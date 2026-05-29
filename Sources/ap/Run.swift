@@ -377,13 +377,14 @@ extension AP {
             // by earlier steps and must not be stored as archive entries.
             let resultFrames = terminalFrames(from: frames, pipeline: pipeline)
             if !resultFrames.isEmpty {
-                let usedFilePaths = extractUsedFilePaths(from: tables)
+                let outcomes = extractRegistrationOutcomes(from: tables)
                 await autoArchiveResults(
                     frames: resultFrames,
                     pipelineID: pipelineID,
                     parameters: parameters,
                     pipelineInputs: pipelineInputs,
-                    usedFilePaths: usedFilePaths,
+                    usedFilePaths: outcomes?.used,
+                    registrationFailureReasons: outcomes?.failureReasons ?? [:],
                     existingOutputPath: (output?.hasSuffix(".fits") == true || output?.hasSuffix(".fit") == true) ? output : nil
                 )
             }
@@ -705,24 +706,49 @@ extension AP {
             return (starCount, medianFWHM, backgroundNoise, backgroundNoiseIsADU, backgroundNoiseElectrons, medianEccentricity, saturatedStarCount, hotPixelCount)
         }
 
-        /// Returns file paths of frames that were actually used in a stack (registration_success=1).
-        /// Returns nil when the output tables contain no registration table, meaning all inputs were used.
-        private func extractUsedFilePaths(from tables: [TableData]) -> Set<String>? {
+        /// Scans output tables for a registration table (identified by `file_path` +
+        /// `registration_success` columns). Returns the set of file paths that were
+        /// actually composited (success=1) and a per-path failure reason for the rest.
+        /// Returns nil when no registration table is found (all inputs were used).
+        private func extractRegistrationOutcomes(
+            from tables: [TableData]
+        ) -> (used: Set<String>, failureReasons: [String: String])? {
             for table in tables {
                 guard let df = table.dataFrame else { continue }
                 let colNames = Set(df.columns.map { $0.name })
                 guard colNames.contains("file_path"),
                       colNames.contains("registration_success") else { continue }
-                var paths = Set<String>()
+
+                var used = Set<String>()
+                var failureReasons: [String: String] = [:]
+
                 for row in df.rows {
                     guard let path = row["file_path"] as? String, !path.isEmpty else { continue }
-                    let used: Bool
-                    if      let v = row["registration_success"] as? Int32 { used = v != 0 }
-                    else if let v = row["registration_success"] as? Int   { used = v != 0 }
-                    else                                                   { used = true }
-                    if used { paths.insert(path) }
+                    let success: Bool
+                    if      let v = row["registration_success"] as? Int32 { success = v != 0 }
+                    else if let v = row["registration_success"] as? Int   { success = v != 0 }
+                    else                                                   { success = true }
+
+                    if success {
+                        used.insert(path)
+                    } else {
+                        func dbl(_ key: String) -> Double? {
+                            if let v = row[key] as? Double { return v }
+                            if let v = row[key] as? Float  { return Double(v) }
+                            return nil
+                        }
+                        func int32(_ key: String) -> Int? {
+                            if let v = row[key] as? Int32 { return Int(v) }
+                            if let v = row[key] as? Int   { return v }
+                            return nil
+                        }
+                        var parts: [String] = ["registration failed"]
+                        if let matches = int32("match_count") { parts.append("\(matches) star matches") }
+                        if let rmse = dbl("rmse"), rmse > 0   { parts.append(String(format: "RMSE %.2f px", rmse)) }
+                        failureReasons[path] = parts.joined(separator: "; ")
+                    }
                 }
-                return paths
+                return (used, failureReasons)
             }
             return nil
         }
@@ -733,6 +759,7 @@ extension AP {
             parameters: [String: Parameter],
             pipelineInputs: [String: Any],
             usedFilePaths: Set<String>? = nil,
+            registrationFailureReasons: [String: String] = [:],
             existingOutputPath: String?
         ) async {
             guard let config = try? ArchiveConfiguration.fromEnvironment() else { return }
@@ -893,14 +920,15 @@ extension AP {
                         for path in allPaths where !usedPaths.contains(path) {
                             guard let af = try? await archive.frame(filePath: path) else { continue }
                             let fsIDs = (try? await archive.frameSetIDs(forFrame: af.id)) ?? []
+                            let reason = registrationFailureReasons[path] ?? "registration failed"
                             for fsID in fsIDs {
                                 try? await archive.setMemberExcluded(
                                     frameSetID: fsID, frameID: af.id,
-                                    excluded: true, reason: "registration failed"
+                                    excluded: true, reason: reason
                                 )
                             }
                             if !json && !fsIDs.isEmpty {
-                                print("  Excluded \(af.id) from \(fsIDs.count) frameset(s): registration failed")
+                                print("  Excluded \(af.id) from \(fsIDs.count) frameset(s): \(reason)")
                             }
                         }
                     }
