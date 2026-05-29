@@ -42,20 +42,22 @@ struct Recent: AsyncParsableCommand {
         }
 
         print("Recently archived frames (\(frames.count)):\n")
-        let header = String(format: "%-36@  %-16@  %-8@  %-8@  %8@  %@",
-            "ID" as NSString, "Added at" as NSString, "Type" as NSString,
-            "Filter" as NSString, "Exposure" as NSString, "File" as NSString)
-        print(header)
-        print(String(repeating: "-", count: header.count))
+        var table = TextTable(columns: [
+            .init("ID"),
+            .init("Added at"),
+            .init("Type"),
+            .init("Filter"),
+            .init("Exposure", .right),
+            .init("File"),
+        ])
         for f in frames {
             let added = shortDate(f.addedAt)
             let filt  = f.filter ?? "-"
             let exp   = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
             let file  = (f.filePath as NSString).lastPathComponent
-            print(String(format: "%-36@  %-16@  %-8@  %-8@  %8@  %@",
-                f.id.uuidString as NSString, added as NSString, f.frameType as NSString,
-                filt as NSString, exp as NSString, file as NSString))
+            table.addRow([f.id.uuidString, added, f.frameType, filt, exp, file])
         }
+        print(table.render())
     }
 
     // MARK: - JSON output

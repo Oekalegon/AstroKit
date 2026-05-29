@@ -125,23 +125,21 @@ extension FrameSetInspection {
         if !frames.isEmpty {
             lines.append("")
             lines.append("Frames (\(frames.count)):")
-            let colUUID = 36, colObj = 14, colFilt = 8, colExp = 8
-            let header = String(
-                format: "  %-\(colUUID)@  %-\(colObj)@  %-\(colFilt)@  %\(colExp)@  %@",
-                "UUID" as NSString, "Object" as NSString, "Filter" as NSString, "Exposure" as NSString, "Date" as NSString
-            )
-            lines.append(header)
-            lines.append("  " + String(repeating: "─", count: colUUID + colObj + colFilt + colExp + 14))
+            var table = TextTable(columns: [
+                .init("UUID"),
+                .init("Object"),
+                .init("Filter"),
+                .init("Exposure", .right),
+                .init("Date"),
+            ])
             for f in frames {
-                let obj  = (f.objectName ?? "-") as NSString
-                let filt = (f.filter     ?? "-") as NSString
-                let exp  = (f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-") as NSString
-                let date = (f.timestamp.map { String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ") } ?? "-") as NSString
-                lines.append(String(
-                    format: "  %-\(colUUID)@  %-\(colObj)@  %-\(colFilt)@  %\(colExp)@  %@",
-                    f.id.uuidString as NSString, obj, filt, exp, date
-                ))
+                let obj  = f.objectName ?? "-"
+                let filt = f.filter ?? "-"
+                let exp  = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
+                let date = f.timestamp.map { String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ") } ?? "-"
+                table.addRow([f.id.uuidString, obj, filt, exp, date])
             }
+            lines.append(contentsOf: table.renderLines(indent: "  "))
         }
 
         return lines.joined(separator: "\n")
