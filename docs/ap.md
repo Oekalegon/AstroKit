@@ -122,7 +122,7 @@ ap run star_detection --input M51.fits --json
 
 | ID | Description |
 |----|-------------|
-| `star_detection` | Detect stars and measure FWHM |
+| `star_detection` | Detect stars, measure FWHM/eccentricity, and update the source FITS file |
 | `optical_quality` | Measure optical quality metrics |
 | `collimation_reflector` | Mirror collimation analysis |
 | `collimation_reflector_wavelet` | Wavelet-based collimation |
@@ -256,6 +256,49 @@ ap run frame_stacking \
 | `STCKREJO` | Pixel rejection method used |
 | `STCKRJLO` | Lower rejection sigma |
 | `STCKRJHI` | Upper rejection sigma |
+
+---
+
+## Star detection and FITS catalog output
+
+When `star_detection` runs on a file loaded from disk, it modifies the **source FITS file in-place**:
+
+1. **Primary HDU header** — quality statistics are written as FITS keywords:
+
+   | Keyword | Description |
+   |---------|-------------|
+   | `NSTARS` | Number of detected stars |
+   | `MEDFWHM` | Median FWHM — major axis (pixels) |
+   | `MEDFWHM2` | Median FWHM — minor axis (pixels) |
+   | `MEANFWHM` | σ-clipped mean FWHM — major axis (pixels) |
+   | `MEANFWM2` | σ-clipped mean FWHM — minor axis (pixels) |
+   | `MEANECC` | Mean eccentricity across non-saturated stars (0 = round) |
+
+2. **`STARCATALOG` BINTABLE extension** — one row per detected star:
+
+   | Column | Unit | Description |
+   |--------|------|-------------|
+   | `STAR_ID` | — | Sequential star index |
+   | `CENTRD_X` | pix | Centroid X position |
+   | `CENTRD_Y` | pix | Centroid Y position |
+   | `FWHM_MAJ` | pix | FWHM along the major axis |
+   | `FWHM_MIN` | pix | FWHM along the minor axis |
+   | `ECCENTRC` | — | Eccentricity (0 = circular, 1 = fully elongated) |
+   | `FLUX` | — | Integrated intensity from image moments |
+   | `AREA` | pix² | Number of pixels in the connected component |
+   | `SATURATD` | — | 1 if the star is saturated (≥ 90 % full-scale), 0 otherwise |
+
+The operation is idempotent — re-running `star_detection` on the same file replaces any existing `STARCATALOG` extension and overwrites the quality keywords.
+
+```bash
+ap run star_detection --input M51.fits
+# M51.fits now contains NSTARS / MEDFWHM / MEANECC in its header
+# and a STARCATALOG BINTABLE extension with one row per star
+```
+
+> **Note:** This in-place update only occurs when the input file has an accessible path on disk. Frames created programmatically (e.g. in-memory pipeline chains) are skipped without error.
+
+---
 
 ## Auto-archiving
 

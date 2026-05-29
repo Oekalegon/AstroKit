@@ -153,6 +153,11 @@ public actor ProcessorRegistry {
         if implementations[calibrationQuality.id] == nil {
             register(calibrationQuality)
         }
+
+        let fitsStarCatalogWriter = FITSStarCatalogWriterProcessor()
+        if implementations[fitsStarCatalogWriter.id] == nil {
+            register(fitsStarCatalogWriter)
+        }
     }
 
     /// Register a processor using its `id` property
