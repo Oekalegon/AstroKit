@@ -284,6 +284,7 @@ func testStarDetectionPipelineWithOverlay() async throws {
     let erosionProcess = processes.first { $0.stepIdentifier == "erosion" }
     let dilationProcess = processes.first { $0.stepIdentifier == "dilation" }
     let connectedComponentsProcess = processes.first { $0.stepIdentifier == "connected_components" }
+    let fitsCatalogWriterProcess = processes.first { $0.stepIdentifier == "fits_catalog_writer" }
     let quadsProcess = processes.first { $0.stepIdentifier == "quads" }
     let overlayProcess = processes.first { $0.stepIdentifier == "overlay" }
 
@@ -294,14 +295,15 @@ func testStarDetectionPipelineWithOverlay() async throws {
     #expect(erosionProcess != nil, "Should have erosion process")
     #expect(dilationProcess != nil, "Should have dilation process")
     #expect(connectedComponentsProcess != nil, "Should have connected_components process")
+    #expect(fitsCatalogWriterProcess != nil, "Should have fits_catalog_writer process")
     #expect(quadsProcess != nil, "Should have quads process")
     #expect(overlayProcess != nil, "Should have overlay process")
 
     // Verify all processes have completed
     let allProcesses = [grayscaleProcess, blurProcess, backgroundProcess, thresholdProcess,
                         erosionProcess, dilationProcess, connectedComponentsProcess,
-                        quadsProcess, overlayProcess].compactMap { $0 }
-    #expect(allProcesses.count == 9, "Should have 9 processes")
+                        fitsCatalogWriterProcess, quadsProcess, overlayProcess].compactMap { $0 }
+    #expect(allProcesses.count == 10, "Should have 10 processes")
 
     for process in allProcesses {
         let isCompleted = process.statusHistory.contains { status in

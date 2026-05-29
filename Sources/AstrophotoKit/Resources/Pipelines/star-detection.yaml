@@ -217,6 +217,29 @@ steps:
           data_type: "table"
           table_type: "statistics"
 
+  - id: fits_catalog_writer
+    type: fits_star_catalog_writer
+    name: FITS Star Catalog Writer
+    description: Appends a STARCATALOG BINTABLE to the source FITS file and writes star quality statistics (NSTARS, MEDFWHM, MEANFWHM, MEANECC) to the primary HDU header
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+        description: The original source frame (provides the FITS file path to update)
+      - name: pixel_coordinates
+        type: table
+        from: fwhm.pixel_coordinates
+        description: Star catalog with FWHM and eccentricity measurements
+      - name: median_fwhm
+        type: table
+        from: fwhm.median_fwhm
+        description: Median and σ-clipped mean FWHM statistics
+    parameters: []
+    outputs: []
+
   - id: quads
     type: quads
     name: Quads

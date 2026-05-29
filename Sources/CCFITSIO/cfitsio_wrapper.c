@@ -467,6 +467,96 @@ int write_result_frame_fits(
     return status;
 }
 
+// ---------------------------------------------------------------------------
+// Append a STARCATALOG BINTABLE to an existing FITS file and write star
+// quality statistics (NSTARS, MEDFWHM, MEANFWHM, MEANECC) into the primary
+// HDU header.  Any pre-existing STARCATALOG extension is replaced.
+// ---------------------------------------------------------------------------
+int append_star_catalog_to_fits(
+    const char *filename,
+    int         nrows,
+    int        *star_id,
+    double     *centroid_x,
+    double     *centroid_y,
+    double     *fwhm_major,
+    double     *fwhm_minor,
+    double     *eccentricity,
+    double     *flux,
+    int        *area,
+    int        *saturated,       // 0 = not saturated, 1 = saturated
+    double      median_fwhm_major,
+    double      median_fwhm_minor,
+    double      mean_fwhm_major,
+    double      mean_fwhm_minor,
+    double      mean_eccentricity,
+    int         n_stars,
+    int        *status_out
+) {
+    *status_out = 0;
+    int status = 0;
+    fitsfile *fptr = NULL;
+
+    fits_open_file(&fptr, filename, READWRITE, &status);
+    if (status) { *status_out = status; return status; }
+
+    // Write quality statistics into the primary HDU header
+    fits_movabs_hdu(fptr, 1, NULL, &status);
+    if (status) { fits_close_file(fptr, &status); *status_out = status; return status; }
+
+    fits_update_key(fptr, TINT,    "NSTARS",   &n_stars,           "Number of detected stars",           &status);
+    if (median_fwhm_major > 0.0)
+        fits_update_key(fptr, TDOUBLE, "MEDFWHM",  &median_fwhm_major, "[pix] Median FWHM (major axis)",    &status);
+    if (median_fwhm_minor > 0.0)
+        fits_update_key(fptr, TDOUBLE, "MEDFWHM2", &median_fwhm_minor, "[pix] Median FWHM (minor axis)",    &status);
+    if (mean_fwhm_major > 0.0)
+        fits_update_key(fptr, TDOUBLE, "MEANFWHM", &mean_fwhm_major,   "[pix] Mean FWHM (major axis)",      &status);
+    if (mean_fwhm_minor > 0.0)
+        fits_update_key(fptr, TDOUBLE, "MEANFWM2", &mean_fwhm_minor,   "[pix] Mean FWHM (minor axis)",      &status);
+    if (mean_eccentricity >= 0.0)
+        fits_update_key(fptr, TDOUBLE, "MEANECC",  &mean_eccentricity, "Mean eccentricity (0=round)",       &status);
+    if (status) { fits_close_file(fptr, &status); *status_out = status; return status; }
+
+    // Replace any pre-existing STARCATALOG extension
+    {
+        int find_status = 0;
+        fits_movnam_hdu(fptr, ANY_HDU, "STARCATALOG", 0, &find_status);
+        if (find_status == 0) {
+            int del_status = 0;
+            fits_delete_hdu(fptr, NULL, &del_status);
+        }
+    }
+
+    // Append new STARCATALOG BINTABLE at end of file
+    char *ttype[] = { "STAR_ID",  "CENTRD_X", "CENTRD_Y", "FWHM_MAJ", "FWHM_MIN",
+                      "ECCENTRC", "FLUX",     "AREA",     "SATURATD" };
+    char *tform[] = { "1J",       "1D",       "1D",       "1D",       "1D",
+                      "1D",       "1D",       "1J",       "1J" };
+    char *tunit[] = { "",         "pix",      "pix",      "pix",      "pix",
+                      "",         "",         "pix2",     "" };
+
+    fits_create_tbl(fptr, BINARY_TBL, nrows, 9, ttype, tform, tunit, "STARCATALOG", &status);
+    if (status) { fits_close_file(fptr, &status); *status_out = status; return status; }
+
+    char pipeline_val[] = "star_detection";
+    fits_update_key(fptr, TSTRING, "PIPELINE", pipeline_val, "AstrophotoKit pipeline ID", &status);
+
+    if (nrows > 0) {
+        fits_write_col(fptr, TINT,    1, 1, 1, nrows, star_id,      &status);
+        fits_write_col(fptr, TDOUBLE, 2, 1, 1, nrows, centroid_x,   &status);
+        fits_write_col(fptr, TDOUBLE, 3, 1, 1, nrows, centroid_y,   &status);
+        fits_write_col(fptr, TDOUBLE, 4, 1, 1, nrows, fwhm_major,   &status);
+        fits_write_col(fptr, TDOUBLE, 5, 1, 1, nrows, fwhm_minor,   &status);
+        fits_write_col(fptr, TDOUBLE, 6, 1, 1, nrows, eccentricity, &status);
+        fits_write_col(fptr, TDOUBLE, 7, 1, 1, nrows, flux,         &status);
+        fits_write_col(fptr, TINT,    8, 1, 1, nrows, area,         &status);
+        fits_write_col(fptr, TINT,    9, 1, 1, nrows, saturated,    &status);
+    }
+
+    fits_close_file(fptr, &status);
+    *status_out = status;
+    return status;
+}
+
 int fits_read_img_wrapper(fitsfile *fptr, int dataType, int naxis, LONGLONG *firstPixel, LONGLONG *numElements, float *nullValue, float *array, int *anyNull, int *status) {
     // Convert LONGLONG arrays to long arrays for fits_read_pix
     // fits_read_pix expects long* (32-bit), but we receive LONGLONG* (64-bit) from Swift

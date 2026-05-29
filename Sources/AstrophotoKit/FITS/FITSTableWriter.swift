@@ -79,6 +79,28 @@ private func writeResultFrameFITSC(
     _ statusOut: UnsafeMutablePointer<Int32>
 ) -> Int32
 
+@_silgen_name("append_star_catalog_to_fits")
+private func appendStarCatalogToFITSC(
+    _ filename: UnsafePointer<CChar>,
+    _ nrows: Int32,
+    _ starID: UnsafeMutablePointer<Int32>,
+    _ centroidX: UnsafeMutablePointer<Double>,
+    _ centroidY: UnsafeMutablePointer<Double>,
+    _ fwhmMajor: UnsafeMutablePointer<Double>,
+    _ fwhmMinor: UnsafeMutablePointer<Double>,
+    _ eccentricity: UnsafeMutablePointer<Double>,
+    _ flux: UnsafeMutablePointer<Double>,
+    _ area: UnsafeMutablePointer<Int32>,
+    _ saturated: UnsafeMutablePointer<Int32>,
+    _ medianFWHMMajor: Double,
+    _ medianFWHMMinor: Double,
+    _ meanFWHMMajor: Double,
+    _ meanFWHMMinor: Double,
+    _ meanEccentricity: Double,
+    _ nStars: Int32,
+    _ statusOut: UnsafeMutablePointer<Int32>
+) -> Int32
+
 @_silgen_name("write_registration_fits_table")
 private func writeRegistrationFITSTableC(
     _ filename: UnsafePointer<CChar>,
@@ -402,6 +424,86 @@ public struct FITSTableWriter {
             throw FITSTableWriterError.writeFailed(String(cString: errText))
         }
         Logger.swiftfitsio.info("Wrote result frame FITS to \(path)")
+    }
+
+    /// Append a STARCATALOG BINTABLE to an existing FITS file and write star
+    /// quality statistics (NSTARS, MEDFWHM, MEANFWHM, MEANECC) into its primary HDU header.
+    ///
+    /// Any pre-existing STARCATALOG extension is replaced, making this idempotent.
+    ///
+    /// - Parameters:
+    ///   - df: Star catalog DataFrame from the FWHM processor (pixel_coordinates output).
+    ///   - medianFWHMMajor: Median FWHM along the major axis (pixels).
+    ///   - medianFWHMMinor: Median FWHM along the minor axis (pixels).
+    ///   - meanFWHMMajor: σ-clipped mean FWHM along the major axis (pixels).
+    ///   - meanFWHMMinor: σ-clipped mean FWHM along the minor axis (pixels).
+    ///   - meanEccentricity: Mean eccentricity across non-saturated stars.
+    ///   - path: Path to the existing FITS file to update.
+    public static func appendStarCatalog(
+        _ df: DataFrame,
+        medianFWHMMajor: Double,
+        medianFWHMMinor: Double,
+        meanFWHMMajor: Double,
+        meanFWHMMinor: Double,
+        meanEccentricity: Double,
+        to path: String
+    ) throws {
+        let nrows = Int32(df.rows.count)
+
+        func doubles(_ col: String) -> [Double] {
+            df.rows.map { ($0[col] as? Double) ?? 0.0 }
+        }
+        func ints(_ col: String) -> [Int32] {
+            df.rows.map { row -> Int32 in
+                if let v = row[col] as? Int32 { return v }
+                if let v = row[col] as? Int   { return Int32(v) }
+                return 0
+            }
+        }
+
+        var starID      = (0..<Int(nrows)).map { Int32($0) }
+        var centroidX   = doubles("centroid_x")
+        var centroidY   = doubles("centroid_y")
+        var fwhmMajor   = doubles("fwhm_major")
+        var fwhmMinor   = doubles("fwhm_minor")
+        var eccentricity = doubles("eccentricity")
+        var flux        = doubles("flux")
+        var area        = ints("area")
+        var saturated: [Int32] = df.rows.map { ($0["saturated"] as? Bool) == true ? 1 : 0 }
+
+        var statusOut: Int32 = 0
+
+        _ = path.withCString { cPath in
+            starID.withUnsafeMutableBufferPointer { sid in
+            centroidX.withUnsafeMutableBufferPointer { cx in
+            centroidY.withUnsafeMutableBufferPointer { cy in
+            fwhmMajor.withUnsafeMutableBufferPointer { fmaj in
+            fwhmMinor.withUnsafeMutableBufferPointer { fmin in
+            eccentricity.withUnsafeMutableBufferPointer { ecc in
+            flux.withUnsafeMutableBufferPointer { fl in
+            area.withUnsafeMutableBufferPointer { ar in
+            saturated.withUnsafeMutableBufferPointer { sat in
+                appendStarCatalogToFITSC(
+                    cPath, nrows,
+                    sid.baseAddress!, cx.baseAddress!, cy.baseAddress!,
+                    fmaj.baseAddress!, fmin.baseAddress!, ecc.baseAddress!,
+                    fl.baseAddress!, ar.baseAddress!, sat.baseAddress!,
+                    medianFWHMMajor, medianFWHMMinor,
+                    meanFWHMMajor, meanFWHMMinor,
+                    meanEccentricity,
+                    nrows,
+                    &statusOut
+                )
+            }}}}}}}}}
+        }
+
+        if statusOut != 0 {
+            var errText = [CChar](repeating: 0, count: 81)
+            getFITSErrorStatus(statusOut, &errText)
+            errText[80] = 0
+            throw FITSTableWriterError.writeFailed(String(cString: errText))
+        }
+        Logger.swiftfitsio.info("Appended star catalog to FITS file at \(path)")
     }
 
     /// Write any DataFrame as CSV using TabularData's built-in exporter.
