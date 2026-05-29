@@ -377,11 +377,13 @@ extension AP {
             // by earlier steps and must not be stored as archive entries.
             let resultFrames = terminalFrames(from: frames, pipeline: pipeline)
             if !resultFrames.isEmpty {
+                let usedFilePaths = extractUsedFilePaths(from: tables)
                 await autoArchiveResults(
                     frames: resultFrames,
                     pipelineID: pipelineID,
                     parameters: parameters,
                     pipelineInputs: pipelineInputs,
+                    usedFilePaths: usedFilePaths,
                     existingOutputPath: (output?.hasSuffix(".fits") == true || output?.hasSuffix(".fit") == true) ? output : nil
                 )
             }
@@ -703,11 +705,34 @@ extension AP {
             return (starCount, medianFWHM, backgroundNoise, backgroundNoiseIsADU, backgroundNoiseElectrons, medianEccentricity, saturatedStarCount, hotPixelCount)
         }
 
+        /// Returns file paths of frames that were actually used in a stack (registration_success=1).
+        /// Returns nil when the output tables contain no registration table, meaning all inputs were used.
+        private func extractUsedFilePaths(from tables: [TableData]) -> Set<String>? {
+            for table in tables {
+                guard let df = table.dataFrame else { continue }
+                let colNames = Set(df.columns.map { $0.name })
+                guard colNames.contains("file_path"),
+                      colNames.contains("registration_success") else { continue }
+                var paths = Set<String>()
+                for row in df.rows {
+                    guard let path = row["file_path"] as? String, !path.isEmpty else { continue }
+                    let used: Bool
+                    if      let v = row["registration_success"] as? Int32 { used = v != 0 }
+                    else if let v = row["registration_success"] as? Int   { used = v != 0 }
+                    else                                                   { used = true }
+                    if used { paths.insert(path) }
+                }
+                return paths
+            }
+            return nil
+        }
+
         private func autoArchiveResults(
             frames: [Frame],
             pipelineID: String,
             parameters: [String: Parameter],
             pipelineInputs: [String: Any],
+            usedFilePaths: Set<String>? = nil,
             existingOutputPath: String?
         ) async {
             guard let config = try? ArchiveConfiguration.fromEnvironment() else { return }
@@ -739,12 +764,17 @@ extension AP {
                     } else {
                         pathsAndFrames = []
                     }
-                    for (pos, (path, inputFrame)) in pathsAndFrames.enumerated() {
+                    var pos = 0
+                    for (path, inputFrame) in pathsAndFrames {
+                        // When a registration table is present, only record frames that were
+                        // actually composited into the stack (registration_success=1).
+                        if let used = usedFilePaths, !used.contains(path) { continue }
                         let af = try? await archive.frame(filePath: path)
                         runInputs.append(ProcessingRunInputRef(
                             inputName: name, frameID: af?.id, filePath: path, position: pos
                         ))
-                        if pos == 0 { refRA = af?.ra; refDec = af?.dec }
+                        if refRA == nil { refRA = af?.ra; refDec = af?.dec }
+                        pos += 1
                         inputCount += 1
                         if let v = af?.objectName { objectNamesSet.insert(v) }
                         let fn = af?.filter ?? inputFrame?.filterName
