@@ -220,9 +220,13 @@ extension AP {
                         "Run on individual frames to save results."
                     )
                 }
-                if !json {
-                    print("Running '\(pipelineID)' on \(frameLoopItems.count) frame(s)…")
-                }
+                let progressBar: ProgressBar? = json ? nil : ProgressBar(
+                    total: frameLoopItems.count,
+                    label: "Running '\(pipelineID)' on \(frameLoopItems.count) frame(s)…"
+                )
+                let frameLogger: ((String) -> Void)? = progressBar?.isTTY == true
+                    ? { msg in progressBar?.log(msg) }
+                    : nil
                 let start = Date()
                 var totalTables = 0, totalResultFrames = 0
                 var jsonRows: [[String: Any]] = []
@@ -252,12 +256,14 @@ extension AP {
                             pipelineID: pipelineID,
                             parameters: parameters,
                             pipelineInputs: perFrameInputs,
-                            existingOutputPath: nil
+                            existingOutputPath: nil,
+                            log: frameLogger
                         )
                     }
                     if !frameTables.isEmpty {
-                        await backUpdateQuality(tables: frameTables, pipelineInputs: perFrameInputs, parameters: parameters)
+                        await backUpdateQuality(tables: frameTables, pipelineInputs: perFrameInputs, parameters: parameters, log: frameLogger)
                     }
+                    progressBar?.advance()
 
                     if json {
                         var row: [String: Any] = ["frame_index": idx]
@@ -279,7 +285,7 @@ extension AP {
                     if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted]),
                        let str = String(data: data, encoding: .utf8) { print(str) }
                 } else {
-                    print(String(
+                    progressBar?.finish(summary: String(
                         format: "Done in %.2fs — %d frame(s) processed, %d table(s) per frame.",
                         elapsed, frameLoopItems.count,
                         frameLoopItems.isEmpty ? 0 : totalTables / frameLoopItems.count
@@ -439,7 +445,8 @@ extension AP {
         private func backUpdateQuality(
             tables: [TableData],
             pipelineInputs: [String: Any],
-            parameters: [String: Parameter] = [:]
+            parameters: [String: Parameter] = [:],
+            log: ((String) -> Void)? = nil
         ) async {
             guard let config = try? ArchiveConfiguration.fromEnvironment(),
                   let archive = try? Archive(configuration: config) else { return }
@@ -461,11 +468,12 @@ extension AP {
                             medianEccentricity: entry.medianEccentricity
                         )
                         if !json {
+                            let emit = log ?? { print($0) }
                             var parts: [String] = []
                             if let v = entry.starCount          { parts.append("stars: \(v)") }
                             if let v = entry.medianFWHM         { parts.append(String(format: "FWHM: %.2fpx", v)) }
                             if let v = entry.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
-                            print("Quality → \(af.id): \(parts.joined(separator: ", "))")
+                            emit("Quality → \(af.id): \(parts.joined(separator: ", "))")
                         }
                         await applyFrameSetExclusion(
                             archive: archive,
@@ -473,7 +481,8 @@ extension AP {
                             fwhm: entry.medianFWHM,
                             eccentricity: entry.medianEccentricity,
                             maxFWHM: maxFWHM,
-                            maxEccentricity: maxEccentricity
+                            maxEccentricity: maxEccentricity,
+                            log: log
                         )
                     } catch {
                         if !json { print("Warning: quality update failed: \(error.localizedDescription)") }
@@ -513,6 +522,7 @@ extension AP {
                         backgroundNoiseElectrons: metrics.backgroundNoiseElectrons
                     )
                     if !json {
+                        let emit = log ?? { print($0) }
                         var parts: [String] = []
                         if let v = metrics.starCount          { parts.append("stars: \(v)") }
                         if let v = metrics.saturatedStarCount { parts.append("sat: \(v)") }
@@ -528,7 +538,7 @@ extension AP {
                         }
                         if let v = metrics.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
                         if let v = metrics.hotPixelCount      { parts.append("hot_px: \(v)") }
-                        print("Quality → \(af.id): \(parts.joined(separator: ", "))")
+                        emit("Quality → \(af.id): \(parts.joined(separator: ", "))")
                     }
                     await applyFrameSetExclusion(
                         archive: archive,
@@ -536,7 +546,8 @@ extension AP {
                         fwhm: metrics.medianFWHM,
                         eccentricity: metrics.medianEccentricity,
                         maxFWHM: maxFWHM,
-                        maxEccentricity: maxEccentricity
+                        maxEccentricity: maxEccentricity,
+                        log: log
                     )
                 } catch {
                     if !json { print("Warning: quality update failed for \(path): \(error.localizedDescription)") }
@@ -552,7 +563,8 @@ extension AP {
             fwhm: Double?,
             eccentricity: Double?,
             maxFWHM: Double?,
-            maxEccentricity: Double?
+            maxEccentricity: Double?,
+            log: ((String) -> Void)? = nil
         ) async {
             guard maxFWHM != nil || maxEccentricity != nil else { return }
             let exceedsFWHM = maxFWHM.map { (fwhm ?? .infinity) > $0 } ?? false
@@ -575,7 +587,7 @@ extension AP {
                         excluded: shouldExclude, reason: shouldExclude ? reason : nil
                     )
                     if !json && shouldExclude {
-                        print("  Excluded from frameset \(fsID): \(reason ?? "quality threshold")")
+                        (log ?? { print($0) })("  Excluded from frameset \(fsID): \(reason ?? "quality threshold")")
                     }
                 } catch {
                     if !json { print("Warning: frameset exclusion update failed: \(error.localizedDescription)") }
@@ -760,7 +772,8 @@ extension AP {
             pipelineInputs: [String: Any],
             usedFilePaths: Set<String>? = nil,
             registrationFailureReasons: [String: String] = [:],
-            existingOutputPath: String?
+            existingOutputPath: String?,
+            log: ((String) -> Void)? = nil
         ) async {
             guard let config = try? ArchiveConfiguration.fromEnvironment() else { return }
             guard let archive = try? Archive(configuration: config) else { return }
@@ -896,10 +909,11 @@ extension AP {
                     if let tmp = tempURL { try? FileManager.default.removeItem(at: tmp) }
 
                     if !json {
+                        let emit = log ?? { print($0) }
                         if isNew {
-                            print("Archived result → \(archived.id)")
+                            emit("Archived result → \(archived.id)")
                         } else {
-                            print("Result already in archive: \(archived.id)")
+                            emit("Result already in archive: \(archived.id)")
                         }
                     }
                 }
@@ -928,7 +942,7 @@ extension AP {
                                 )
                             }
                             if !json && !fsIDs.isEmpty {
-                                print("  Excluded \(af.id) from \(fsIDs.count) frameset(s): \(reason)")
+                                (log ?? { print($0) })("  Excluded \(af.id) from \(fsIDs.count) frameset(s): \(reason)")
                             }
                         }
                     }
