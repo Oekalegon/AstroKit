@@ -125,12 +125,18 @@ struct Find: AsyncParsableCommand {
         let hasQuality = frames.contains { $0.starCount != nil || $0.medianFWHM != nil || $0.medianEccentricity != nil }
         print("Found \(frames.count) frame(s):\n")
         if hasQuality {
-            let header = String(format: "%-36@  %-14@  %-8@  %-8@  %8@  %6@  %14@  %6@  %-4@  %@",
-                "ID" as NSString, "Object" as NSString, "Type" as NSString,
-                "Filter" as NSString, "Exposure" as NSString, "Stars" as NSString,
-                "FWHM" as NSString, "Ecc" as NSString, "Rej" as NSString, "File" as NSString)
-            print(header)
-            print(String(repeating: "-", count: header.count))
+            var table = TextTable(columns: [
+                .init("ID"),
+                .init("Object"),
+                .init("Type"),
+                .init("Filter"),
+                .init("Exposure", .right),
+                .init("Stars", .right),
+                .init("FWHM", .right),
+                .init("Ecc", .right),
+                .init("Rej"),
+                .init("File"),
+            ])
             for f in frames {
                 let obj   = f.objectName ?? "-"
                 let filt  = f.filter ?? "-"
@@ -144,30 +150,31 @@ struct Find: AsyncParsableCommand {
                         fwhm = String(format: "%.2fpx", px)
                     }
                 } else { fwhm = "-" }
-                let ecc   = f.medianEccentricity.map { String(format: "%.3f", $0) } ?? "-"
-                let rej   = f.rejected ? "✗" : ""
-                let file  = (f.filePath as NSString).lastPathComponent
-                print(String(format: "%-36@  %-14@  %-8@  %-8@  %8@  %6@  %14@  %6@  %-4@  %@",
-                    f.id.uuidString as NSString, obj as NSString, f.frameType as NSString,
-                    filt as NSString, exp as NSString, stars as NSString,
-                    fwhm as NSString, ecc as NSString, rej as NSString, file as NSString))
+                let ecc  = f.medianEccentricity.map { String(format: "%.3f", $0) } ?? "-"
+                let rej  = f.rejected ? "✗" : ""
+                let file = (f.filePath as NSString).lastPathComponent
+                table.addRow([f.id.uuidString, obj, f.frameType, filt, exp, stars, fwhm, ecc, rej, file])
             }
+            print(table.render())
         } else {
-            let header = String(format: "%-36@  %-14@  %-8@  %-8@  %8@  %-4@  %@",
-                "ID" as NSString, "Object" as NSString, "Type" as NSString,
-                "Filter" as NSString, "Exposure" as NSString, "Rej" as NSString, "File" as NSString)
-            print(header)
-            print(String(repeating: "-", count: header.count))
+            var table = TextTable(columns: [
+                .init("ID"),
+                .init("Object"),
+                .init("Type"),
+                .init("Filter"),
+                .init("Exposure", .right),
+                .init("Rej"),
+                .init("File"),
+            ])
             for f in frames {
                 let obj  = f.objectName ?? "-"
                 let filt = f.filter ?? "-"
                 let exp  = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
                 let rej  = f.rejected ? "✗" : ""
                 let file = (f.filePath as NSString).lastPathComponent
-                print(String(format: "%-36@  %-14@  %-8@  %-8@  %8@  %-4@  %@",
-                    f.id.uuidString as NSString, obj as NSString, f.frameType as NSString,
-                    filt as NSString, exp as NSString, rej as NSString, file as NSString))
+                table.addRow([f.id.uuidString, obj, f.frameType, filt, exp, rej, file])
             }
+            print(table.render())
         }
     }
 

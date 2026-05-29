@@ -328,26 +328,19 @@ struct Frameset: AsyncParsableCommand {
             }
 
             print("Frame sets (\(sets.count)):\n")
-            let header = String(format: "%-36@  %-5@  %-8@  %-12@  %-8@  %@",
-                "ID" as NSString, "Count" as NSString, "Type" as NSString,
-                "Level" as NSString, "Filter" as NSString, "Name" as NSString)
-            print(header)
-            print(String(repeating: "-", count: header.count))
+            var table = TextTable(columns: [
+                .init("ID"),
+                .init("Count", .right),
+                .init("Type"),
+                .init("Level"),
+                .init("Filter"),
+                .init("Name"),
+            ])
             for fs in sets {
-                let filterLabel: String
-                if let f = fs.filter {
-                    filterLabel = f.count > 8 ? String(f.prefix(7)) + "…" : f
-                } else {
-                    filterLabel = "-"
-                }
-                print(String(format: "%-36@  %-5d  %-8@  %-12@  %-8@  %@",
-                    fs.id.uuidString as NSString,
-                    fs.frameCount,
-                    fs.frameType as NSString,
-                    fs.processingLevel.rawValue as NSString,
-                    filterLabel as NSString,
-                    fs.name as NSString))
+                let filterLabel = fs.filter ?? "-"
+                table.addRow([fs.id.uuidString, "\(fs.frameCount)", fs.frameType, fs.processingLevel.rawValue, filterLabel, fs.name])
             }
+            print(table.render())
         }
     }
 
@@ -440,14 +433,16 @@ struct Frameset: AsyncParsableCommand {
                 print("")
                 print("Members (\(members.count)):")
                 if hasQuality {
-                    func memberRow(_ line: String, excluded: Bool) {
-                        print(excluded ? orangeText(line) : line)
-                    }
-                    let header = String(format: "  %-36@  %-14@  %-8@  %8@  %6@  %14@  %6@  %@",
-                        "UUID" as NSString, "Object" as NSString, "Filter" as NSString, "Exposure" as NSString,
-                        "Stars" as NSString, "FWHM" as NSString, "Ecc" as NSString, "Date" as NSString)
-                    print(header)
-                    print("  " + String(repeating: "─", count: 36 + 14 + 8 + 8 + 6 + 14 + 6 + 18))
+                    var table = TextTable(columns: [
+                        .init("UUID"),
+                        .init("Object"),
+                        .init("Filter"),
+                        .init("Exposure", .right),
+                        .init("Stars", .right),
+                        .init("FWHM", .right),
+                        .init("Ecc", .right),
+                        .init("Date"),
+                    ])
                     for m in members {
                         let f = m.frame
                         let obj   = f.objectName ?? "-"
@@ -462,33 +457,37 @@ struct Frameset: AsyncParsableCommand {
                                 fwhm = String(format: "%.2fpx", px)
                             }
                         } else { fwhm = "-" }
-                        let ecc   = f.medianEccentricity.map { String(format: "%.3f", $0) } ?? "-"
-                        let date  = f.timestamp.map { String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ") } ?? "-"
-                        let line = String(format: "  %-36@  %-14@  %-8@  %8@  %6@  %14@  %6@  %@",
-                            f.id.uuidString as NSString, obj as NSString, filt as NSString,
-                            exp as NSString, stars as NSString, fwhm as NSString,
-                            ecc as NSString, date as NSString)
-                        memberRow(line, excluded: m.excluded)
+                        let ecc  = f.medianEccentricity.map { String(format: "%.3f", $0) } ?? "-"
+                        let date = f.timestamp.map { String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ") } ?? "-"
+                        table.addRow([f.id.uuidString, obj, filt, exp, stars, fwhm, ecc, date])
+                    }
+                    let lines = table.renderLines(indent: "  ")
+                    for (i, line) in lines.enumerated() {
+                        if i < 2 { print(line); continue }
+                        let m = members[i - 2]
+                        print(m.excluded ? orangeText(line) : line)
                     }
                 } else {
-                    func memberRow(_ line: String, excluded: Bool) {
-                        print(excluded ? orangeText(line) : line)
-                    }
-                    let header = String(format: "  %-36@  %-14@  %-8@  %8@  %@",
-                        "UUID" as NSString, "Object" as NSString, "Filter" as NSString,
-                        "Exposure" as NSString, "Date" as NSString)
-                    print(header)
-                    print("  " + String(repeating: "─", count: 36 + 14 + 8 + 8 + 16))
+                    var table = TextTable(columns: [
+                        .init("UUID"),
+                        .init("Object"),
+                        .init("Filter"),
+                        .init("Exposure", .right),
+                        .init("Date"),
+                    ])
                     for m in members {
                         let f = m.frame
                         let obj  = f.objectName ?? "-"
                         let filt = f.filter ?? "-"
                         let exp  = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
                         let date = f.timestamp.map { String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ") } ?? "-"
-                        let line = String(format: "  %-36@  %-14@  %-8@  %8@  %@",
-                            f.id.uuidString as NSString, obj as NSString, filt as NSString,
-                            exp as NSString, date as NSString)
-                        memberRow(line, excluded: m.excluded)
+                        table.addRow([f.id.uuidString, obj, filt, exp, date])
+                    }
+                    let lines = table.renderLines(indent: "  ")
+                    for (i, line) in lines.enumerated() {
+                        if i < 2 { print(line); continue }
+                        let m = members[i - 2]
+                        print(m.excluded ? orangeText(line) : line)
                     }
                 }
             }
