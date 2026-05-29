@@ -7,6 +7,7 @@ import os
 private struct FWHMMeasurements {
     let fwhmMajor: Double  // FWHM along major axis
     let fwhmMinor: Double  // FWHM along minor axis
+    let eccentricity: Double  // 0 = circular, 1 = fully elongated
 }
 
 /// Processor for calculating Full Width at Half Maximum (FWHM) for detected stars
@@ -80,6 +81,7 @@ public struct FWHMProcessor: Processor {
     private struct StarProperties {
         let fwhmMajor: [Double]
         let fwhmMinor: [Double]
+        let eccentricity: [Double]
         let flux: [Double]
         let centroidX: [Double]
         let centroidY: [Double]
@@ -153,12 +155,14 @@ public struct FWHMProcessor: Processor {
     private func processMoments(moments: [GPUMomentResults]) -> StarProperties {
         var fwhmMajorValues: [Double] = []
         var fwhmMinorValues: [Double] = []
+        var eccentricityValues: [Double] = []
         var fluxValues: [Double] = []
         var updatedCentroidXValues: [Double] = []
         var updatedCentroidYValues: [Double] = []
         var saturatedValues: [Bool] = []
         fwhmMajorValues.reserveCapacity(moments.count)
         fwhmMinorValues.reserveCapacity(moments.count)
+        eccentricityValues.reserveCapacity(moments.count)
         fluxValues.reserveCapacity(moments.count)
         updatedCentroidXValues.reserveCapacity(moments.count)
         updatedCentroidYValues.reserveCapacity(moments.count)
@@ -173,6 +177,7 @@ public struct FWHMProcessor: Processor {
             let fwhm = calculateFWHMFromMoments(moment: moment)
             fwhmMajorValues.append(fwhm.fwhmMajor)
             fwhmMinorValues.append(fwhm.fwhmMinor)
+            eccentricityValues.append(fwhm.eccentricity)
 
             // Flux is the zeroth moment (total weighted intensity)
             fluxValues.append(moment.m00)
@@ -193,6 +198,7 @@ public struct FWHMProcessor: Processor {
         return StarProperties(
             fwhmMajor: fwhmMajorValues,
             fwhmMinor: fwhmMinorValues,
+            eccentricity: eccentricityValues,
             flux: fluxValues,
             centroidX: updatedCentroidXValues,
             centroidY: updatedCentroidYValues,
@@ -281,12 +287,15 @@ public struct FWHMProcessor: Processor {
         reorderedDataFrame.append(column: Column(name: "centroid_x", contents: starProperties.centroidX))
         reorderedDataFrame.append(column: Column(name: "centroid_y", contents: starProperties.centroidY))
 
-        // Add remaining columns from original (major_axis, minor_axis, eccentricity, rotation_angle)
+        // Add remaining columns from original (major_axis, minor_axis, rotation_angle)
         try addRemainingColumns(to: &reorderedDataFrame, from: dataFrame)
 
         // Add FWHM columns
         reorderedDataFrame.append(column: Column(name: "fwhm_major", contents: starProperties.fwhmMajor))
         reorderedDataFrame.append(column: Column(name: "fwhm_minor", contents: starProperties.fwhmMinor))
+
+        // Replace binary-moment eccentricity with intensity-weighted moment eccentricity
+        reorderedDataFrame.append(column: Column(name: "eccentricity", contents: starProperties.eccentricity))
 
         // Add saturated column
         reorderedDataFrame.append(column: Column(name: "saturated", contents: starProperties.saturated))
@@ -295,7 +304,9 @@ public struct FWHMProcessor: Processor {
         outputs["pixel_coordinates"] = outputTable
     }
 
-    /// Adds remaining columns (major_axis, minor_axis, eccentricity, rotation_angle) to the DataFrame
+    /// Adds remaining columns (major_axis, minor_axis, rotation_angle) to the DataFrame.
+    /// Eccentricity is intentionally excluded — it is computed from intensity-weighted moments
+    /// and written separately in updateOutputTable.
     private func addRemainingColumns(to dataFrame: inout DataFrame, from sourceDataFrame: DataFrame) throws {
         if let majorAxisColumn = sourceDataFrame.columns.first(where: { $0.name == "major_axis" }) {
             let majorAxisValues: [Double] = (0..<sourceDataFrame.rows.count).compactMap { majorAxisColumn[$0] as? Double }
@@ -304,10 +315,6 @@ public struct FWHMProcessor: Processor {
         if let minorAxisColumn = sourceDataFrame.columns.first(where: { $0.name == "minor_axis" }) {
             let minorAxisValues: [Double] = (0..<sourceDataFrame.rows.count).compactMap { minorAxisColumn[$0] as? Double }
             dataFrame.append(column: Column(name: "minor_axis", contents: minorAxisValues))
-        }
-        if let eccentricityColumn = sourceDataFrame.columns.first(where: { $0.name == "eccentricity" }) {
-            let eccentricityValues: [Double] = (0..<sourceDataFrame.rows.count).compactMap { eccentricityColumn[$0] as? Double }
-            dataFrame.append(column: Column(name: "eccentricity", contents: eccentricityValues))
         }
         if let rotationAngleColumn = sourceDataFrame.columns.first(where: { $0.name == "rotation_angle" }) {
             let rotationAngleValues: [Double] = (0..<sourceDataFrame.rows.count).compactMap { rotationAngleColumn[$0] as? Double }
@@ -470,12 +477,10 @@ public struct FWHMProcessor: Processor {
         return results
     }
 
-    /// Calculates FWHM from moment results
-    /// - Parameter moment: Moment results from GPU
-    /// - Returns: FWHM measurements for major and minor axes
+    /// Calculates FWHM and eccentricity from intensity-weighted image moments.
     private func calculateFWHMFromMoments(moment: GPUMomentResults) -> FWHMMeasurements {
         guard moment.m00 > 0 else {
-            return FWHMMeasurements(fwhmMajor: 0.0, fwhmMinor: 0.0)
+            return FWHMMeasurements(fwhmMajor: 0.0, fwhmMinor: 0.0, eccentricity: 0.0)
         }
 
         // Covariance matrix: [[μ20, μ11], [μ11, μ02]]
@@ -485,7 +490,7 @@ public struct FWHMProcessor: Processor {
         let discriminant = trace * trace - 4 * determinant
 
         guard discriminant >= 0 else {
-            return FWHMMeasurements(fwhmMajor: 0.0, fwhmMinor: 0.0)
+            return FWHMMeasurements(fwhmMajor: 0.0, fwhmMinor: 0.0, eccentricity: 0.0)
         }
 
         let sqrtDiscriminant = sqrt(discriminant)
@@ -496,16 +501,23 @@ public struct FWHMProcessor: Processor {
         let majorAxisVariance = max(lambda1, lambda2)
         let minorAxisVariance = min(lambda1, lambda2)
 
-        // Calculate FWHM from second central moments
-        // For a Gaussian profile: FWHM = 2.355 * sigma
-        // sigma^2 is the variance (second central moment)
+        // FWHM = 2.355 * sigma for a Gaussian profile; sigma² is the variance eigenvalue
         let sigmaMajor = sqrt(max(0.0, majorAxisVariance))
         let sigmaMinor = sqrt(max(0.0, minorAxisVariance))
 
         let fwhmMajor = 2.355 * sigmaMajor
         let fwhmMinor = 2.355 * sigmaMinor
 
-        return FWHMMeasurements(fwhmMajor: fwhmMajor, fwhmMinor: fwhmMinor)
+        // Eccentricity from intensity-weighted axes: e = sqrt(1 - (σ_minor/σ_major)²)
+        // Using the variance ratio avoids a redundant sqrt/square pair.
+        let eccentricity: Double
+        if sigmaMajor > 0 {
+            eccentricity = sqrt(max(0.0, 1.0 - minorAxisVariance / majorAxisVariance))
+        } else {
+            eccentricity = 0.0
+        }
+
+        return FWHMMeasurements(fwhmMajor: fwhmMajor, fwhmMinor: fwhmMinor, eccentricity: eccentricity)
     }
 
     /// Calculates the median of an array
