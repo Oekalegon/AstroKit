@@ -42,8 +42,14 @@ public struct FrameSetInspection: Sendable {
     /// Human-readable issue descriptions.
     public var issues: [String]
 
-    /// The individual matched frames — included so callers can render a per-frame table.
+    /// All matched frames, including those that would be excluded by quality thresholds.
     public var frames: [ArchivedFrame]
+    /// Subset of `frames` that would be marked as excluded due to `maxFWHM` or `maxEccentricity`
+    /// thresholds. These frames ARE included in the created frame set but skipped during processing.
+    public var excludedFrames: [ArchivedFrame]
+
+    /// Number of active (non-excluded) frames.
+    public var activeFrameCount: Int { frames.count - excludedFrames.count }
 }
 
 // MARK: - Formatting helpers used by both CLI and MCP
@@ -56,9 +62,11 @@ extension FrameSetInspection {
         var lines: [String] = []
 
         if isDryRun {
-            lines.append("Dry-run inspection — \(matchedFrameCount) frame(s) matched")
+            let excludedNote = excludedFrames.isEmpty ? "" : ", \(excludedFrames.count) excluded by quality threshold"
+            lines.append("Dry-run inspection — \(matchedFrameCount) frame(s) matched\(excludedNote)")
         } else {
-            lines.append("Frame set properties:")
+            let excludedNote = excludedFrames.isEmpty ? "" : " (\(excludedFrames.count) excluded by quality threshold)"
+            lines.append("Frame set properties\(excludedNote):")
         }
         lines.append(String(repeating: "─", count: 52))
 

@@ -171,6 +171,20 @@ struct ArchiveTools {
             ] as [String: Any],
         ],
         [
+            "name": "archive_frameset_exclude",
+            "description": "Mark a frame as excluded within a specific frame set. Excluded frames are skipped during processing but remain in the set. Unlike the global reject flag, this is specific to one frame set.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "frameset_id": ["type": "string", "description": "Frame set UUID."],
+                    "frame_id":    ["type": "string", "description": "Frame UUID to exclude."],
+                    "reason":      ["type": "string", "description": "Optional reason for exclusion."],
+                    "undo":        ["type": "boolean", "description": "Set to true to re-include the frame (clear the excluded flag)."],
+                ] as [String: Any],
+                "required": ["frameset_id", "frame_id"],
+            ] as [String: Any],
+        ],
+        [
             "name": "archive_frameset_delete",
             "description": "Delete a frame set. Member frames are not removed from the archive.",
             "inputSchema": [
@@ -256,6 +270,7 @@ struct ArchiveTools {
         case "archive_frameset_create":  return try await archiveFrameSetCreate(arguments)
         case "archive_frameset_list":    return try await archiveFrameSetList()
         case "archive_frameset_get":     return try await archiveFrameSetGet(arguments)
+        case "archive_frameset_exclude": return try await archiveFrameSetExclude(arguments)
         case "archive_frameset_delete":  return try await archiveFrameSetDelete(arguments)
         default: throw ToolError("Unknown archive tool: \(name)")
         }
@@ -574,24 +589,32 @@ struct ArchiveTools {
             let tol = args["temp_tolerance"] as? Double ?? 2.0
             query.temperatureRange = (center - tol)...(center + tol)
         }
-        query.maxFWHM            = args["max_fwhm"]             as? Double
+        // minStars and maxBackgroundNoise are hard query filters.
+        // maxFWHM and maxEccentricity are exclusion thresholds passed separately to createFrameSet/inspectFrameSet.
         query.minStarCount       = args["min_stars"]            as? Int
         query.maxBackgroundNoise = args["max_background_noise"] as? Double
-        query.maxEccentricity    = args["max_eccentricity"]     as? Double
         return query
     }
 
     private func archiveFrameSetInspect(_ args: [String: Any]) async throws -> String {
-        let archive    = try makeArchive()
-        let query      = makeFrameSetQuery(args)
-        let inspection = try await archive.inspectFrameSet(query: query)
+        let archive         = try makeArchive()
+        let query           = makeFrameSetQuery(args)
+        let maxFWHM         = args["max_fwhm"]         as? Double
+        let maxEccentricity = args["max_eccentricity"] as? Double
+        let inspection = try await archive.inspectFrameSet(
+            query: query,
+            maxFWHM: maxFWHM,
+            maxEccentricity: maxEccentricity
+        )
         return inspection.formatted(isDryRun: true)
     }
 
     private func archiveFrameSetCreate(_ args: [String: Any]) async throws -> String {
-        let archive = try makeArchive()
-        let query   = makeFrameSetQuery(args)
-        let force   = args["force"] as? Bool ?? false
+        let archive         = try makeArchive()
+        let query           = makeFrameSetQuery(args)
+        let force           = args["force"] as? Bool ?? false
+        let maxFWHM         = args["max_fwhm"]         as? Double
+        let maxEccentricity = args["max_eccentricity"] as? Double
 
         let objectName = args["object_name"] as? String
         let frameType  = args["frame_type"]  as? String
@@ -611,12 +634,21 @@ struct ArchiveTools {
             setName = parts.isEmpty ? "frameset" : parts.joined(separator: " ")
         }
 
-        let (fs, inspection) = try await archive.createFrameSet(name: setName, query: query, force: force)
+        let (fs, inspection) = try await archive.createFrameSet(
+            name: setName,
+            query: query,
+            force: force,
+            maxFWHM: maxFWHM,
+            maxEccentricity: maxEccentricity
+        )
         let iso = ISO8601DateFormatter()
         var lines = [
             "Created frame set '\(fs.name)'  [\(fs.id.uuidString)]",
             "",
         ]
+        if fs.excludedFrameCount > 0 {
+            lines.append("  \(fs.excludedFrameCount) frame(s) included but excluded by quality threshold.")
+        }
         lines.append(inspection.formatted(isDryRun: false))
         lines.append("")
         lines.append("  Created: \(iso.string(from: fs.createdAt))")
@@ -653,7 +685,7 @@ struct ArchiveTools {
         guard let fs = try await archive.frameSet(id: uuid) else {
             throw ToolError("No frame set with id \(idStr).")
         }
-        let memberFrames = try await archive.frames(inFrameSet: uuid)
+        let members = try await archive.members(inFrameSet: uuid)
 
         let iso = ISO8601DateFormatter()
         func row(_ label: String, _ value: String) -> String {
@@ -666,7 +698,8 @@ struct ArchiveTools {
         lines.append(row("Name",   fs.name))
         lines.append(row("Type",   fs.frameType))
         lines.append(row("Level",  fs.processingLevel.rawValue))
-        lines.append(row("Frames", "\(fs.frameCount)"))
+        let framesSuffix = fs.excludedFrameCount > 0 ? " (\(fs.excludedFrameCount) excluded)" : ""
+        lines.append(row("Frames", "\(fs.frameCount)\(framesSuffix)"))
         if let v = fs.objectName   { lines.append(row("Object",   v)) }
         if let v = fs.filter       {
             let label = v.contains(",") ? "Filters" : "Filter"
@@ -694,11 +727,14 @@ struct ArchiveTools {
         }
         lines.append(row("Created", iso.string(from: fs.createdAt)))
 
-        if !memberFrames.isEmpty {
+        if !members.isEmpty {
             lines.append("")
             lines.append("Members:")
-            for f in memberFrames {
+            for m in members {
+                let f = m.frame
                 var parts = ["id: \(f.id.uuidString)", "type: \(f.frameType)"]
+                if m.excluded { parts.append("excluded: true") }
+                if let r = m.excludedReason { parts.append("reason: \(r)") }
                 if let v = f.objectName   { parts.append("object: \(v)") }
                 if let v = f.filter       { parts.append("filter: \(v)") }
                 if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
@@ -707,6 +743,28 @@ struct ArchiveTools {
             }
         }
         return lines.joined(separator: "\n")
+    }
+
+    private func archiveFrameSetExclude(_ args: [String: Any]) async throws -> String {
+        guard let setStr = args["frameset_id"] as? String, let setUUID = UUID(uuidString: setStr) else {
+            throw ToolError("archive_frameset_exclude requires a valid 'frameset_id' UUID.")
+        }
+        guard let frmStr = args["frame_id"] as? String, let frmUUID = UUID(uuidString: frmStr) else {
+            throw ToolError("archive_frameset_exclude requires a valid 'frame_id' UUID.")
+        }
+        let undo   = args["undo"] as? Bool ?? false
+        let reason = args["reason"] as? String
+        let archive = try makeArchive()
+        try await archive.setMemberExcluded(
+            frameSetID: setUUID, frameID: frmUUID,
+            excluded: !undo, reason: undo ? nil : reason
+        )
+        if undo {
+            return "Frame \(frmStr) re-included in frame set \(setStr)."
+        } else {
+            let suffix = reason.map { ": \($0)" } ?? ""
+            return "Frame \(frmStr) marked as excluded in frame set \(setStr)\(suffix)."
+        }
     }
 
     private func archiveFrameSetDelete(_ args: [String: Any]) async throws -> String {

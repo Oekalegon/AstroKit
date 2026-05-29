@@ -186,6 +186,15 @@ actor ArchiveDatabase {
         UPDATE frames SET background_noise_electrons = (background_noise - COALESCE(offset, 0)) * egain
         WHERE background_noise IS NOT NULL AND egain IS NOT NULL;
         """,
+        // v18: per-frameset exclusion flag — a frame can be excluded from one set while
+        // remaining active in another. Unlike the global `rejected` flag, this is specific
+        // to a single frame_set_members row and can be toggled by the user or set
+        // automatically when quality metrics exceed pipeline thresholds.
+        """
+        ALTER TABLE frame_set_members ADD COLUMN excluded INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE frame_set_members ADD COLUMN excluded_reason TEXT;
+        CREATE INDEX IF NOT EXISTS idx_fsm_excluded ON frame_set_members(frame_set_id, excluded);
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -600,7 +609,7 @@ actor ArchiveDatabase {
     // MARK: - Frame sets
 
     // Shared SELECT columns for both list and single-item queries.
-    // Indices: 0–13 = v6 core, 14–21 = v7 extras, 22 = frame_count.
+    // Indices: 0–13 = v6 core, 14–21 = v7 extras, 22 = frame_count, 23 = excluded_count.
     private static let frameSetSelectSQL = """
         SELECT fs.id, fs.name, fs.frame_type, fs.processing_level,
                fs.object_name, fs.filter, fs.camera, fs.exposure_time, fs.temperature,
@@ -608,12 +617,18 @@ actor ArchiveDatabase {
                fs.date_from, fs.date_to,
                fs.temperature_mean, fs.temperature_min, fs.temperature_max,
                fs.pixel_scale, fs.focal_length, fs.position_angle,
-               COUNT(fsm.frame_id) AS frame_count
+               COUNT(fsm.frame_id) AS frame_count,
+               SUM(CASE WHEN fsm.excluded = 1 THEN 1 ELSE 0 END) AS excluded_count
         FROM frame_sets fs
         LEFT JOIN frame_set_members fsm ON fsm.frame_set_id = fs.id
         """
 
-    func insertFrameSet(_ fs: ArchivedFrameSet, frameIDs: [UUID]) throws {
+    func insertFrameSet(
+        _ fs: ArchivedFrameSet,
+        frameIDs: [UUID],
+        excludedIDs: Set<UUID> = [],
+        excludedReasons: [UUID: String] = [:]
+    ) throws {
         let iso = ISO8601DateFormatter()
         try exec("BEGIN")
         let sql = """
@@ -653,13 +668,18 @@ actor ArchiveDatabase {
             throw ArchiveError.databaseError(dbErrorMessage())
         }
 
-        let memberSQL = "INSERT INTO frame_set_members (frame_set_id, frame_id, position) VALUES (?,?,?)"
+        let memberSQL = """
+            INSERT INTO frame_set_members (frame_set_id, frame_id, position, excluded, excluded_reason)
+            VALUES (?,?,?,?,?)
+            """
         for (position, frameID) in frameIDs.enumerated() {
             let mstmt = try prepare(memberSQL)
             defer { sqlite3_finalize(mstmt) }
             bind(mstmt, 1, fs.id.uuidString)
             bind(mstmt, 2, frameID.uuidString)
             sqlite3_bind_int(mstmt, 3, Int32(position))
+            sqlite3_bind_int(mstmt, 4, excludedIDs.contains(frameID) ? 1 : 0)
+            bind(mstmt, 5, excludedReasons[frameID])
             guard sqlite3_step(mstmt) == SQLITE_DONE else {
                 sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
                 throw ArchiveError.databaseError(dbErrorMessage())
@@ -687,12 +707,66 @@ actor ArchiveDatabase {
         return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrameSet(stmt) : nil
     }
 
-    func frameIDsForSet(_ id: UUID) throws -> [UUID] {
+    func frameIDsForSet(_ id: UUID, activeOnly: Bool = false) throws -> [UUID] {
+        let sql = activeOnly
+            ? "SELECT frame_id FROM frame_set_members WHERE frame_set_id = ? AND excluded = 0 ORDER BY position"
+            : "SELECT frame_id FROM frame_set_members WHERE frame_set_id = ? ORDER BY position"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        var ids: [UUID] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let s = columnText(stmt, 0), let uuid = UUID(uuidString: s) {
+                ids.append(uuid)
+            }
+        }
+        return ids
+    }
+
+    /// Returns all member frames of a frame set together with their per-set exclusion state.
+    func membersForSet(_ id: UUID) throws -> [(frameID: UUID, excluded: Bool, excludedReason: String?)] {
         let stmt = try prepare(
-            "SELECT frame_id FROM frame_set_members WHERE frame_set_id = ? ORDER BY position"
+            "SELECT frame_id, excluded, excluded_reason FROM frame_set_members WHERE frame_set_id = ? ORDER BY position"
         )
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        var result: [(UUID, Bool, String?)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let s = columnText(stmt, 0), let uuid = UUID(uuidString: s) else { continue }
+            let excluded = sqlite3_column_int(stmt, 1) != 0
+            let reason   = columnText(stmt, 2)
+            result.append((uuid, excluded, reason))
+        }
+        return result
+    }
+
+    /// Sets or clears the excluded flag for a single frame within a frame set.
+    func updateMemberExcluded(
+        frameSetID: UUID,
+        frameID: UUID,
+        excluded: Bool,
+        reason: String?
+    ) throws {
+        let stmt = try prepare(
+            "UPDATE frame_set_members SET excluded = ?, excluded_reason = ? WHERE frame_set_id = ? AND frame_id = ?"
+        )
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_int(stmt, 1, excluded ? 1 : 0)
+        bind(stmt, 2, reason)
+        bind(stmt, 3, frameSetID.uuidString)
+        bind(stmt, 4, frameID.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
+    /// Returns all frameset IDs that contain the given frame.
+    func frameSetIDsForFrame(_ frameID: UUID) throws -> [UUID] {
+        let stmt = try prepare(
+            "SELECT frame_set_id FROM frame_set_members WHERE frame_id = ?"
+        )
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, frameID.uuidString, -1, SQLITE_TRANSIENT)
         var ids: [UUID] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let s = columnText(stmt, 0), let uuid = UUID(uuidString: s) {
@@ -713,7 +787,7 @@ actor ArchiveDatabase {
 
     private func rowToFrameSet(_ stmt: OpaquePointer?) -> ArchivedFrameSet? {
         // Column map — see frameSetSelectSQL for ordering.
-        // 0–13: v6 core, 14–21: v7 extras, 22: frame_count
+        // 0–13: v6 core, 14–21: v7 extras, 22: frame_count, 23: excluded_count
         guard let stmt,
               let idStr = columnText(stmt, 0), let id = UUID(uuidString: idStr),
               let name = columnText(stmt, 1),
@@ -735,6 +809,7 @@ actor ArchiveDatabase {
             processingLevel: processingLevel,
             createdAt: createdAt,
             frameCount: Int(sqlite3_column_int(stmt, 22)),
+            excludedFrameCount: Int(sqlite3_column_int(stmt, 23)),
             objectName:   columnText(stmt, 4),
             filter:       columnText(stmt, 5),
             camera:       columnText(stmt, 6),

@@ -256,7 +256,7 @@ extension AP {
                         )
                     }
                     if !frameTables.isEmpty {
-                        await backUpdateQuality(tables: frameTables, pipelineInputs: perFrameInputs)
+                        await backUpdateQuality(tables: frameTables, pipelineInputs: perFrameInputs, parameters: parameters)
                     }
 
                     if json {
@@ -389,7 +389,7 @@ extension AP {
             // Back-update quality metrics on the input archive frame(s) when an analysis
             // pipeline produces star/FWHM/background data.
             if !tables.isEmpty {
-                await backUpdateQuality(tables: tables, pipelineInputs: pipelineInputs)
+                await backUpdateQuality(tables: tables, pipelineInputs: pipelineInputs, parameters: parameters)
             }
 
             if json {
@@ -435,10 +435,14 @@ extension AP {
 
         private func backUpdateQuality(
             tables: [TableData],
-            pipelineInputs: [String: Any]
+            pipelineInputs: [String: Any],
+            parameters: [String: Parameter] = [:]
         ) async {
             guard let config = try? ArchiveConfiguration.fromEnvironment(),
                   let archive = try? Archive(configuration: config) else { return }
+
+            let maxFWHM         = parameters["max_fwhm"]?.doubleValue
+            let maxEccentricity = parameters["max_eccentricity"]?.doubleValue
 
             // 1. Per-frame path: registration table from frame_registration_quad / frame_stacking.
             let perFrame = extractPerFrameQuality(from: tables)
@@ -460,6 +464,14 @@ extension AP {
                             if let v = entry.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
                             print("Quality → \(af.id): \(parts.joined(separator: ", "))")
                         }
+                        await applyFrameSetExclusion(
+                            archive: archive,
+                            frameID: af.id,
+                            fwhm: entry.medianFWHM,
+                            eccentricity: entry.medianEccentricity,
+                            maxFWHM: maxFWHM,
+                            maxEccentricity: maxEccentricity
+                        )
                     } catch {
                         if !json { print("Warning: quality update failed: \(error.localizedDescription)") }
                     }
@@ -515,8 +527,55 @@ extension AP {
                         if let v = metrics.hotPixelCount      { parts.append("hot_px: \(v)") }
                         print("Quality → \(af.id): \(parts.joined(separator: ", "))")
                     }
+                    await applyFrameSetExclusion(
+                        archive: archive,
+                        frameID: af.id,
+                        fwhm: metrics.medianFWHM,
+                        eccentricity: metrics.medianEccentricity,
+                        maxFWHM: maxFWHM,
+                        maxEccentricity: maxEccentricity
+                    )
                 } catch {
                     if !json { print("Warning: quality update failed for \(path): \(error.localizedDescription)") }
+                }
+            }
+        }
+
+        /// After updating quality metrics on an archived frame, marks the frame as excluded
+        /// (or re-includes it) in any frame sets it belongs to, based on FWHM/eccentricity thresholds.
+        private func applyFrameSetExclusion(
+            archive: Archive,
+            frameID: UUID,
+            fwhm: Double?,
+            eccentricity: Double?,
+            maxFWHM: Double?,
+            maxEccentricity: Double?
+        ) async {
+            guard maxFWHM != nil || maxEccentricity != nil else { return }
+            let exceedsFWHM = maxFWHM.map { (fwhm ?? .infinity) > $0 } ?? false
+            let exceedsEcc  = maxEccentricity.map { (eccentricity ?? .infinity) > $0 } ?? false
+            let shouldExclude = exceedsFWHM || exceedsEcc
+
+            guard let fsIDs = try? await archive.frameSetIDs(forFrame: frameID), !fsIDs.isEmpty else { return }
+
+            var reason: String? = nil
+            if exceedsFWHM, let f = fwhm, let max = maxFWHM {
+                reason = String(format: "FWHM %.2fpx exceeds threshold %.2fpx", f, max)
+            } else if exceedsEcc, let e = eccentricity, let max = maxEccentricity {
+                reason = String(format: "eccentricity %.3f exceeds threshold %.3f", e, max)
+            }
+
+            for fsID in fsIDs {
+                do {
+                    try await archive.setMemberExcluded(
+                        frameSetID: fsID, frameID: frameID,
+                        excluded: shouldExclude, reason: shouldExclude ? reason : nil
+                    )
+                    if !json && shouldExclude {
+                        print("  Excluded from frameset \(fsID): \(reason ?? "quality threshold")")
+                    }
+                } catch {
+                    if !json { print("Warning: frameset exclusion update failed: \(error.localizedDescription)") }
                 }
             }
         }

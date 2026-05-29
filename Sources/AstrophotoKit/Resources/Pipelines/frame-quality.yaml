@@ -3,7 +3,9 @@ name: Frame Quality Pipeline
 description: Evaluates quality of a light frame by detecting stars and measuring FWHM,
   eccentricity, saturated star count, and background level. All metrics are automatically
   persisted to the archive after the pipeline completes. Run this pipeline on any
-  archived light frame to populate its quality metrics.
+  archived light frame to populate its quality metrics. Accepted quality-threshold
+  parameters (applied to any frame sets the input belongs to) -- max_fwhm (pixels),
+  max_eccentricity (0-1).
 
 steps:
   - id: grayscale
