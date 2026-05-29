@@ -220,9 +220,10 @@ extension AP {
                         "Run on individual frames to save results."
                     )
                 }
-                if !json {
-                    print("Running '\(pipelineID)' on \(frameLoopItems.count) frame(s)…")
-                }
+                var progressBar: ProgressBar? = json ? nil : ProgressBar(
+                    total: frameLoopItems.count,
+                    label: "Running '\(pipelineID)' on \(frameLoopItems.count) frame(s)…"
+                )
                 let start = Date()
                 var totalTables = 0, totalResultFrames = 0
                 var jsonRows: [[String: Any]] = []
@@ -252,12 +253,14 @@ extension AP {
                             pipelineID: pipelineID,
                             parameters: parameters,
                             pipelineInputs: perFrameInputs,
-                            existingOutputPath: nil
+                            existingOutputPath: nil,
+                            verbose: progressBar?.isTTY != true
                         )
                     }
                     if !frameTables.isEmpty {
-                        await backUpdateQuality(tables: frameTables, pipelineInputs: perFrameInputs, parameters: parameters)
+                        await backUpdateQuality(tables: frameTables, pipelineInputs: perFrameInputs, parameters: parameters, verbose: progressBar?.isTTY != true)
                     }
+                    progressBar?.advance()
 
                     if json {
                         var row: [String: Any] = ["frame_index": idx]
@@ -279,7 +282,7 @@ extension AP {
                     if let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted]),
                        let str = String(data: data, encoding: .utf8) { print(str) }
                 } else {
-                    print(String(
+                    progressBar?.finish(summary: String(
                         format: "Done in %.2fs — %d frame(s) processed, %d table(s) per frame.",
                         elapsed, frameLoopItems.count,
                         frameLoopItems.isEmpty ? 0 : totalTables / frameLoopItems.count
@@ -439,7 +442,8 @@ extension AP {
         private func backUpdateQuality(
             tables: [TableData],
             pipelineInputs: [String: Any],
-            parameters: [String: Parameter] = [:]
+            parameters: [String: Parameter] = [:],
+            verbose: Bool = true
         ) async {
             guard let config = try? ArchiveConfiguration.fromEnvironment(),
                   let archive = try? Archive(configuration: config) else { return }
@@ -460,7 +464,7 @@ extension AP {
                             backgroundNoise: nil,
                             medianEccentricity: entry.medianEccentricity
                         )
-                        if !json {
+                        if !json && verbose {
                             var parts: [String] = []
                             if let v = entry.starCount          { parts.append("stars: \(v)") }
                             if let v = entry.medianFWHM         { parts.append(String(format: "FWHM: %.2fpx", v)) }
@@ -473,7 +477,8 @@ extension AP {
                             fwhm: entry.medianFWHM,
                             eccentricity: entry.medianEccentricity,
                             maxFWHM: maxFWHM,
-                            maxEccentricity: maxEccentricity
+                            maxEccentricity: maxEccentricity,
+                            verbose: verbose
                         )
                     } catch {
                         if !json { print("Warning: quality update failed: \(error.localizedDescription)") }
@@ -512,7 +517,7 @@ extension AP {
                         hotPixelCount: metrics.hotPixelCount,
                         backgroundNoiseElectrons: metrics.backgroundNoiseElectrons
                     )
-                    if !json {
+                    if !json && verbose {
                         var parts: [String] = []
                         if let v = metrics.starCount          { parts.append("stars: \(v)") }
                         if let v = metrics.saturatedStarCount { parts.append("sat: \(v)") }
@@ -536,7 +541,8 @@ extension AP {
                         fwhm: metrics.medianFWHM,
                         eccentricity: metrics.medianEccentricity,
                         maxFWHM: maxFWHM,
-                        maxEccentricity: maxEccentricity
+                        maxEccentricity: maxEccentricity,
+                        verbose: verbose
                     )
                 } catch {
                     if !json { print("Warning: quality update failed for \(path): \(error.localizedDescription)") }
@@ -552,7 +558,8 @@ extension AP {
             fwhm: Double?,
             eccentricity: Double?,
             maxFWHM: Double?,
-            maxEccentricity: Double?
+            maxEccentricity: Double?,
+            verbose: Bool = true
         ) async {
             guard maxFWHM != nil || maxEccentricity != nil else { return }
             let exceedsFWHM = maxFWHM.map { (fwhm ?? .infinity) > $0 } ?? false
@@ -574,7 +581,7 @@ extension AP {
                         frameSetID: fsID, frameID: frameID,
                         excluded: shouldExclude, reason: shouldExclude ? reason : nil
                     )
-                    if !json && shouldExclude {
+                    if !json && verbose && shouldExclude {
                         print("  Excluded from frameset \(fsID): \(reason ?? "quality threshold")")
                     }
                 } catch {
@@ -760,7 +767,8 @@ extension AP {
             pipelineInputs: [String: Any],
             usedFilePaths: Set<String>? = nil,
             registrationFailureReasons: [String: String] = [:],
-            existingOutputPath: String?
+            existingOutputPath: String?,
+            verbose: Bool = true
         ) async {
             guard let config = try? ArchiveConfiguration.fromEnvironment() else { return }
             guard let archive = try? Archive(configuration: config) else { return }
@@ -895,7 +903,7 @@ extension AP {
                     let (archived, isNew) = try await archive.add(fitsFile: fileToArchive, processingRunID: run.id)
                     if let tmp = tempURL { try? FileManager.default.removeItem(at: tmp) }
 
-                    if !json {
+                    if !json && verbose {
                         if isNew {
                             print("Archived result → \(archived.id)")
                         } else {
@@ -927,7 +935,7 @@ extension AP {
                                     excluded: true, reason: reason
                                 )
                             }
-                            if !json && !fsIDs.isEmpty {
+                            if !json && verbose && !fsIDs.isEmpty {
                                 print("  Excluded \(af.id) from \(fsIDs.count) frameset(s): \(reason)")
                             }
                         }
