@@ -15,7 +15,7 @@ struct Find: AsyncParsableCommand {
     @Option(name: .long, help: "Camera name (exact match).")
     var camera: String?
 
-    @Option(name: .long, help: "Frame types to include, comma-separated (light,dark,flat,bias).")
+    @Option(name: .long, help: "Frame types to include, comma-separated (light,dark,flat,bias,diagnostic).")
     var type: String?
 
     @Option(name: .long, help: "Filters to include, comma-separated (Hɑ,SII,OIII,R,G,B,L).")
