@@ -27,9 +27,9 @@ import os
 /// **Output columns**
 /// | Column                            | Type   | Description                                                                   |
 /// |-----------------------------------|--------|-------------------------------------------------------------------------------|
-/// | star_count                        | Int    | Total detected sources (including saturated and excluded).                    |
+/// | star_count                        | Int    | Genuine point sources: saturated stars + unsaturated sources passing filters. |
 /// | saturated_star_count              | Int    | Sources whose peak pixel ≥ 90 % of full-scale (saturated).                   |
-/// | excluded_source_count             | Int    | Unsaturated sources excluded from statistics by max_fwhm_arcsec/eccentricity.|
+/// | excluded_source_count             | Int    | Blobs rejected as non-stellar by max_fwhm_arcsec or max_eccentricity filter. |
 /// | median_fwhm                       | Double | Median FWHM in pixels (avg major+minor), excluding outliers.                  |
 /// | median_eccentricity               | Double | Median eccentricity 0–1 (0=circular), excluding outliers.                     |
 /// | median_snr                        | Double | Median peak SNR of non-saturated, non-outlier stars (when background σ known).|
@@ -213,6 +213,7 @@ public struct FrameQualityProcessor: Processor {
         let fluxCol         = df.columns.first(where: { $0.name == "flux" })
 
         var saturatedCount = 0
+        var qualifyingCount = 0  // unsaturated point sources that passed the filters
         var fwhmValues: [Double] = []
         var eccValues:  [Double] = []
         var snrValues:  [Double] = []
@@ -220,58 +221,57 @@ public struct FrameQualityProcessor: Processor {
 
         for i in 0..<df.rows.count {
             let sat = (saturatedCol?[i] as? Bool) ?? false
-            if sat { saturatedCount += 1 }
+            if sat {
+                // Saturated sources are stars regardless of FWHM (bloom makes FWHM unreliable).
+                saturatedCount += 1
+                continue
+            }
 
-            // Only unsaturated stars contribute to the statistics.
-            if !sat {
-                let major = fwhmMajorCol?[i] as? Double
-                let minor = fwhmMinorCol?[i] as? Double
-                let ecc   = eccentricityCol?[i] as? Double
-                let flux  = fluxCol?[i]  as? Double
+            let major = fwhmMajorCol?[i] as? Double
+            let minor = fwhmMinorCol?[i] as? Double
+            let ecc   = eccentricityCol?[i] as? Double
+            let flux  = fluxCol?[i] as? Double
 
-                let fwhm: Double? = (major.flatMap { m in minor.map { n in (m + n) / 2.0 } }).flatMap { $0 > 0 ? $0 : nil }
-                let eccValid = ecc.flatMap { $0.isNaN ? nil : $0 }
+            let fwhm: Double? = (major.flatMap { m in minor.map { n in (m + n) / 2.0 } }).flatMap { $0 > 0 ? $0 : nil }
+            let eccValid = ecc.flatMap { $0.isNaN ? nil : $0 }
 
-                // Exclude extended objects (galaxy cores, nebulae) and non-stellar artifacts
-                // (cosmic rays, satellite trails) from the statistics. These inflate seeing
-                // and eccentricity medians because blob detection treats them like stars.
-                let exceedsFWHM = maxFWHMPixels.flatMap { cutoff in fwhm.map     { $0 > cutoff } } ?? false
-                let exceedsEcc  = maxEccentricity.flatMap { maxEcc in eccValid.map { $0 > maxEcc } } ?? false
-                if exceedsFWHM || exceedsEcc {
-                    excludedCount += 1
-                    continue
-                }
+            // Reject blobs that cannot be stars: galaxy cores, extended nebulae (too large),
+            // cosmic rays, and satellite trails (too elongated).
+            let exceedsFWHM = maxFWHMPixels.flatMap { cutoff in fwhm.map     { $0 > cutoff } } ?? false
+            let exceedsEcc  = maxEccentricity.flatMap { maxEcc in eccValid.map { $0 > maxEcc } } ?? false
+            if exceedsFWHM || exceedsEcc {
+                excludedCount += 1
+                continue
+            }
 
-                if let f = fwhm { fwhmValues.append(f) }
-                if let e = eccValid { eccValues.append(e) }
+            // This blob qualifies as a star.
+            qualifyingCount += 1
+            if let f = fwhm { fwhmValues.append(f) }
+            if let e = eccValid { eccValues.append(e) }
 
-                // Peak SNR estimate: flux / (noise × effective PSF area).
-                // For a 2-D Gaussian PSF: effective_pixels = 2π × σ_x × σ_y, σ = FWHM/2.355.
-                // This gives the signal-to-noise at the PSF peak, robust for all star sizes.
-                if let sigma = noiseSigmaNorm, sigma > 0,
-                   let fVal = flux, fVal > 0,
-                   let fwhmVal = fwhm, fwhmVal > 0,
-                   let majorVal = major, majorVal > 0,
-                   let minorVal = minor, minorVal > 0 {
-                    let sigmaX = majorVal / 2.355
-                    let sigmaY = minorVal / 2.355
-                    let effPixels = 2.0 * .pi * sigmaX * sigmaY
-                    guard effPixels > 0 else { continue }
-                    let snr = fVal / (sigma * sqrt(effPixels))
-                    snrValues.append(snr)
-                }
+            // Peak SNR estimate: flux / (noise × effective PSF area).
+            // For a 2-D Gaussian PSF: effective_pixels = 2π × σ_x × σ_y, σ = FWHM/2.355.
+            if let sigma = noiseSigmaNorm, sigma > 0,
+               let fVal = flux, fVal > 0,
+               let majorVal = major, majorVal > 0,
+               let minorVal = minor, minorVal > 0 {
+                let sigmaX = majorVal / 2.355
+                let sigmaY = minorVal / 2.355
+                let effPixels = 2.0 * .pi * sigmaX * sigmaY
+                guard effPixels > 0 else { continue }
+                snrValues.append(fVal / (sigma * sqrt(effPixels)))
             }
         }
 
         if excludedCount > 0 {
-            Logger.processor.debug("FrameQualityProcessor: excluded \(excludedCount) non-stellar source(s) from quality statistics")
+            Logger.processor.debug("FrameQualityProcessor: rejected \(excludedCount) non-stellar blob(s) (FWHM or eccentricity filter)")
         }
 
         let medSNR = snrValues.isEmpty ? nil : median(snrValues)
         let lowSNRCount = snrValues.filter { $0 < lowSNRThreshold }.count
 
         return Metrics(
-            starCount: df.rows.count,
+            starCount: saturatedCount + qualifyingCount,
             saturatedStarCount: saturatedCount,
             excludedCount: excludedCount,
             medianFWHM: fwhmValues.isEmpty ? nil : median(fwhmValues),
