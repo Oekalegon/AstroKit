@@ -28,10 +28,17 @@ steps:
         from: flat_frames
         is_collection: true
         collection_mode: individually
+        metadata_restrictions:
+          frame_type:
+            - flat
         description: Raw flat frames (one process per frame)
       - name: subtract_frame
         type: frame
         from: master_darkflat
+        metadata_restrictions:
+          frame_type:
+            - darkFlat
+            - masterDarkFlat
         description: Master dark flat to subtract from each flat frame
     parameters:
       - name: clip_to_zero

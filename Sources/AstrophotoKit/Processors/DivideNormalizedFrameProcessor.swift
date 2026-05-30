@@ -50,7 +50,7 @@ public struct DivideNormalizedFrameProcessor: Processor {
             )
         }
 
-        logWarnings(input: inputFrame, divisor: divisorFrame)
+        try logWarnings(input: inputFrame, divisor: divisorFrame)
 
         let flatMean = computeMean(
             texture: divisorTexture, width: w, height: h,
@@ -78,10 +78,26 @@ public struct DivideNormalizedFrameProcessor: Processor {
         )
     }
 
-    // MARK: - Validation warnings
+    // MARK: - Validation
 
-    private func logWarnings(input: Frame, divisor: Frame) {
-        // Filter mismatch: flat must use the same filter as the light
+    private func logWarnings(input: Frame, divisor: Frame) throws {
+        // Gain mismatch: flat must be taken at the same gain as the light.
+        if let g1 = input.gain, let g2 = divisor.gain {
+            if abs(g1 - g2) > 0.5 {
+                throw ProcessorExecutionError.executionFailed(
+                    "divide_normalized_frame: gain mismatch — input gain \(Int(g1)) vs flat gain \(Int(g2)). " +
+                    "Flat frames must be taken at the same gain setting as the light frames."
+                )
+            }
+        }
+
+        // Offset mismatch: warn if camera pedestal differs.
+        if let o1 = input.offset, let o2 = divisor.offset, abs(o1 - o2) > 5 {
+            let msg = "divide_normalized_frame: offset mismatch — input offset \(Int(o1)) vs flat offset \(Int(o2)). Calibration quality may be reduced."
+            Logger.processor.warning("\(msg, privacy: .public)")
+        }
+
+        // Filter mismatch: flat must use the same filter as the light.
         let inFilter  = input.filterName  ?? input.filter.rawValue
         let divFilter = divisor.filterName ?? divisor.filter.rawValue
         if input.filter != .none && input.filter != .unknown
@@ -91,7 +107,7 @@ public struct DivideNormalizedFrameProcessor: Processor {
             Logger.processor.warning("\(msg, privacy: .public)")
         }
 
-        // Timestamp warning: flats should be close in time to lights
+        // Timestamp: flats should be close in time to lights.
         if let t1 = input.timestamp, let t2 = divisor.timestamp {
             let hours = abs(t1.timeIntervalSince(t2)) / 3600
             if hours > 24 {

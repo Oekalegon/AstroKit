@@ -362,12 +362,15 @@ extension AP {
                     let pixels: [Float] = bytesPerPixel > 1
                         ? stride(from: 0, to: rawPixels.count, by: bytesPerPixel).map { rawPixels[$0] }
                         : rawPixels
+                    let resolvedImageType = FITSTableWriter.resultFrameImageType(for: firstFrame, in: pipeline)
+                    let isMaster          = FITSTableWriter.resultFrameIsMaster(for: firstFrame, in: pipeline)
                     try FITSTableWriter.writeResultFrame(
                         pixelData: pixels, width: w, height: h,
                         pipelineID: pipelineID,
-                        imageType: imageType(for: firstFrame, in: pipeline),
+                        imageType: resolvedImageType,
                         filterName: firstFrame.filterName,
-                        stacked: false,
+                        stacked: isMaster,
+                        isMaster: isMaster,
                         to: outputPath
                     )
                     if !json { print("Saved frame to \(outputPath)") }
@@ -444,22 +447,6 @@ extension AP {
             }
         }
 
-        /// Resolves the FITS IMAGETYP string for a result frame by reading the `frame_type`
-        /// metadata declared on the matching output in the pipeline YAML definition.
-        private func imageType(for frame: Frame, in pipeline: Pipeline) -> String {
-            guard let outputLink = frame.outputLink,
-                  case .output(_, _, _, let stepLinkID) = outputLink else { return "Light Frame" }
-            let parts      = stepLinkID.split(separator: ".", maxSplits: 1)
-            let stepPart   = String(parts.first ?? Substring(stepLinkID))
-            let outputName = parts.count > 1 ? String(parts[1]) : ""
-            let baseStepID = String(stepPart.split(separator: "[").first ?? Substring(stepPart))
-            guard let step   = pipeline.steps.first(where: { $0.id == baseStepID }),
-                  let output = step.outputs.first(where: { $0.name == outputName }) else { return "Light Frame" }
-            switch output.getMetadata()["frame_type"] as? String {
-            case "diagnostic": return "Diagnostic Frame"
-            default:           return "Light Frame"
-            }
-        }
 
         private func backUpdateQuality(
             tables: [TableData],
@@ -897,12 +884,15 @@ extension AP {
                     } else {
                         let tmp = FileManager.default.temporaryDirectory
                             .appendingPathComponent("ap_result_\(UUID().uuidString).fits")
-                        try FITSTableWriter.writeResultFrame(
+                        let resolvedImageType = FITSTableWriter.resultFrameImageType(for: frame, in: pipeline)
+                    let isMaster          = FITSTableWriter.resultFrameIsMaster(for: frame, in: pipeline)
+                    try FITSTableWriter.writeResultFrame(
                             pixelData: pixels, width: w, height: h,
                             pipelineID: pipelineID,
-                            imageType: imageType(for: frame, in: pipeline),
+                            imageType: resolvedImageType,
                             filterName: stackFilter ?? frame.filterName,
-                            stacked: pipelineID == "frame_stacking",
+                            stacked: pipelineID == "frame_stacking" || isMaster,
+                            isMaster: isMaster,
                             nframes: inputCount > 0 ? inputCount : nil,
                             totalExposure: stackExposure,
                             gain: stackGain,

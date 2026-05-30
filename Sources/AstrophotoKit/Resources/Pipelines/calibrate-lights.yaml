@@ -42,10 +42,17 @@ steps:
         from: light_frames
         is_collection: true
         collection_mode: individually
+        metadata_restrictions:
+          frame_type:
+            - light
         description: Light frames to calibrate (processed one at a time)
       - name: subtract_frame
         type: frame
         from: master_dark
+        metadata_restrictions:
+          frame_type:
+            - dark
+            - masterDark
         description: Master dark frame
     parameters:
       - name: clip_to_zero
@@ -78,6 +85,10 @@ steps:
       - name: divisor_frame
         type: frame
         from: master_flat
+        metadata_restrictions:
+          frame_type:
+            - flat
+            - masterFlat
         description: Master flat frame
     outputs:
       - name: calibrated_frame

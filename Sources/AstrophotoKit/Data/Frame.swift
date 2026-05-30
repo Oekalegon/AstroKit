@@ -467,6 +467,17 @@ public enum FrameType: String, Metadata {
     /// Used for frame sets that contain multiple frame types.
     case multiple
 
+    /// Returns the master variant of a raw calibration type, or nil if there is none.
+    public var masterVariant: FrameType? {
+        switch self {
+        case .bias:    return .masterBias
+        case .dark:    return .masterDark
+        case .flat:    return .masterFlat
+        case .darkFlat: return .masterDarkFlat
+        default:       return nil
+        }
+    }
+
     /// The key for this metadata value.
     /// Returns the ``FrameMetadataKey.type`` key.
     public var key: any MetadataKey {
