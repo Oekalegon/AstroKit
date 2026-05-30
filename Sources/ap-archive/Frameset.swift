@@ -13,7 +13,7 @@ struct Frameset: AsyncParsableCommand {
     // MARK: - Shared query options
 
     struct QueryOptions: ParsableArguments {
-        @Option(name: .long, help: "Frame type (light, dark, flat, bias).")
+        @Option(name: .long, help: "Frame type (light, dark, flat, bias, diagnostic).")
         var type: String?
 
         @Option(name: .long, help: "Filter by object name (partial match).")
@@ -117,6 +117,9 @@ struct Frameset: AsyncParsableCommand {
         var json: Bool = false
 
         func run() async throws {
+            guard queryOptions.type != nil else {
+                throw ValidationError("--type is required for frameset create (e.g. --type light).")
+            }
             let config  = try archiveOptions.makeConfiguration()
             let archive = try Archive(configuration: config)
             // Base query excludes maxFwhm/maxEccentricity — those are exclusion thresholds, not filters.

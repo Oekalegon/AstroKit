@@ -85,7 +85,7 @@ ap-archive find [options]
 |--------|-------------|
 | `--object <name>` | Partial object name match (e.g. `M51`) |
 | `--camera <name>` | Camera name (exact match) |
-| `--type <types>` | Comma-separated frame types: `light,dark,flat,bias` |
+| `--type <types>` | Comma-separated frame types: `light,dark,flat,bias,diagnostic` |
 | `--filter <filters>` | Comma-separated filters: `Hɑ,SII,OIII,R,G,B,L` |
 | `--from <date>` | Start date in `YYYY-MM-DD` format |
 | `--to <date>` | End date in `YYYY-MM-DD` format |
@@ -261,7 +261,7 @@ Archive Statistics
 
 Manages frame sets — named, homogeneous collections of archived frames used as inputs to processing pipelines.
 
-A frame set requires all member frames to share the same **type** (light, dark, flat, or bias) and the same **processing level**. Optical filter must also be uniform — use `--force` to allow mixed filters. Shared properties (object, camera, exposure, temperature, date span, pixel scale, position angle) are recorded automatically; any property that differs across members is left blank.
+A frame set requires all member frames to share the same **type** (light, dark, flat, bias, or diagnostic) and the same **processing level**. Optical filter must also be uniform — use `--force` to allow mixed filters. Shared properties (object, camera, exposure, temperature, date span, pixel scale, position angle) are recorded automatically; any property that differs across members is left blank.
 
 After creation the command always prints an inspection report so you can verify the result.
 
@@ -276,7 +276,7 @@ ap-archive frameset create [options]
 | Option | Description |
 |--------|-------------|
 | `--name <name>` | Name for the frame set (auto-generated if omitted) |
-| `--type <type>` | Frame type: `light`, `dark`, `flat`, `bias` |
+| `--type <type>` | **Required.** Frame type: `light`, `dark`, `flat`, `bias`, `diagnostic` |
 | `--object <name>` | Partial object name match |
 | `--filter <filter>` | Optical filter |
 | `--camera <name>` | Camera name (exact match) |
@@ -535,7 +535,7 @@ When a file is added, `ap-archive` reads its FITS header to extract:
 | `OBJECT` | Object name |
 | `RA`, `OBJCTRA` | Right ascension (degrees) |
 | `DEC`, `OBJCTDEC` | Declination (degrees) |
-| `IMAGETYP`, `FRAME` | Frame type (light/dark/flat/bias) |
+| `IMAGETYP`, `FRAME` | Frame type (light/dark/flat/bias/diagnostic) |
 | `FILTER` | Filter name |
 | `INSTRUME` | Camera |
 | `FOCALLEN` | Focal length (mm) |

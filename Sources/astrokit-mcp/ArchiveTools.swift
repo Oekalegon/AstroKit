@@ -48,7 +48,7 @@ struct ArchiveTools {
                     "frame_types": [
                         "type": "array",
                         "items": ["type": "string"],
-                        "description": "Frame types to include (light, dark, flat, bias).",
+                        "description": "Frame types to include (light, dark, flat, bias, diagnostic).",
                     ],
                     "filters": [
                         "type": "array",
@@ -106,7 +106,7 @@ struct ArchiveTools {
             "inputSchema": [
                 "type": "object",
                 "properties": [
-                    "frame_type": ["type": "string", "enum": ["light", "dark", "flat", "bias"], "description": "Frame type to inspect."],
+                    "frame_type": ["type": "string", "enum": ["light", "dark", "flat", "bias", "diagnostic"], "description": "Frame type to inspect."],
                     "object_name": ["type": "string", "description": "Partial object name to match (e.g. 'M51')."],
                     "filters": ["type": "array", "items": ["type": "string"], "description": "Optical filters to include (Hɑ, SII, OIII, R, G, B, L)."],
                     "camera": ["type": "string", "description": "Camera name (exact match)."],
@@ -131,7 +131,7 @@ struct ArchiveTools {
                 "type": "object",
                 "properties": [
                     "name": ["type": "string", "description": "Name for the frame set. Auto-generated from query parameters if omitted."],
-                    "frame_type": ["type": "string", "enum": ["light", "dark", "flat", "bias"], "description": "Frame type to include (required — a set is homogeneous)."],
+                    "frame_type": ["type": "string", "enum": ["light", "dark", "flat", "bias", "diagnostic"], "description": "Frame type to include (required — a set is homogeneous)."],
                     "object_name": ["type": "string", "description": "Partial object name to match (e.g. 'M51')."],
                     "filters": ["type": "array", "items": ["type": "string"], "description": "Optical filters to include (Hɑ, SII, OIII, R, G, B, L)."],
                     "camera": ["type": "string", "description": "Camera name (exact match)."],
@@ -147,7 +147,7 @@ struct ArchiveTools {
                     "max_eccentricity": ["type": "number", "description": "Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded."],
                     "force": ["type": "boolean", "description": "Allow mixed optical filters; stored as comma-separated list on the frame set (default false)."],
                 ] as [String: Any],
-                "required": [],
+                "required": ["frame_type"],
             ] as [String: Any],
         ],
         [
@@ -610,6 +610,9 @@ struct ArchiveTools {
     }
 
     private func archiveFrameSetCreate(_ args: [String: Any]) async throws -> String {
+        guard args["frame_type"] is String else {
+            throw ToolError("frame_type is required for frameset creation (e.g. \"light\").")
+        }
         let archive         = try makeArchive()
         let query           = makeFrameSetQuery(args)
         let force           = args["force"] as? Bool ?? false

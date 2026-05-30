@@ -446,6 +446,9 @@ public enum FrameType: String, Metadata {
     /// A processed light frame.
     case processedLight
 
+    /// A diagnostic frame (e.g. annotated detection overlay). Not suitable for stacking or quality analysis.
+    case diagnostic
+
     /// An unknown frame type.
     case unknown
 
