@@ -264,6 +264,49 @@ public actor Archive {
         expandPaths(try await database.recentFrames(limit: limit))
     }
 
+    /// Returns calibration frames matching the given scope and optional type.
+    ///
+    /// Frames are returned in a stable order: bias → masterBias → dark → masterDark →
+    /// darkFlat → masterDarkFlat → flat → masterFlat within each type group.
+    ///
+    /// - Parameters:
+    ///   - scope: Whether to return source frames, master stacks, or both (default `.all`).
+    ///   - type: Optional restriction to one calibration type. `nil` returns all calibration types.
+    ///   - temperatureRange: Optional CCD temperature filter (°C). Useful for dark selection.
+    ///   - dateRange: Optional timestamp filter. Useful for flat selection by session date.
+    ///   - camera: Optional camera name (exact match).
+    public func calibrationFrames(
+        scope: CalibrationScope = .all,
+        type: CalibrationType? = nil,
+        temperatureRange: ClosedRange<Double>? = nil,
+        dateRange: DateInterval? = nil,
+        camera: String? = nil
+    ) async throws -> [ArchivedFrame] {
+        let query = FrameQuery.forCalibration(
+            scope: scope,
+            type: type,
+            temperatureRange: temperatureRange,
+            dateRange: dateRange,
+            camera: camera
+        )
+        return try await frames(matching: query)
+    }
+
+    /// Returns all frame sets whose `frameType` is a calibration type.
+    ///
+    /// - Parameter type: Optional restriction to one calibration type. Matches both the raw
+    ///   source type and its master variant (e.g. `.dark` returns both `dark` and `masterDark` sets).
+    public func calibrationFrameSets(type: CalibrationType? = nil) async throws -> [ArchivedFrameSet] {
+        let all = try await frameSets()
+        let calibrationTypes: Set<String> = Set(CalibrationType.allCases.flatMap { $0.allFrameTypes })
+        var result = all.filter { calibrationTypes.contains($0.frameType) }
+        if let t = type {
+            let variants = Set(t.allFrameTypes)
+            result = result.filter { variants.contains($0.frameType) }
+        }
+        return result
+    }
+
     /// Returns all archived objects with frame counts.
     public func listObjects() async throws -> [(name: String, count: Int)] {
         try await database.listObjects()

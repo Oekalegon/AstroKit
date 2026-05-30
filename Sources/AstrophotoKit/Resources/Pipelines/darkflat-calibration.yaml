@@ -1,0 +1,45 @@
+id: darkflat_calibration
+name: Dark Flat Calibration Pipeline
+description: |
+  Stacks a set of dark flat frames into a master dark flat.
+
+  Dark flats are darks taken at the same exposure time as flat frames. They capture
+  the thermal noise component that contaminates flat frames, and are subtracted from
+  flats before stacking (see flat_calibration).
+
+  Dark flat exposure time must match the flat exposure time exactly — mismatches are
+  logged as warnings during flat_calibration.
+
+  Output:
+  - master_frame — master dark flat frame ready to use in flat_calibration
+
+steps:
+  - id: stack_darkflat
+    type: stack_calibration_frames
+    name: Stack Dark Flat Frames
+    description: >
+      Combines multiple dark flat frames into a master dark flat using pixel-wise
+      median or mean. The exposure time must match the flat frames.
+    dataInputs:
+      - name: input_frames
+        type: frameSet
+        from: darkflat_frames
+        is_collection: true
+        collection_mode: together
+        metadata_restrictions:
+          frame_type:
+            - darkFlat
+        description: Dark flat frames to stack
+    parameters:
+      - name: method
+        from: stacking_method
+        default_value: "median"
+        description: Combine method — median (default) or mean
+    outputs:
+      - name: master_frame
+        type: frame
+        description: Master dark flat frame
+        metadata:
+          frame_type: "masterDarkFlat"
+          processing_stage: "calibration"
+          image_type: "grayscale"

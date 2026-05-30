@@ -1,51 +1,21 @@
 id: dark_calibration
 name: Dark Frame Calibration Pipeline
 description: |
-  Calibrates dark frames by first creating a master bias from a set of bias frames,
-  then subtracting the master bias from each dark frame, and finally stacking
-  the calibrated dark frames into a master dark.
+  Subtracts a master bias from each dark frame and stacks the result into a master dark.
+
+  Requires a pre-made master bias (run bias_calibration first, or provide your own).
+  Dark frames must be taken at the same exposure time and sensor temperature as the
+  light frames they will be applied to — mismatches are logged as warnings.
+
+  Output:
+  - master_frame — master dark frame ready to use in calibrate_lights
 
 steps:
-  # Step 1: Stack bias frames into master bias
-  - id: stack_bias
-    type: stack_frames
-    name: Stack Bias Frames
-    description: Stacks multiple bias frames into a master bias frame using median or mean stacking
-    dataInputs:
-      - name: input_frames
-        type: frameSet
-        from: bias_frames
-        is_collection: true
-        collection_mode: together
-        metadata_restrictions:
-          frame_type:
-            - bias
-        description: Collection of bias frames to stack
-    parameters:
-      - name: method
-        from: stacking_method
-        default_value: "median"
-        description: Stacking method (median, mean, or sigma_clip)
-      - name: rejection_threshold
-        from: rejection_threshold
-        default_value: 3.0
-        description: Sigma rejection threshold for sigma_clip method
-    outputs:
-      - name: master_bias
-        type: frame
-        description: Master bias frame created by stacking input bias frames
-        metadata:
-          processing_stage: "calibration"
-          frame_type: "master_bias"
-          stacking_method: "median"
-          image_type: "grayscale"
-
-  # Step 2: Subtract master bias from each dark frame
-  # This step will process each dark frame individually
+  # Step 1: Subtract master bias from each dark frame
   - id: subtract_bias_from_dark
     type: subtract_frames
     name: Subtract Master Bias from Dark Frames
-    description: Subtracts the master bias from each dark frame to remove bias signal
+    description: Removes the fixed bias pedestal from each dark frame before stacking.
     dataInputs:
       - name: input_frame
         type: frameSet
@@ -55,63 +25,51 @@ steps:
         metadata_restrictions:
           frame_type:
             - dark
-        description: Individual dark frame to calibrate (each frame processed separately)
+        description: Raw dark frames (one process per frame)
       - name: subtract_frame
         type: frame
-        from: stack_bias.master_bias
+        from: master_bias
         metadata_restrictions:
           frame_type:
-            - master_bias
-        description: Master bias frame to subtract
+            - bias
+            - masterBias
+        description: Master bias frame to subtract from each dark
     parameters:
-      - name: preserve_negative
-        from: preserve_negative
+      - name: clip_to_zero
+        from: clip_to_zero
         default_value: false
-        description: Whether to preserve negative values after subtraction
+        description: Clamp negative values to zero after subtraction
     outputs:
-      - name: calibrated_dark
+      - name: calibrated_frame
         type: frame
-        description: Dark frame with bias signal removed
+        description: Bias-subtracted dark frame
         metadata:
+          frame_type: "calibratedDark"
           processing_stage: "calibration"
-          frame_type: "calibrated_dark"
-          calibration_applied:
-            - "bias_subtraction"
           image_type: "grayscale"
 
-  # Step 3: Stack calibrated dark frames into master dark
+  # Step 2: Stack calibrated dark frames into master dark
   - id: stack_dark
-    type: stack_frames
-    name: Stack Calibrated Dark Frames
-    description: Stacks the bias-corrected dark frames into a master dark frame
+    type: stack_calibration_frames
+    name: Stack Dark Frames
+    description: Combines bias-corrected dark frames into a master dark using median or mean.
     dataInputs:
       - name: input_frames
         type: frameSet
-        from: subtract_bias_from_dark.calibrated_dark
+        from: subtract_bias_from_dark.calibrated_frame
         is_collection: true
         collection_mode: together
-        metadata_restrictions:
-          frame_type:
-            - calibrated_dark
-        description: Collection of bias-corrected dark frames to stack
+        description: Bias-corrected dark frames
     parameters:
       - name: method
-        from: dark_stacking_method
+        from: stacking_method
         default_value: "median"
-        description: Stacking method for dark frames (median, mean, or sigma_clip)
-      - name: rejection_threshold
-        from: dark_rejection_threshold
-        default_value: 3.0
-        description: Sigma rejection threshold for sigma_clip method
+        description: Combine method — median (default) or mean
     outputs:
-      - name: master_dark
+      - name: master_frame
         type: frame
-        description: Master dark frame created by stacking calibrated dark frames
+        description: Master dark frame
         metadata:
+          frame_type: "masterDark"
           processing_stage: "calibration"
-          frame_type: "master_dark"
-          stacking_method: "median"
-          calibration_applied:
-            - "bias_subtraction"
           image_type: "grayscale"
-

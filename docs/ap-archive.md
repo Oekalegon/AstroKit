@@ -85,10 +85,12 @@ ap-archive find [options]
 |--------|-------------|
 | `--object <name>` | Partial object name match (e.g. `M51`) |
 | `--camera <name>` | Camera name (exact match) |
-| `--type <types>` | Comma-separated frame types: `light,dark,flat,bias,diagnostic` |
+| `--type <types>` | Comma-separated frame types: `light`, `dark`, `masterDark`, `flat`, `masterFlat`, `bias`, `masterBias`, `darkFlat`, `masterDarkFlat`, `diagnostic` |
 | `--filter <filters>` | Comma-separated filters: `Hɑ,SII,OIII,R,G,B,L` |
-| `--from <date>` | Start date in `YYYY-MM-DD` format |
-| `--to <date>` | End date in `YYYY-MM-DD` format |
+| `--from <date>` | Start date in `YYYY-MM-DD` format (inclusive) |
+| `--to <date>` | End date in `YYYY-MM-DD` format (inclusive) |
+| `--temp-center <°C>` | Centre CCD temperature — returns frames within ±`--temp-tolerance` of this value |
+| `--temp-tolerance <°C>` | Temperature tolerance (default 2.0 °C) |
 | `--level <level>` | Processing level: `raw`, `calibrated`, `stacked`, `stretched` |
 | `--calibrated` | Only calibrated frames |
 | `--stacked` | Only stacked frames |
@@ -113,6 +115,9 @@ ap-archive find --object M51 --type light
 # Hɑ and SII lights taken in 2024:
 ap-archive find --type light --filter Hɑ,SII --from 2024-01-01 --to 2024-12-31
 
+# Dark frames near -10 °C (±2 °C):
+ap-archive find --type dark,masterDark --temp-center -10
+
 # All frames within 1° of RA=202.47°, Dec=+47.20° (M51):
 ap-archive find --ra 202.47 --dec 47.20 --radius 1.0
 
@@ -124,6 +129,72 @@ ap-archive find --rejected-only
 
 # Only frames with good seeing (FWHM ≤ 4 px, ≥ 150 stars, eccentricity ≤ 0.4):
 ap-archive find --object M51 --type light --max-fwhm 4 --min-stars 150 --max-eccentricity 0.4
+```
+
+---
+
+### `ap-archive calibration`
+
+Lists calibration frames grouped by type: Bias → Master Bias → Dark → Master Dark → Dark Flat → Master Dark Flat → Flat → Master Flat. Use this to survey what calibration material you have before selecting frames to run a calibration pipeline.
+
+```
+ap-archive calibration [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--scope <scope>` | `all` (default) — every calibration frame; `source` — raw source frames only (bias, dark, flat, darkFlat); `masters` — master stacks only (masterBias, masterDark, masterFlat, masterDarkFlat); `framesets` — calibration frame sets |
+| `--type <type>` | Restrict to one calibration type: `bias`, `dark`, `flat`, `darkFlat`. Applies to both source and master variants unless scope overrides. |
+| `--temp-center <°C>` | Centre CCD temperature — useful for selecting dark frames at a specific sensor temperature |
+| `--temp-tolerance <°C>` | Temperature tolerance ±°C around `--temp-center` (default 2.0) |
+| `--from <date>` | Start date `YYYY-MM-DD` (inclusive) |
+| `--to <date>` | End date `YYYY-MM-DD` (inclusive) |
+| `--camera <name>` | Camera name (exact match) |
+
+**Examples:**
+
+```bash
+# All calibration frames, grouped by type:
+ap-archive calibration
+
+# Raw dark frames near -10 °C (±3 °C):
+ap-archive calibration --scope source --type dark --temp-center -10 --temp-tolerance 3
+
+# All master calibration stacks:
+ap-archive calibration --scope masters
+
+# Flat frames from a specific observing session:
+ap-archive calibration --type flat --from 2026-01-15 --to 2026-01-15
+
+# Calibration frame sets only (for use as pipeline inputs):
+ap-archive calibration --scope framesets
+
+# Dark frame sets only:
+ap-archive calibration --scope framesets --type dark
+```
+
+**Example output:**
+
+```
+Calibration Frames (42 total)
+
+Bias  —  20 frame(s)
+ID                                    Temp      Exp    Filter  Date              File
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+A3F2B1C0-1234-5678-ABCD-EF0123456789  -10.0°C    0s  -       2026-01-15 21:00  bias_001.fits
+…
+
+Dark  —  14 frame(s)
+ID                                    Temp      Exp    Filter  Date              File
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+B4E3D2F1-1234-5678-ABCD-EF0123456789  -10.1°C  120s  -       2026-01-15 23:12  dark_001.fits
+…
+
+Flat  —  8 frame(s)
+ID                                    Temp      Exp    Filter  Date              File
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────
+C5F4E3D2-1234-5678-ABCD-EF0123456789  -         2s  Hɑ       2026-01-15 20:00  flat_Ha_001.fits
+…
 ```
 
 ---
@@ -535,7 +606,7 @@ When a file is added, `ap-archive` reads its FITS header to extract:
 | `OBJECT` | Object name |
 | `RA`, `OBJCTRA` | Right ascension (degrees) |
 | `DEC`, `OBJCTDEC` | Declination (degrees) |
-| `IMAGETYP`, `FRAME` | Frame type (light/dark/flat/bias/diagnostic) |
+| `IMAGETYP`, `FRAME` | Frame type (light/dark/flat/bias/diagnostic); `ISMASTER = T` upgrades to the master variant (masterBias, masterDark, masterFlat, masterDarkFlat) |
 | `FILTER` | Filter name |
 | `INSTRUME` | Camera |
 | `FOCALLEN` | Focal length (mm) |

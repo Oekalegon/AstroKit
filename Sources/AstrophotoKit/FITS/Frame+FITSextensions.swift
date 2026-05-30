@@ -37,6 +37,10 @@ extension Frame {
         if let s = fitsImage.metadata["FRAMETYP"]?.stringValue ?? fitsImage.metadata["IMAGETYP"]?.stringValue {
             frameType = Frame.frameType(from: s)
         }
+        // Upgrade to master variant when ISMASTER = T (written by AstrophotoKit calibration pipelines).
+        if fitsImage.metadata["ISMASTER"]?.boolValue == true, let master = frameType.masterVariant {
+            frameType = master
+        }
 
         // Extract filter using case-insensitive alias matching (rawValue lookup is insufficient
         // because the enum uses Unicode chars like Hɑ and uppercase names like OIII/SII).
@@ -87,6 +91,18 @@ extension Frame {
             if let v = fitsImage.metadata[key]?.doubleValue, v > 0 { pixelScale = v; break }
         }
 
+        // Extract CCD/sensor temperature in degrees Celsius.
+        var ccdTemperature: Double? = nil
+        for key in ["CCD-TEMP", "CCDTEMP", "SETTEMP", "SET-TEMP"] {
+            if let v = fitsImage.metadata[key]?.doubleValue { ccdTemperature = v; break }
+        }
+
+        // Extract camera model name from INSTRUME keyword.
+        let instrumentName = fitsImage.metadata["INSTRUME"]?.stringValue.flatMap {
+            let trimmed = $0.trimmingCharacters(in: .whitespaces)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+
         // Extract camera offset / bias pedestal.
         var offset: Double? = nil
         if let v = fitsImage.metadata["OFFSET"]?.doubleValue {
@@ -115,7 +131,9 @@ extension Frame {
             fitsMinValue: Double(fitsImage.originalMinValue),
             fitsMaxValue: Double(fitsImage.originalMaxValue),
             egain: egain,
-            pixelScale: pixelScale
+            pixelScale: pixelScale,
+            ccdTemperature: ccdTemperature,
+            instrumentName: instrumentName
         )
     }
 

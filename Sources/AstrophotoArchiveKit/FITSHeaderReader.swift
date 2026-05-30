@@ -84,7 +84,8 @@ enum FITSHeaderReader {
         let dec = resolveDec(headers)
 
         let imageType = stringValue(headers, keys: ["IMAGETYP", "FRAME"]) ?? ""
-        let frameType = parseFrameType(imageType.lowercased())
+        let isMaster  = headers["ISMASTER"]?.boolValue ?? false
+        let frameType = parseFrameType(imageType.lowercased(), isMaster: isMaster)
 
         let filter = stringValue(headers, keys: ["FILTER"])?.trimmingCharacters(in: .whitespaces)
             .flatMap { $0.isEmpty ? nil : $0 }
@@ -202,10 +203,23 @@ enum FITSHeaderReader {
 
     // MARK: - Frame type
 
-    private static func parseFrameType(_ lowercased: String) -> String {
-        if lowercased.contains("bias")       { return "bias" }
-        if lowercased.contains("dark")       { return "dark" }
-        if lowercased.contains("flat")       { return "flat" }
+    private static func parseFrameType(_ lowercased: String, isMaster: Bool) -> String {
+        // Explicit "Master *" IMAGETYP from other software or old AstrophotoKit files.
+        if lowercased.contains("master") {
+            if lowercased.contains("dark") && lowercased.contains("flat") { return "masterDarkFlat" }
+            if lowercased.contains("dark")  { return "masterDark" }
+            if lowercased.contains("flat")  { return "masterFlat" }
+            if lowercased.contains("bias")  { return "masterBias" }
+        }
+        // Dark flat must be checked before either word alone.
+        let dark = lowercased.contains("dark")
+        let flat = lowercased.contains("flat")
+        if dark && flat { return isMaster ? "masterDarkFlat" : "darkFlat" }
+        if lowercased.contains("bias") || lowercased == "zero" || lowercased == "offset" {
+            return isMaster ? "masterBias" : "bias"
+        }
+        if dark                              { return isMaster ? "masterDark" : "dark" }
+        if flat                              { return isMaster ? "masterFlat" : "flat" }
         if lowercased.contains("diagnostic") { return "diagnostic" }
         if lowercased.contains("light")      { return "light" }
         if lowercased.contains("science")    { return "light" }

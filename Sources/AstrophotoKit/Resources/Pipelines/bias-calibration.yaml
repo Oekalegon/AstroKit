@@ -1,0 +1,42 @@
+id: bias_calibration
+name: Bias Calibration Pipeline
+description: |
+  Stacks a set of bias frames into a master bias frame.
+
+  The master bias captures the fixed-pattern readout offset (pedestal) of the camera
+  sensor. It is subtracted from dark frames and light frames to remove this offset
+  before other calibration steps.
+
+  Output:
+  - master_frame — master bias frame ready to use in dark_calibration or light_calibration
+
+steps:
+  - id: stack_bias
+    type: stack_calibration_frames
+    name: Stack Bias Frames
+    description: >
+      Combines multiple bias frames into a master bias using pixel-wise median or mean.
+      Median stacking suppresses hot pixels and outliers without sigma-rejection overhead.
+    dataInputs:
+      - name: input_frames
+        type: frameSet
+        from: bias_frames
+        is_collection: true
+        collection_mode: together
+        metadata_restrictions:
+          frame_type:
+            - bias
+        description: Bias frames to stack
+    parameters:
+      - name: method
+        from: stacking_method
+        default_value: "median"
+        description: Combine method — median (default) or mean
+    outputs:
+      - name: master_frame
+        type: frame
+        description: Master bias frame
+        metadata:
+          frame_type: "masterBias"
+          processing_stage: "calibration"
+          image_type: "grayscale"

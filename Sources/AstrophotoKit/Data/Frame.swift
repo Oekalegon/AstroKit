@@ -144,6 +144,16 @@ public struct Frame: ProcessData {
         return metadata(for: FrameMetadataKey.pixelScale) as? Double
     }
 
+    /// The CCD/sensor temperature in degrees Celsius, from the FITS `CCD-TEMP` or `CCDTEMP` keyword.
+    public var ccdTemperature: Double? {
+        return metadata(for: FrameMetadataKey.ccdTemperature) as? Double
+    }
+
+    /// The camera model name from the FITS `INSTRUME` keyword, if available.
+    public var instrumentName: String? {
+        return metadata(for: FrameMetadataKey.instrumentName) as? String
+    }
+
     /// Injects an EGAIN value from an external source (e.g. the archive camera_profiles table)
     /// when the FITS header did not carry an `EGAIN` keyword. Has no effect if egain is already set.
     public mutating func injectEgainIfMissing(_ egain: Double) {
@@ -231,7 +241,9 @@ public struct Frame: ProcessData {
         fitsMinValue: Double? = nil,
         fitsMaxValue: Double? = nil,
         egain: Double? = nil,
-        pixelScale: Double? = nil
+        pixelScale: Double? = nil,
+        ccdTemperature: Double? = nil,
+        instrumentName: String? = nil
     ) {
         self.instantiatedAt = texture != nil ? Date() : nil
         self.texture = texture
@@ -245,11 +257,13 @@ public struct Frame: ProcessData {
         if let exposureTime = exposureTime { metadata[FrameMetadataKey.exposureTime] = exposureTime }
         if let gain = gain { metadata[FrameMetadataKey.gain] = gain }
         if let offset = offset { metadata[FrameMetadataKey.offset] = offset }
-        if let filterName   = filterName   { metadata[FrameMetadataKey.filterName]   = filterName }
-        if let fitsMinValue = fitsMinValue { metadata[FrameMetadataKey.fitsMinValue] = fitsMinValue }
-        if let fitsMaxValue = fitsMaxValue { metadata[FrameMetadataKey.fitsMaxValue] = fitsMaxValue }
-        if let egain        = egain        { metadata[FrameMetadataKey.egain]        = egain }
-        if let pixelScale   = pixelScale   { metadata[FrameMetadataKey.pixelScale]   = pixelScale }
+        if let filterName      = filterName      { metadata[FrameMetadataKey.filterName]      = filterName }
+        if let fitsMinValue    = fitsMinValue    { metadata[FrameMetadataKey.fitsMinValue]    = fitsMinValue }
+        if let fitsMaxValue    = fitsMaxValue    { metadata[FrameMetadataKey.fitsMaxValue]    = fitsMaxValue }
+        if let egain           = egain           { metadata[FrameMetadataKey.egain]           = egain }
+        if let pixelScale      = pixelScale      { metadata[FrameMetadataKey.pixelScale]      = pixelScale }
+        if let ccdTemperature  = ccdTemperature  { metadata[FrameMetadataKey.ccdTemperature]  = ccdTemperature }
+        if let instrumentName  = instrumentName  { metadata[FrameMetadataKey.instrumentName]  = instrumentName }
         self.metadata = metadata
         self.outputLink = outputProcess
         self.inputLinks = inputProcesses
@@ -360,6 +374,12 @@ public enum FrameMetadataKey: String, MetadataKey {
     /// The plate scale in arcseconds per pixel (FITS `PIXSCALE`), if available.
     case pixelScale
 
+    /// The CCD/sensor temperature in °C (FITS `CCD-TEMP` or `CCDTEMP`), if available.
+    case ccdTemperature
+
+    /// The camera model name from the FITS `INSTRUME` keyword, if available.
+    case instrumentName
+
     /// The identifier for the metadata key.
     public var id: String {
         return "\(String(describing: Self.self)).\(rawValue)"
@@ -394,6 +414,10 @@ public enum FrameMetadataKey: String, MetadataKey {
             return Double.self
         case .pixelScale:
             return Double.self
+        case .ccdTemperature:
+            return Double.self
+        case .instrumentName:
+            return String.self
         }
     }
 }
@@ -454,6 +478,17 @@ public enum FrameType: String, Metadata {
 
     /// Used for frame sets that contain multiple frame types.
     case multiple
+
+    /// Returns the master variant of a raw calibration type, or nil if there is none.
+    public var masterVariant: FrameType? {
+        switch self {
+        case .bias:    return .masterBias
+        case .dark:    return .masterDark
+        case .flat:    return .masterFlat
+        case .darkFlat: return .masterDarkFlat
+        default:       return nil
+        }
+    }
 
     /// The key for this metadata value.
     /// Returns the ``FrameMetadataKey.type`` key.

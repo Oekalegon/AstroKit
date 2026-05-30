@@ -378,6 +378,7 @@ int write_result_frame_fits(
     const char *date_obs,       // observation date; falls back to current UTC if empty
     const char *date_beg,       // session start; NULL or empty = skip
     const char *date_end,       // session end; NULL or empty = skip
+    int         is_master,      // T → write ISMASTER = T
     int        *status_out
 ) {
     int status = 0;
@@ -457,6 +458,10 @@ int write_result_frame_fits(
         fits_update_key(fptr, TSTRING, "DATE-BEG", (char *)date_beg, "Session start (UTC)", &status);
     if (date_end && date_end[0])
         fits_update_key(fptr, TSTRING, "DATE-END", (char *)date_end, "Session end (UTC)", &status);
+    if (is_master) {
+        int one = 1;
+        fits_update_key(fptr, TLOGICAL, "ISMASTER", &one, "Frame is a master calibration stack", &status);
+    }
 
     long fpixel[2] = {1, 1};
     long nelements = (long)width * (long)height;

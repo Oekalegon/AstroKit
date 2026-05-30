@@ -1,0 +1,100 @@
+id: calibrate_lights
+name: Calibrate Light Frames Pipeline
+description: |
+  Applies pre-made master calibration frames to a set of light frames.
+
+  Requires master frames produced by the individual calibration pipelines:
+    bias_calibration   → master_bias
+    dark_calibration   → master_dark
+    darkflat_calibration → master_darkflat
+    flat_calibration   → master_flat
+
+  Calibration applied to each light frame:
+    1. Subtract master_dark  (removes dark current and bias pedestal)
+    2. Divide by normalised master_flat  (corrects vignetting and sensitivity variations)
+
+  Warnings are logged when:
+  - CCD temperature of the master dark differs from the lights by more than 5 °C
+  - Exposure time of the master dark differs from lights by more than 5 %
+  - Filter of the master flat does not match the lights
+  - Flat timestamp is more than 24 h from the light frames
+
+  Inputs:
+  - light_frames  (FrameSet) — light frames to calibrate
+  - master_dark   (Frame)    — master dark from dark_calibration
+  - master_flat   (Frame)    — master flat from flat_calibration
+
+  Output:
+  - calibrated_frame (Frame) — one calibrated light frame per input light
+
+steps:
+  # Step 1: Dark subtraction
+  - id: subtract_dark
+    type: subtract_frames
+    name: Subtract Master Dark
+    description: >
+      Subtracts the master dark from each light frame to remove dark current and the
+      bias pedestal. Logs warnings if the dark temperature or exposure time does not
+      match the lights.
+    dataInputs:
+      - name: input_frame
+        type: frameSet
+        from: light_frames
+        is_collection: true
+        collection_mode: individually
+        metadata_restrictions:
+          frame_type:
+            - light
+        description: Light frames to calibrate (processed one at a time)
+      - name: subtract_frame
+        type: frame
+        from: master_dark
+        metadata_restrictions:
+          frame_type:
+            - dark
+            - masterDark
+        description: Master dark frame
+    parameters:
+      - name: clip_to_zero
+        from: clip_to_zero
+        default_value: true
+        description: Clamp negative values to zero after dark subtraction
+    outputs:
+      - name: calibrated_frame
+        type: frame
+        description: Dark-corrected light frame
+        metadata:
+          frame_type: "intermediate"
+          processing_stage: "calibration"
+
+  # Step 2: Flat field correction
+  - id: apply_flat
+    type: divide_normalized_frame
+    name: Apply Flat Field Correction
+    description: >
+      Divides each dark-corrected light frame by the normalised master flat to correct
+      vignetting and pixel-to-pixel sensitivity variations. Logs warnings if the flat
+      filter does not match or if the flat is more than 24 h old relative to the lights.
+    dataInputs:
+      - name: input_frame
+        type: frameSet
+        from: subtract_dark.calibrated_frame
+        is_collection: true
+        collection_mode: individually
+        description: Dark-corrected light frames (processed one at a time)
+      - name: divisor_frame
+        type: frame
+        from: master_flat
+        metadata_restrictions:
+          frame_type:
+            - flat
+            - masterFlat
+        description: Master flat frame
+    outputs:
+      - name: calibrated_frame
+        type: frame
+        description: Fully calibrated light frame
+        metadata:
+          frame_type: "callibratedLight"
+          processing_stage: "calibration"
+          image_type: "grayscale"

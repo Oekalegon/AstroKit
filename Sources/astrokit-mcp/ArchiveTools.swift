@@ -48,7 +48,7 @@ struct ArchiveTools {
                     "frame_types": [
                         "type": "array",
                         "items": ["type": "string"],
-                        "description": "Frame types to include (light, dark, flat, bias, diagnostic).",
+                        "description": "Frame types to include. Valid values: light, dark, masterDark, flat, masterFlat, bias, masterBias, darkFlat, masterDarkFlat, diagnostic.",
                     ],
                     "filters": [
                         "type": "array",
@@ -68,6 +68,10 @@ struct ArchiveTools {
                         "type": "boolean",
                         "description": "Only return stacked frames.",
                     ],
+                    "temp_center": ["type": "number", "description": "Centre CCD temperature in °C — returns frames within ±temp_tolerance of this value."],
+                    "temp_tolerance": ["type": "number", "description": "Temperature tolerance ±°C around temp_center (default 2.0)."],
+                    "from_date": ["type": "string", "description": "Start date YYYY-MM-DD (inclusive)."],
+                    "to_date": ["type": "string", "description": "End date YYYY-MM-DD (inclusive)."],
                     "ra": ["type": "number", "description": "Cone search centre RA (degrees)."],
                     "dec": ["type": "number", "description": "Cone search centre Dec (degrees)."],
                     "radius_deg": ["type": "number", "description": "Cone search radius (degrees)."],
@@ -78,6 +82,31 @@ struct ArchiveTools {
                     "min_stars": ["type": "integer", "description": "Only frames with at least this many detected stars. Frames without quality data are excluded."],
                     "max_background_noise": ["type": "number", "description": "Only frames with background noise ≤ this value (ADU for frames processed with quality pipelines). Frames without quality data are excluded."],
                     "max_eccentricity": ["type": "number", "description": "Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded."],
+                ] as [String: Any],
+                "required": [],
+            ] as [String: Any],
+        ],
+        [
+            "name": "archive_calibration_frames",
+            "description": "Browse calibration frames in the archive. Returns dark, flat, bias, and dark-flat frames grouped by type, optionally filtered by calibration type, temperature range (for darks), and date range (for flats). Use scope to choose between raw source frames, master stacks, or calibration frame sets.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "scope": [
+                        "type": "string",
+                        "enum": ["all", "source", "masters", "framesets"],
+                        "description": "Which calibration items to show. 'all' (default): every calibration frame; 'source': raw/uncombined calibration frames only (bias, dark, flat, darkFlat); 'masters': master calibration stacks only (masterBias, masterDark, masterFlat, masterDarkFlat); 'framesets': calibration frame sets.",
+                    ],
+                    "type": [
+                        "type": "string",
+                        "enum": ["bias", "dark", "flat", "darkFlat"],
+                        "description": "Optional: restrict to a specific calibration type. For 'source' scope returns only that raw type; for 'masters' scope returns the corresponding master; for 'all' returns both.",
+                    ],
+                    "temp_center": ["type": "number", "description": "Centre CCD temperature in °C — useful for selecting dark frames at a specific sensor temperature."],
+                    "temp_tolerance": ["type": "number", "description": "Temperature tolerance ±°C around temp_center (default 2.0)."],
+                    "from_date": ["type": "string", "description": "Start date YYYY-MM-DD (inclusive)."],
+                    "to_date": ["type": "string", "description": "End date YYYY-MM-DD (inclusive)."],
+                    "camera": ["type": "string", "description": "Camera name (exact match)."],
                 ] as [String: Any],
                 "required": [],
             ] as [String: Any],
@@ -257,9 +286,10 @@ struct ArchiveTools {
 
     func call(name: String, arguments: [String: Any]) async throws -> String {
         switch name {
-        case "archive_add":              return try await archiveAdd(arguments)
-        case "archive_get":              return try await archiveGet(arguments)
-        case "archive_find":             return try await archiveFind(arguments)
+        case "archive_add":                    return try await archiveAdd(arguments)
+        case "archive_get":                    return try await archiveGet(arguments)
+        case "archive_find":                   return try await archiveFind(arguments)
+        case "archive_calibration_frames":     return try await archiveCalibrationFrames(arguments)
         case "archive_recent":           return try await archiveRecent(arguments)
         case "archive_list_objects":     return try await archiveListObjects()
         case "archive_stats":            return try await archiveStats()
@@ -462,6 +492,19 @@ struct ArchiveTools {
             query.rejectionFilter = .onlyRejected
         } else if args["include_rejected"] as? Bool == true {
             query.rejectionFilter = .includeAll
+        }
+        if let center = args["temp_center"] as? Double {
+            let tol = args["temp_tolerance"] as? Double ?? 2.0
+            query.temperatureRange = (center - tol)...(center + tol)
+        }
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        df.timeZone = TimeZone(identifier: "UTC")
+        if let fromStr = args["from_date"] as? String,
+           let toStr   = args["to_date"]   as? String,
+           let fromDate = df.date(from: fromStr),
+           let toDate   = df.date(from: toStr) {
+            query.dateRange = DateInterval(start: fromDate, end: toDate.addingTimeInterval(86399))
         }
         query.maxFWHM            = args["max_fwhm"]             as? Double
         query.minStarCount       = args["min_stars"]            as? Int
@@ -817,6 +860,132 @@ struct ArchiveTools {
         if let v = medianEccentricity { updated.append(String(format: "median_eccentricity=%.3f", v)) }
         if let v = hotPixelCount      { updated.append("hot_pixel_count=\(v)") }
         return "Updated quality metrics for frame \(idStr): \(updated.joined(separator: ", "))."
+    }
+
+    // MARK: - Calibration frames
+
+    private func archiveCalibrationFrames(_ args: [String: Any]) async throws -> String {
+        let scopeStr   = args["scope"]  as? String ?? "all"
+        let typeStr    = args["type"]   as? String
+        let camera     = args["camera"] as? String
+
+        let calibType = typeStr.flatMap { CalibrationType(rawValue: $0) }
+        let tempRange  = calibrationTemperatureRange(args)
+        let dateRange  = calibrationDateRange(args)
+        let archive    = try makeArchive()
+
+        if scopeStr == "framesets" {
+            let sets = try await archive.calibrationFrameSets(type: calibType)
+            return formatCalibrationFrameSets(sets)
+        }
+
+        let scope: CalibrationScope
+        switch scopeStr {
+        case "source":  scope = .source
+        case "masters": scope = .masters
+        default:        scope = .all
+        }
+
+        let frames = try await archive.calibrationFrames(
+            scope: scope,
+            type: calibType,
+            temperatureRange: tempRange,
+            dateRange: dateRange,
+            camera: camera
+        )
+        return formatCalibrationFrames(frames)
+    }
+
+    private func formatCalibrationFrames(_ frames: [ArchivedFrame]) -> String {
+        if frames.isEmpty { return "No calibration frames found matching the query." }
+
+        let grouped   = Dictionary(grouping: frames, by: { $0.frameType })
+        let typeOrder = ["bias", "masterBias", "dark", "masterDark", "darkFlat", "masterDarkFlat", "flat", "masterFlat"]
+        let iso       = ISO8601DateFormatter()
+        func shortDate(_ d: Date) -> String {
+            String(iso.string(from: d).prefix(16)).replacingOccurrences(of: "T", with: " ")
+        }
+
+        var lines: [String] = ["Calibration Frames (\(frames.count) total)\n"]
+        for type_ in typeOrder {
+            guard let group = grouped[type_], !group.isEmpty else { continue }
+            lines.append("\(calibrationTypeLabel(type_))  —  \(group.count) frame(s)")
+            for f in group {
+                var parts = ["id: \(f.id.uuidString)"]
+                if let v = f.temperature  { parts.append(String(format: "temp: %.1f°C", v)) }
+                if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
+                if let v = f.filter       { parts.append("filter: \(v)") }
+                if let v = f.timestamp    { parts.append("date: \(shortDate(v))") }
+                if let v = f.camera       { parts.append("camera: \(v)") }
+                parts.append("file: \((f.filePath as NSString).lastPathComponent)")
+                lines.append("  { \(parts.joined(separator: ", ")) }")
+            }
+            lines.append("")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func formatCalibrationFrameSets(_ sets: [ArchivedFrameSet]) -> String {
+        if sets.isEmpty { return "No calibration frame sets found." }
+        let iso = ISO8601DateFormatter()
+        var lines = ["Calibration Frame Sets (\(sets.count)):"]
+        for fs in sets {
+            var parts = [
+                "id: \(fs.id.uuidString)",
+                "name: \(fs.name)",
+                "type: \(fs.frameType)",
+                "frames: \(fs.frameCount)",
+            ]
+            if let v = fs.camera       { parts.append("camera: \(v)") }
+            if let v = fs.filter       { parts.append("filter: \(v)") }
+            if let v = fs.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
+            if let mn = fs.temperatureMin, let mx = fs.temperatureMax {
+                if abs(mx - mn) < 0.5 {
+                    parts.append(String(format: "temp: %.1f°C", (mn + mx) / 2))
+                } else {
+                    parts.append(String(format: "temp: %.1f–%.1f°C", mn, mx))
+                }
+            }
+            if let from = fs.dateFrom, let to = fs.dateTo {
+                let f = String(iso.string(from: from).prefix(10))
+                let t = String(iso.string(from: to).prefix(10))
+                parts.append("dates: \(f) – \(t)")
+            }
+            parts.append("created: \(String(iso.string(from: fs.createdAt).prefix(16)).replacingOccurrences(of: "T", with: " "))")
+            lines.append("  { \(parts.joined(separator: ", ")) }")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func calibrationTypeLabel(_ type_: String) -> String {
+        switch type_ {
+        case "bias":           return "Bias"
+        case "masterBias":     return "Master Bias"
+        case "dark":           return "Dark"
+        case "masterDark":     return "Master Dark"
+        case "darkFlat":       return "Dark Flat"
+        case "masterDarkFlat": return "Master Dark Flat"
+        case "flat":           return "Flat"
+        case "masterFlat":     return "Master Flat"
+        default:               return type_
+        }
+    }
+
+    private func calibrationTemperatureRange(_ args: [String: Any]) -> ClosedRange<Double>? {
+        guard let center = args["temp_center"] as? Double else { return nil }
+        let tol = args["temp_tolerance"] as? Double ?? 2.0
+        return (center - tol)...(center + tol)
+    }
+
+    private func calibrationDateRange(_ args: [String: Any]) -> DateInterval? {
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        df.timeZone = TimeZone(identifier: "UTC")
+        guard let fromStr  = args["from_date"] as? String,
+              let toStr    = args["to_date"]   as? String,
+              let fromDate = df.date(from: fromStr),
+              let toDate   = df.date(from: toStr) else { return nil }
+        return DateInterval(start: fromDate, end: toDate.addingTimeInterval(86399))
     }
 
     private func archiveRemove(_ args: [String: Any]) async throws -> String {
