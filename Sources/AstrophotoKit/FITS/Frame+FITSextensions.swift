@@ -97,6 +97,12 @@ extension Frame {
             if let v = fitsImage.metadata[key]?.doubleValue { ccdTemperature = v; break }
         }
 
+        // Extract camera model name from INSTRUME keyword.
+        let instrumentName = fitsImage.metadata["INSTRUME"]?.stringValue.flatMap {
+            let trimmed = $0.trimmingCharacters(in: .whitespaces)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+
         // Extract camera offset / bias pedestal.
         var offset: Double? = nil
         if let v = fitsImage.metadata["OFFSET"]?.doubleValue {
@@ -126,7 +132,8 @@ extension Frame {
             fitsMaxValue: Double(fitsImage.originalMaxValue),
             egain: egain,
             pixelScale: pixelScale,
-            ccdTemperature: ccdTemperature
+            ccdTemperature: ccdTemperature,
+            instrumentName: instrumentName
         )
     }
 

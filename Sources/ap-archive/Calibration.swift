@@ -99,6 +99,7 @@ struct Calibration: AsyncParsableCommand {
             print("\(typeLabel(type_))  —  \(group.count) frame(s)")
             var table = TextTable(columns: [
                 .init("ID"),
+                .init("Camera"),
                 .init("Temp", .right),
                 .init("Exp", .right),
                 .init("Filter"),
@@ -106,12 +107,13 @@ struct Calibration: AsyncParsableCommand {
                 .init("File"),
             ])
             for f in group {
+                let cam    = f.camera ?? "-"
                 let temp   = f.temperature.map { String(format: "%.1f°C", $0) } ?? "-"
                 let exp    = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
                 let filter = f.filter ?? "-"
                 let date   = f.timestamp.map { shortDate($0) } ?? "-"
                 let file   = (f.filePath as NSString).lastPathComponent
-                table.addRow([f.id.uuidString, temp, exp, filter, date, file])
+                table.addRow([f.id.uuidString, cam, temp, exp, filter, date, file])
             }
             print(table.render())
         }

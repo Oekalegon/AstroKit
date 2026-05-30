@@ -80,6 +80,12 @@ public struct SubtractFramesProcessor: Processor {
             }
         }
 
+        // Camera model mismatch: warn if frames are from different instruments.
+        if let c1 = input.instrumentName, let c2 = subtract.instrumentName, c1 != c2 {
+            let msg = "subtract_frames: camera mismatch — input '\(c1)' vs calibration '\(c2)'. Calibration frames should be from the same camera model."
+            Logger.processor.warning("\(msg, privacy: .public)")
+        }
+
         // Offset mismatch: warn if camera pedestal differs.
         if let o1 = input.offset, let o2 = subtract.offset, abs(o1 - o2) > 5 {
             let msg = "subtract_frames: offset mismatch — input offset \(Int(o1)) vs subtract offset \(Int(o2)). Calibration quality may be reduced."

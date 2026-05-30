@@ -91,6 +91,12 @@ public struct DivideNormalizedFrameProcessor: Processor {
             }
         }
 
+        // Camera model mismatch: warn if frames are from different instruments.
+        if let c1 = input.instrumentName, let c2 = divisor.instrumentName, c1 != c2 {
+            let msg = "divide_normalized_frame: camera mismatch — input '\(c1)' vs flat '\(c2)'. Flat frames should be from the same camera model."
+            Logger.processor.warning("\(msg, privacy: .public)")
+        }
+
         // Offset mismatch: warn if camera pedestal differs.
         if let o1 = input.offset, let o2 = divisor.offset, abs(o1 - o2) > 5 {
             let msg = "divide_normalized_frame: offset mismatch — input offset \(Int(o1)) vs flat offset \(Int(o2)). Calibration quality may be reduced."

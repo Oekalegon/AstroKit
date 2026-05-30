@@ -149,6 +149,11 @@ public struct Frame: ProcessData {
         return metadata(for: FrameMetadataKey.ccdTemperature) as? Double
     }
 
+    /// The camera model name from the FITS `INSTRUME` keyword, if available.
+    public var instrumentName: String? {
+        return metadata(for: FrameMetadataKey.instrumentName) as? String
+    }
+
     /// Injects an EGAIN value from an external source (e.g. the archive camera_profiles table)
     /// when the FITS header did not carry an `EGAIN` keyword. Has no effect if egain is already set.
     public mutating func injectEgainIfMissing(_ egain: Double) {
@@ -237,7 +242,8 @@ public struct Frame: ProcessData {
         fitsMaxValue: Double? = nil,
         egain: Double? = nil,
         pixelScale: Double? = nil,
-        ccdTemperature: Double? = nil
+        ccdTemperature: Double? = nil,
+        instrumentName: String? = nil
     ) {
         self.instantiatedAt = texture != nil ? Date() : nil
         self.texture = texture
@@ -257,6 +263,7 @@ public struct Frame: ProcessData {
         if let egain           = egain           { metadata[FrameMetadataKey.egain]           = egain }
         if let pixelScale      = pixelScale      { metadata[FrameMetadataKey.pixelScale]      = pixelScale }
         if let ccdTemperature  = ccdTemperature  { metadata[FrameMetadataKey.ccdTemperature]  = ccdTemperature }
+        if let instrumentName  = instrumentName  { metadata[FrameMetadataKey.instrumentName]  = instrumentName }
         self.metadata = metadata
         self.outputLink = outputProcess
         self.inputLinks = inputProcesses
@@ -370,6 +377,9 @@ public enum FrameMetadataKey: String, MetadataKey {
     /// The CCD/sensor temperature in °C (FITS `CCD-TEMP` or `CCDTEMP`), if available.
     case ccdTemperature
 
+    /// The camera model name from the FITS `INSTRUME` keyword, if available.
+    case instrumentName
+
     /// The identifier for the metadata key.
     public var id: String {
         return "\(String(describing: Self.self)).\(rawValue)"
@@ -406,6 +416,8 @@ public enum FrameMetadataKey: String, MetadataKey {
             return Double.self
         case .ccdTemperature:
             return Double.self
+        case .instrumentName:
+            return String.self
         }
     }
 }
