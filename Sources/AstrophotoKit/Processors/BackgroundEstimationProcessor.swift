@@ -187,6 +187,7 @@ public struct BackgroundEstimationProcessor: Processor {
         // Calculate average background level and update outputs
         try finalizeOutputs(
             inputFrame: inputFrame,
+            inputTexture: inputTexture,
             backgroundTexture: backgroundTexture,
             subtractedTexture: subtractedTexture,
             outputs: &outputs,
@@ -374,6 +375,7 @@ public struct BackgroundEstimationProcessor: Processor {
     /// - Throws: ProcessorExecutionError if execution fails
     private func finalizeOutputs(
         inputFrame: Frame,
+        inputTexture: MTLTexture,
         backgroundTexture: MTLTexture,
         subtractedTexture: MTLTexture,
         outputs: inout [String: ProcessData],
@@ -400,10 +402,12 @@ public struct BackgroundEstimationProcessor: Processor {
             texture: subtractedTexture
         )
 
-        // Compute NMAD of the background-subtracted frame as a robust noise sigma estimate.
-        // Stars are positive outliers that the NMAD naturally suppresses.
+        // Compute NMAD of signed (input − background) residuals as a robust noise sigma estimate.
+        // We use the signed difference rather than the clamped subtracted texture because the
+        // background-subtraction shader clips negative values to 0, which collapses the NMAD to ~0.
         let noiseSigma = (try? calculateNoiseSigma(
-            texture: subtractedTexture,
+            inputTexture: inputTexture,
+            backgroundTexture: backgroundTexture,
             device: device,
             commandQueue: commandQueue
         )) ?? 0.0
@@ -430,60 +434,75 @@ public struct BackgroundEstimationProcessor: Processor {
         Logger.processor.info("Background estimation completed (level: \(backgroundLevel)\(aduInfo)\(sigmaInfo)")
     }
 
-    /// Compute NMAD (Normalised Median Absolute Deviation) of the background-subtracted
-    /// texture as a robust per-pixel noise sigma estimate.  Stars produce large positive
-    /// outliers that the median-based statistic naturally suppresses.
+    /// Compute NMAD (Normalised Median Absolute Deviation) of signed (input − background)
+    /// residuals as a robust per-pixel noise sigma estimate.
+    ///
+    /// The background-subtraction shader clamps its output to [0, 1], so reading the
+    /// already-subtracted texture would give a half-normal distribution whose NMAD collapses
+    /// to ~0.  Instead we blit both textures and compute the signed difference on the CPU
+    /// so the full noise distribution (including negative sky fluctuations) is preserved.
+    ///
+    /// Stars are large positive outliers; the median-based statistic naturally suppresses them.
     ///
     /// Formula: σ_NMAD = 1.4826 × median(|xi − median(x)|)
-    /// The 1.4826 factor makes NMAD consistent with the Gaussian σ.
     private func calculateNoiseSigma(
-        texture: MTLTexture,
+        inputTexture: MTLTexture,
+        backgroundTexture: MTLTexture,
         device: MTLDevice,
         commandQueue: MTLCommandQueue
     ) throws -> Double {
         let sampleRate = 10
-        let width  = texture.width
-        let height = texture.height
+        let width  = inputTexture.width
+        let height = inputTexture.height
         let sampleWidth  = max(1, width  / sampleRate)
         let sampleHeight = max(1, height / sampleRate)
         let bytesPerRow = sampleWidth * MemoryLayout<Float32>.size
         let bufferSize  = bytesPerRow * sampleHeight
 
-        guard let readBuffer = device.makeBuffer(length: bufferSize, options: [.storageModeShared]) else {
-            throw ProcessorExecutionError.couldNotCreateResource("Could not create noise-sigma read buffer")
+        guard let inputBuf = device.makeBuffer(length: bufferSize, options: [.storageModeShared]),
+              let bgBuf    = device.makeBuffer(length: bufferSize, options: [.storageModeShared]) else {
+            throw ProcessorExecutionError.couldNotCreateResource("Could not create noise-sigma read buffers")
         }
         guard let commandBuffer = commandQueue.makeCommandBuffer(),
               let blitEncoder   = commandBuffer.makeBlitCommandEncoder() else {
             throw ProcessorExecutionError.couldNotCreateResource("Could not create command buffer for noise sigma")
         }
-        blitEncoder.copy(
-            from: texture,
-            sourceSlice: 0, sourceLevel: 0,
-            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
-            sourceSize: MTLSize(width: sampleWidth, height: sampleHeight, depth: 1),
-            to: readBuffer,
-            destinationOffset: 0,
-            destinationBytesPerRow: bytesPerRow,
-            destinationBytesPerImage: bufferSize
-        )
+
+        let origin = MTLOrigin(x: 0, y: 0, z: 0)
+        let size   = MTLSize(width: sampleWidth, height: sampleHeight, depth: 1)
+        blitEncoder.copy(from: inputTexture, sourceSlice: 0, sourceLevel: 0,
+                         sourceOrigin: origin, sourceSize: size,
+                         to: inputBuf, destinationOffset: 0,
+                         destinationBytesPerRow: bytesPerRow, destinationBytesPerImage: bufferSize)
+        blitEncoder.copy(from: backgroundTexture, sourceSlice: 0, sourceLevel: 0,
+                         sourceOrigin: origin, sourceSize: size,
+                         to: bgBuf, destinationOffset: 0,
+                         destinationBytesPerRow: bytesPerRow, destinationBytesPerImage: bufferSize)
         blitEncoder.endEncoding()
         try ProcessorHelpers.executeCommandBuffer(commandBuffer)
 
-        let ptr    = readBuffer.contents().bindMemory(to: Float32.self, capacity: sampleWidth * sampleHeight)
-        var pixels = Array(UnsafeBufferPointer(start: ptr, count: sampleWidth * sampleHeight))
-            .map { Double($0) }
-        guard !pixels.isEmpty else { return 0 }
+        let count    = sampleWidth * sampleHeight
+        let inputPtr = inputBuf.contents().bindMemory(to: Float32.self, capacity: count)
+        let bgPtr    = bgBuf.contents().bindMemory(to: Float32.self, capacity: count)
+        var residuals = (0..<count).map { Double(inputPtr[$0]) - Double(bgPtr[$0]) }
+        guard !residuals.isEmpty else { return 0 }
 
-        pixels.sort()
-        let med = pixels.count % 2 == 0
-            ? (pixels[pixels.count / 2 - 1] + pixels[pixels.count / 2]) / 2.0
-            : pixels[pixels.count / 2]
+        residuals.sort()
+        let med: Double = {
+            let n = residuals.count
+            return n % 2 == 0
+                ? (residuals[n / 2 - 1] + residuals[n / 2]) / 2.0
+                : residuals[n / 2]
+        }()
 
-        var absDevs = pixels.map { abs($0 - med) }
+        var absDevs = residuals.map { abs($0 - med) }
         absDevs.sort()
-        let medAbsDev = absDevs.count % 2 == 0
-            ? (absDevs[absDevs.count / 2 - 1] + absDevs[absDevs.count / 2]) / 2.0
-            : absDevs[absDevs.count / 2]
+        let medAbsDev: Double = {
+            let n = absDevs.count
+            return n % 2 == 0
+                ? (absDevs[n / 2 - 1] + absDevs[n / 2]) / 2.0
+                : absDevs[n / 2]
+        }()
 
         return 1.4826 * medAbsDev
     }
