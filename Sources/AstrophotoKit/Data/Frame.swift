@@ -164,6 +164,11 @@ public struct Frame: ProcessData {
         return metadata(for: FrameMetadataKey.site) as? String
     }
 
+    /// The CCD/sensor temperature in degrees Celsius, from the FITS `CCD-TEMP` or `CCDTEMP` keyword.
+    public var ccdTemperature: Double? {
+        return metadata(for: FrameMetadataKey.ccdTemperature) as? Double
+    }
+
     /// Injects an EGAIN value from an external source (e.g. the archive camera_profiles table)
     /// when the FITS header did not carry an `EGAIN` keyword. Has no effect if egain is already set.
     public mutating func injectEgainIfMissing(_ egain: Double) {
@@ -259,7 +264,8 @@ public struct Frame: ProcessData {
         objectName: String? = nil,
         camera: String? = nil,
         telescope: String? = nil,
-        site: String? = nil
+        site: String? = nil,
+        ccdTemperature: Double? = nil
     ) {
         self.instantiatedAt = texture != nil ? Date() : nil
         self.texture = texture
@@ -273,15 +279,16 @@ public struct Frame: ProcessData {
         if let exposureTime = exposureTime { metadata[FrameMetadataKey.exposureTime] = exposureTime }
         if let gain = gain { metadata[FrameMetadataKey.gain] = gain }
         if let offset = offset { metadata[FrameMetadataKey.offset] = offset }
-        if let filterName   = filterName   { metadata[FrameMetadataKey.filterName]   = filterName }
-        if let fitsMinValue = fitsMinValue { metadata[FrameMetadataKey.fitsMinValue] = fitsMinValue }
-        if let fitsMaxValue = fitsMaxValue { metadata[FrameMetadataKey.fitsMaxValue] = fitsMaxValue }
-        if let egain        = egain        { metadata[FrameMetadataKey.egain]        = egain }
-        if let pixelScale   = pixelScale   { metadata[FrameMetadataKey.pixelScale]   = pixelScale }
-        if let objectName   = objectName   { metadata[FrameMetadataKey.objectName]   = objectName }
-        if let camera       = camera       { metadata[FrameMetadataKey.camera]       = camera }
-        if let telescope    = telescope    { metadata[FrameMetadataKey.telescope]    = telescope }
-        if let site         = site         { metadata[FrameMetadataKey.site]         = site }
+        if let filterName      = filterName      { metadata[FrameMetadataKey.filterName]      = filterName }
+        if let fitsMinValue    = fitsMinValue    { metadata[FrameMetadataKey.fitsMinValue]    = fitsMinValue }
+        if let fitsMaxValue    = fitsMaxValue    { metadata[FrameMetadataKey.fitsMaxValue]    = fitsMaxValue }
+        if let egain           = egain           { metadata[FrameMetadataKey.egain]           = egain }
+        if let pixelScale      = pixelScale      { metadata[FrameMetadataKey.pixelScale]      = pixelScale }
+        if let objectName      = objectName      { metadata[FrameMetadataKey.objectName]      = objectName }
+        if let camera          = camera          { metadata[FrameMetadataKey.camera]          = camera }
+        if let telescope       = telescope       { metadata[FrameMetadataKey.telescope]       = telescope }
+        if let site            = site            { metadata[FrameMetadataKey.site]            = site }
+        if let ccdTemperature  = ccdTemperature  { metadata[FrameMetadataKey.ccdTemperature]  = ccdTemperature }
         self.metadata = metadata
         self.outputLink = outputProcess
         self.inputLinks = inputProcesses
@@ -404,6 +411,9 @@ public enum FrameMetadataKey: String, MetadataKey {
     /// The observatory / site name (FITS `OBSERVAT`), if available.
     case site
 
+    /// The CCD/sensor temperature in °C (FITS `CCD-TEMP` or `CCDTEMP`), if available.
+    case ccdTemperature
+
     /// The identifier for the metadata key.
     public var id: String {
         return "\(String(describing: Self.self)).\(rawValue)"
@@ -440,6 +450,8 @@ public enum FrameMetadataKey: String, MetadataKey {
             return Double.self
         case .objectName, .camera, .telescope, .site:
             return String.self
+        case .ccdTemperature:
+            return Double.self
         }
     }
 }

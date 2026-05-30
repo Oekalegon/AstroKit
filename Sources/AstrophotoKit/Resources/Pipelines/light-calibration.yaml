@@ -1,0 +1,257 @@
+id: light_calibration
+name: Light Frame Calibration Pipeline
+description: |
+  Full calibration pipeline that stacks calibration frames into masters and applies
+  them to calibrate light frames.
+
+  Each calibration type (bias, dark, darkflat, flat) accepts either raw frames for
+  stacking or a single pre-made master frame — supply a one-frame set to skip the
+  stacking step for that type. Each stacking step has its own method parameter so
+  you can tune bias, dark, flat, and darkflat stacking independently.
+
+  Calibration chain applied to each light frame:
+    1. master_bias ← stack bias frames
+    2. master_dark ← stack (dark − master_bias) frames
+    3. master_darkflat ← stack darkflat frames
+    4. master_flat ← stack (flat − master_darkflat) frames
+    5. calibrated_light ← (light − master_dark) / normalised(master_flat)
+
+  Warnings are logged when:
+  - CCD temperature of darks differs from lights by more than 5 °C
+  - Filter of flat frames differs from light frames
+  - Flat timestamps are more than 24 h from lights
+  - Exposure times of darks and lights differ by more than 5 %
+
+  Outputs:
+  - master_frame from stack_bias — master bias frame
+  - master_frame from stack_dark — master dark frame
+  - master_frame from stack_darkflat — master dark flat frame
+  - master_frame from stack_flat — master flat frame
+  - calibrated_frame from apply_flat — fully calibrated light frame (one per input light)
+
+steps:
+  # ── Bias ─────────────────────────────────────────────────────────────────
+  - id: stack_bias
+    type: stack_calibration_frames
+    name: Stack Bias Frames
+    description: >
+      Stacks bias frames into a master bias using pixel-wise combination.
+      Supply a single pre-made master bias to skip stacking.
+    dataInputs:
+      - name: input_frames
+        type: frameSet
+        from: bias_frames
+        is_collection: true
+        collection_mode: together
+        description: Bias frames (or a single master bias frame)
+    parameters:
+      - name: method
+        from: bias_stacking_method
+        default_value: "median"
+        description: Combine method for bias frames (median or mean)
+    outputs:
+      - name: master_frame
+        type: frame
+        description: Master bias frame
+        metadata:
+          frame_type: "masterBias"
+          processing_stage: "calibration"
+
+  # ── Dark ──────────────────────────────────────────────────────────────────
+  - id: subtract_bias_from_dark
+    type: subtract_frames
+    name: Subtract Bias from Dark Frames
+    description: Removes the bias pedestal from each dark frame before stacking.
+    dataInputs:
+      - name: input_frame
+        type: frameSet
+        from: dark_frames
+        is_collection: true
+        collection_mode: individually
+        description: Raw dark frames (processed one at a time)
+      - name: subtract_frame
+        type: frame
+        from: stack_bias.master_frame
+        description: Master bias to subtract from each dark frame
+    parameters:
+      - name: clip_to_zero
+        from: clip_to_zero
+        default_value: false
+        description: Clamp negative values to zero after subtraction
+    outputs:
+      - name: calibrated_frame
+        type: frame
+        description: Bias-subtracted dark frame
+        metadata:
+          frame_type: "calibratedDark"
+          processing_stage: "calibration"
+
+  - id: stack_dark
+    type: stack_calibration_frames
+    name: Stack Dark Frames
+    description: >
+      Stacks bias-corrected dark frames into a master dark.
+      Supply a single pre-made master dark to skip both the bias subtraction
+      and stacking steps (provide a one-frame set for both dark_frames and bias_frames).
+    dataInputs:
+      - name: input_frames
+        type: frameSet
+        from: subtract_bias_from_dark.calibrated_frame
+        is_collection: true
+        collection_mode: together
+        description: Bias-corrected dark frames to stack
+    parameters:
+      - name: method
+        from: dark_stacking_method
+        default_value: "median"
+        description: Combine method for dark frames (median or mean)
+    outputs:
+      - name: master_frame
+        type: frame
+        description: Master dark frame
+        metadata:
+          frame_type: "masterDark"
+          processing_stage: "calibration"
+
+  # ── Dark flat ─────────────────────────────────────────────────────────────
+  - id: stack_darkflat
+    type: stack_calibration_frames
+    name: Stack Dark Flat Frames
+    description: >
+      Stacks dark flat frames into a master dark flat.
+      Dark flats must have the same exposure time as the flat frames.
+      Supply a single pre-made master dark flat to skip stacking.
+    dataInputs:
+      - name: input_frames
+        type: frameSet
+        from: darkflat_frames
+        is_collection: true
+        collection_mode: together
+        description: Dark flat frames (or a single master dark flat frame)
+    parameters:
+      - name: method
+        from: darkflat_stacking_method
+        default_value: "median"
+        description: Combine method for dark flat frames (median or mean)
+    outputs:
+      - name: master_frame
+        type: frame
+        description: Master dark flat frame
+        metadata:
+          frame_type: "masterDarkFlat"
+          processing_stage: "calibration"
+
+  # ── Flat ──────────────────────────────────────────────────────────────────
+  - id: subtract_darkflat_from_flat
+    type: subtract_frames
+    name: Subtract Dark Flat from Flat Frames
+    description: Removes thermal noise from each flat frame using the master dark flat.
+    dataInputs:
+      - name: input_frame
+        type: frameSet
+        from: flat_frames
+        is_collection: true
+        collection_mode: individually
+        description: Raw flat frames (processed one at a time)
+      - name: subtract_frame
+        type: frame
+        from: stack_darkflat.master_frame
+        description: Master dark flat to subtract from each flat frame
+    parameters:
+      - name: clip_to_zero
+        from: clip_to_zero
+        default_value: false
+        description: Clamp negative values to zero after subtraction
+    outputs:
+      - name: calibrated_frame
+        type: frame
+        description: Dark-flat-corrected flat frame
+        metadata:
+          frame_type: "calibratedFlat"
+          processing_stage: "calibration"
+
+  - id: stack_flat
+    type: stack_calibration_frames
+    name: Stack Flat Frames
+    description: >
+      Stacks dark-flat-corrected flat frames into a master flat.
+      Supply a single pre-made master flat to skip both the dark flat subtraction
+      and stacking steps.
+    dataInputs:
+      - name: input_frames
+        type: frameSet
+        from: subtract_darkflat_from_flat.calibrated_frame
+        is_collection: true
+        collection_mode: together
+        description: Dark-flat-corrected flat frames to stack
+    parameters:
+      - name: method
+        from: flat_stacking_method
+        default_value: "median"
+        description: Combine method for flat frames (median or mean)
+    outputs:
+      - name: master_frame
+        type: frame
+        description: Master flat frame
+        metadata:
+          frame_type: "masterFlat"
+          processing_stage: "calibration"
+
+  # ── Light calibration ──────────────────────────────────────────────────────
+  - id: subtract_dark_from_light
+    type: subtract_frames
+    name: Subtract Dark from Light Frames
+    description: >
+      Subtracts the master dark from each light frame to remove dark current and
+      bias signal. Logs a warning when the CCD temperature or exposure time of the
+      dark does not match the lights.
+    dataInputs:
+      - name: input_frame
+        type: frameSet
+        from: light_frames
+        is_collection: true
+        collection_mode: individually
+        description: Light frames to calibrate (processed one at a time)
+      - name: subtract_frame
+        type: frame
+        from: stack_dark.master_frame
+        description: Master dark to subtract from each light frame
+    parameters:
+      - name: clip_to_zero
+        from: clip_to_zero
+        default_value: true
+        description: Clamp negative values to zero after dark subtraction
+    outputs:
+      - name: calibrated_frame
+        type: frame
+        description: Dark-corrected light frame
+        metadata:
+          frame_type: "intermediate"
+          processing_stage: "calibration"
+
+  - id: apply_flat
+    type: divide_normalized_frame
+    name: Apply Flat Field Correction
+    description: >
+      Divides each dark-corrected light frame by the normalised master flat to correct
+      vignetting and pixel-to-pixel sensitivity variations.
+      Logs a warning when the flat filter or timestamp does not match the lights.
+    dataInputs:
+      - name: input_frame
+        type: frameSet
+        from: subtract_dark_from_light.calibrated_frame
+        is_collection: true
+        collection_mode: individually
+        description: Dark-corrected light frames (processed one at a time)
+      - name: divisor_frame
+        type: frame
+        from: stack_flat.master_frame
+        description: Master flat used for flat-field correction
+    outputs:
+      - name: calibrated_frame
+        type: frame
+        description: Fully calibrated light frame
+        metadata:
+          frame_type: "callibratedLight"
+          processing_stage: "calibration"
+          image_type: "grayscale"
