@@ -15,7 +15,7 @@ struct Find: AsyncParsableCommand {
     @Option(name: .long, help: "Camera name (exact match).")
     var camera: String?
 
-    @Option(name: .long, help: "Frame types to include, comma-separated (light,dark,flat,bias,diagnostic).")
+    @Option(name: .long, help: "Frame types to include, comma-separated (light,dark,masterDark,flat,masterFlat,bias,masterBias,darkFlat,masterDarkFlat,diagnostic).")
     var type: String?
 
     @Option(name: .long, help: "Filters to include, comma-separated (Hɑ,SII,OIII,R,G,B,L).")
@@ -44,6 +44,12 @@ struct Find: AsyncParsableCommand {
 
     @Option(name: .long, help: "Cone search radius in degrees.")
     var radius: Double?
+
+    @Option(name: .long, help: "Centre CCD temperature in °C — returns frames within ±temp-tolerance of this value.")
+    var tempCenter: Double?
+
+    @Option(name: .long, help: "Temperature tolerance ±°C around --temp-center (default 2.0).")
+    var tempTolerance: Double?
 
     @Option(name: .long, help: "Maximum number of results.")
     var limit: Int?
@@ -97,7 +103,12 @@ struct Find: AsyncParsableCommand {
         df.timeZone = TimeZone(identifier: "UTC")
         if let fromStr = from, let toStr = to,
            let fromDate = df.date(from: fromStr), let toDate = df.date(from: toStr) {
-            query.dateRange = DateInterval(start: fromDate, end: toDate)
+            query.dateRange = DateInterval(start: fromDate, end: toDate.addingTimeInterval(86399))
+        }
+
+        if let center = tempCenter {
+            let tol = tempTolerance ?? 2.0
+            query.temperatureRange = (center - tol)...(center + tol)
         }
 
         if let ra, let dec, let radius {
