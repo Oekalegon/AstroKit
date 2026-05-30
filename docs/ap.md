@@ -336,6 +336,9 @@ The pipeline produces a single-row `frame_quality` table:
 | `background_noise_sigma_adu` | number | Per-pixel sky noise sigma in ADU (NMAD of the background-subtracted frame). The key metric for judging detection sensitivity. |
 | `effective_detection_threshold_adu` | number | ADU value a source must exceed to be detected: `background_adu + threshold_sigma × noise_sigma_adu`. |
 | `background_level_electrons` | number | Sky background in electrons (requires EGAIN in FITS header). Cross-camera comparable. |
+| `suggested_threshold_value` | number | Recommended `threshold_value` for re-running: `clamp(median_snr / 3, 1.5, 5.0)`. Present only when `median_snr` is available. |
+| `suggested_blur_radius` | number | Recommended `blur_radius` for re-running: `clamp(median_fwhm / 4, 1.0, 5.0)`. Present only when `median_fwhm` is available. |
+| `suggested_max_fwhm_arcsec` | number | Recommended `max_fwhm_arcsec` cutoff: `max(4.0, 3 × median_fwhm_arcsec)`. Present only when `median_fwhm` and `PIXSCALE` are available. |
 
 ### Parameters
 
@@ -354,6 +357,21 @@ The `background_noise_sigma_adu` and `effective_detection_threshold_adu` columns
 - Comparing `effective_detection_threshold_adu` across frames with different `threshold_value` settings lets you tune detection sensitivity without re-running the pipeline.
 - `median_snr` < 5 on most sources suggests the frame is under-exposed or the seeing was poor. For narrowband, values of 5–15 are typical for reasonable sub-frames.
 - `low_snr_count` close to `star_count` means most detections are marginal; consider raising `threshold_value` to reduce false positives.
+
+### Parameter suggestions
+
+The `suggested_*` columns give ready-to-use values for a follow-up run:
+
+```bash
+# Read suggestions from the first run, then re-run with them:
+ap run frame_quality --input M51.fits \
+  --param threshold_value=2.1 \
+  --param blur_radius=1.8
+```
+
+- **`suggested_threshold_value`** lowers the threshold when sources are bright (high `median_snr`), and raises it when they are marginal. Formula: `clamp(median_snr / 3, 1.5, 5.0)`.
+- **`suggested_blur_radius`** matches the blur kernel to the measured PSF size so noise smoothing doesn't smear stars. Formula: `clamp(median_fwhm / 4, 1.0, 5.0)`.
+- **`suggested_max_fwhm_arcsec`** sets the extended-source cutoff to three times the measured seeing, with a 4″ floor. Requires `PIXSCALE` in the FITS header.
 
 ---
 

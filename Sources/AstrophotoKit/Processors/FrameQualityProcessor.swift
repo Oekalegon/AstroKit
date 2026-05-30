@@ -39,6 +39,9 @@ import os
 /// | effective_detection_threshold_adu | Double | Effective detection floor = background_adu + threshold_sigma × noise_sigma_adu|
 /// | threshold_sigma_used              | Double | Detection threshold sigma multiplier used (pipeline parameter, default 3.0).  |
 /// | background_level_electrons        | Double | Background in electrons = (ADU−offset)×EGAIN (when EGAIN available).          |
+/// | suggested_threshold_value         | Double | Recommended threshold sigma for re-running detection (needs `median_snr`).    |
+/// | suggested_blur_radius             | Double | Recommended Gaussian blur radius for re-running detection (needs `median_fwhm`).|
+/// | suggested_max_fwhm_arcsec         | Double | Recommended FWHM upper cutoff in arcseconds (needs `median_fwhm` + pixscale). |
 public struct FrameQualityProcessor: Processor {
 
     public var id: String { "frame_quality" }
@@ -160,6 +163,24 @@ public struct FrameQualityProcessor: Processor {
         if let electrons = backgroundLevelElectrons {
             df.append(column: Column(name: "background_level_electrons", contents: [electrons]))
         }
+
+        // Parameter suggestions derived from computed quality metrics.
+        // suggested_threshold_value: lower threshold = more stars when sources are bright.
+        if let snr = metrics.medianSNR {
+            let suggested = min(max(snr / 3.0, 1.5), 5.0)
+            df.append(column: Column(name: "suggested_threshold_value", contents: [suggested]))
+        }
+        if let fwhm = metrics.medianFWHM {
+            // suggested_blur_radius: smooth sub-PSF noise without smearing stars.
+            let suggestedBlur = min(max(fwhm / 4.0, 1.0), 5.0)
+            df.append(column: Column(name: "suggested_blur_radius", contents: [suggestedBlur]))
+            // suggested_max_fwhm_arcsec: 3× typical seeing with a 4″ floor (requires pixel scale).
+            if let scale = inputFrame.pixelScale, scale > 0 {
+                let fwhmArcsec = fwhm * scale
+                df.append(column: Column(name: "suggested_max_fwhm_arcsec", contents: [max(4.0, 3.0 * fwhmArcsec)]))
+            }
+        }
+
         table.dataFrame = df
         outputs["frame_quality"] = table
     }
