@@ -66,8 +66,27 @@ public struct FrameQualityProcessor: Processor {
             return level
         }()
 
+        // Read FWHM upper cutoff (arcseconds → pixels using pixel scale when available).
+        // Sources above the cutoff are extended objects (galaxy cores, nebulae) rather than
+        // stars, so they would inflate the seeing metric if included.
+        let maxFWHMPixels: Double? = {
+            guard let arcsec = parameters["max_fwhm_arcsec"]?.doubleValue, arcsec > 0 else { return nil }
+            guard let scale  = inputFrame.pixelScale, scale > 0 else {
+                Logger.processor.debug("FrameQualityProcessor: max_fwhm_arcsec set but frame has no pixel scale — FWHM cutoff inactive")
+                return nil
+            }
+            return arcsec / scale
+        }()
+
+        // Read eccentricity upper cutoff. Sources above this (cosmic rays, satellite trails)
+        // are not point sources and should not contribute to the median eccentricity.
+        let maxEccentricity: Double? = {
+            guard let v = parameters["max_eccentricity"]?.doubleValue, v > 0 else { return nil }
+            return v
+        }()
+
         // Compute per-star quality metrics
-        let metrics = computeMetrics(from: starDF)
+        let metrics = computeMetrics(from: starDF, maxFWHMPixels: maxFWHMPixels, maxEccentricity: maxEccentricity)
 
         // Convert background level to ADU using FITS scale info when available.
         let backgroundLevelADU: Double? = backgroundLevelNorm.flatMap { inputFrame.toADU($0) }
@@ -112,7 +131,7 @@ public struct FrameQualityProcessor: Processor {
         let medianEccentricity: Double?
     }
 
-    private func computeMetrics(from df: DataFrame) -> Metrics {
+    private func computeMetrics(from df: DataFrame, maxFWHMPixels: Double?, maxEccentricity: Double?) -> Metrics {
         let fwhmMajorCol    = df.columns.first(where: { $0.name == "fwhm_major" })
         let fwhmMinorCol    = df.columns.first(where: { $0.name == "fwhm_minor" })
         let eccentricityCol = df.columns.first(where: { $0.name == "eccentricity" })
@@ -121,6 +140,7 @@ public struct FrameQualityProcessor: Processor {
         var saturatedCount = 0
         var fwhmValues: [Double] = []
         var eccValues:  [Double] = []
+        var excludedCount = 0
 
         for i in 0..<df.rows.count {
             let sat = (saturatedCol?[i] as? Bool) ?? false
@@ -128,15 +148,30 @@ public struct FrameQualityProcessor: Processor {
 
             // Only unsaturated stars contribute to FWHM and eccentricity statistics.
             if !sat {
-                if let major = fwhmMajorCol?[i] as? Double,
-                   let minor = fwhmMinorCol?[i] as? Double,
-                   major > 0 {
-                    fwhmValues.append((major + minor) / 2.0)
+                let major = fwhmMajorCol?[i] as? Double
+                let minor = fwhmMinorCol?[i] as? Double
+                let ecc   = eccentricityCol?[i] as? Double
+
+                let fwhm: Double? = (major.flatMap { m in minor.map { n in (m + n) / 2.0 } }).flatMap { $0 > 0 ? $0 : nil }
+                let eccValid = ecc.flatMap { $0.isNaN ? nil : $0 }
+
+                // Exclude extended objects (galaxy cores, nebulae) and non-stellar artifacts
+                // (cosmic rays, satellite trails) from the statistics. These inflate seeing
+                // and eccentricity medians because blob detection treats them like stars.
+                let exceedsFWHM = maxFWHMPixels.flatMap { cutoff in fwhm.map     { $0 > cutoff } } ?? false
+                let exceedsEcc  = maxEccentricity.flatMap { maxEcc in eccValid.map { $0 > maxEcc } } ?? false
+                if exceedsFWHM || exceedsEcc {
+                    excludedCount += 1
+                    continue
                 }
-                if let ecc = eccentricityCol?[i] as? Double, !ecc.isNaN {
-                    eccValues.append(ecc)
-                }
+
+                if let f = fwhm { fwhmValues.append(f) }
+                if let e = eccValid { eccValues.append(e) }
             }
+        }
+
+        if excludedCount > 0 {
+            Logger.processor.debug("FrameQualityProcessor: excluded \(excludedCount) non-stellar source(s) from quality statistics")
         }
 
         return Metrics(

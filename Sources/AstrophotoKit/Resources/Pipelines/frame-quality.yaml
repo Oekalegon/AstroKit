@@ -213,7 +213,15 @@ steps:
         type: table
         from: background.background_level
         description: Mean background level from background estimation
-    parameters: []
+    parameters:
+      - name: max_fwhm_arcsec
+        from: max_fwhm_arcsec
+        default_value: 8.0
+        description: Exclude sources with FWHM above this value (arcseconds) from quality statistics; requires PIXSCALE in FITS header
+      - name: max_eccentricity
+        from: max_eccentricity
+        default_value: 0.9
+        description: Exclude sources with eccentricity above this value (0=circular, 1=line) from quality statistics
     outputs:
       - name: frame_quality
         type: table
