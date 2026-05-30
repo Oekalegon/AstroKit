@@ -7,7 +7,7 @@ struct Frameset: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "frameset",
         abstract: "Manage frame sets.",
-        subcommands: [Create.self, List.self, Show.self, Exclude.self, Include.self, Delete.self]
+        subcommands: [Create.self, List.self, Show.self, Quality.self, Exclude.self, Include.self, Delete.self]
     )
 
     // MARK: - Shared query options

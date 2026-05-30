@@ -171,6 +171,17 @@ struct ArchiveTools {
             ] as [String: Any],
         ],
         [
+            "name": "archive_frameset_quality",
+            "description": "Display a per-frame quality summary for a frame set (star count, FWHM, eccentricity, background noise). Quality metrics are read from the archive; run ap-archive frameset quality <id> or ap run frame_quality --input @frameset:<id> first to populate them.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "id": ["type": "string", "description": "Frame set UUID."],
+                ] as [String: Any],
+                "required": ["id"],
+            ] as [String: Any],
+        ],
+        [
             "name": "archive_frameset_exclude",
             "description": "Mark a frame as excluded within a specific frame set. Excluded frames are skipped during processing but remain in the set. Unlike the global reject flag, this is specific to one frame set.",
             "inputSchema": [
@@ -270,6 +281,7 @@ struct ArchiveTools {
         case "archive_frameset_create":  return try await archiveFrameSetCreate(arguments)
         case "archive_frameset_list":    return try await archiveFrameSetList()
         case "archive_frameset_get":     return try await archiveFrameSetGet(arguments)
+        case "archive_frameset_quality": return try await archiveFrameSetQuality(arguments)
         case "archive_frameset_exclude": return try await archiveFrameSetExclude(arguments)
         case "archive_frameset_delete":  return try await archiveFrameSetDelete(arguments)
         default: throw ToolError("Unknown archive tool: \(name)")
@@ -746,6 +758,103 @@ struct ArchiveTools {
             }
         }
         return lines.joined(separator: "\n")
+    }
+
+    private func archiveFrameSetQuality(_ args: [String: Any]) async throws -> String {
+        guard let idStr = args["id"] as? String, let uuid = UUID(uuidString: idStr) else {
+            throw ToolError("archive_frameset_quality requires a valid 'id' UUID.")
+        }
+        let archive = try makeArchive()
+        guard let fs = try await archive.frameSet(id: uuid) else {
+            throw ToolError("No frame set with id \(idStr).")
+        }
+        let members = try await archive.members(inFrameSet: uuid)
+        guard !members.isEmpty else { return "Frame set '\(fs.name)' has no frames." }
+
+        let iso = ISO8601DateFormatter()
+        let hasQuality = members.contains { $0.frame.starCount != nil || $0.frame.medianFWHM != nil }
+
+        var lines: [String] = []
+        let excludedSuffix = fs.excludedFrameCount > 0 ? ", \(fs.excludedFrameCount) excluded" : ""
+        lines.append("Frame Set: \(fs.name)  [\(fs.id.uuidString)]")
+        lines.append("Frames: \(members.count)\(excludedSuffix)")
+
+        if !hasQuality {
+            lines.append("")
+            lines.append("No quality data available for this frameset.")
+            lines.append("Run: ap-archive frameset quality \(fs.id.uuidString)")
+            lines.append("  or: ap run frame_quality --input @frameset:\(fs.id.uuidString)")
+            return lines.joined(separator: "\n")
+        }
+
+        lines.append("")
+        var table = TextTable(columns: [
+            .init("ID"),
+            .init("Object"),
+            .init("Filter"),
+            .init("Exposure", .right),
+            .init("Stars", .right),
+            .init("FWHM", .right),
+            .init("Ecc", .right),
+            .init("Background", .right),
+            .init("Date"),
+        ])
+        for m in members {
+            let f = m.frame
+            let obj  = f.objectName ?? "-"
+            let filt = f.filter ?? "-"
+            let exp  = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
+            let stars = f.starCount.map { "\($0)" } ?? "-"
+            let fwhm: String
+            if let px = f.medianFWHM {
+                fwhm = f.medianFWHMArcsec.map { String(format: "%.2fpx/%.2f\"", px, $0) }
+                    ?? String(format: "%.2fpx", px)
+            } else { fwhm = "-" }
+            let ecc = f.medianEccentricity.map { String(format: "%.3f", $0) } ?? "-"
+            let bg: String
+            if let e = f.backgroundNoiseElectrons {
+                bg = String(format: "%.1fe⁻", e)
+            } else if let n = f.backgroundNoise {
+                bg = String(format: "%.1fADU", n)
+            } else { bg = "-" }
+            let date = f.timestamp.map {
+                String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ")
+            } ?? "-"
+            let excludeFlag = m.excluded ? "* " : ""
+            table.addRow([excludeFlag + f.id.uuidString, obj, filt, exp, stars, fwhm, ecc, bg, date])
+        }
+        lines.append(table.render())
+
+        // Summary statistics over active (non-excluded) frames.
+        let active = members.filter { !$0.excluded }.map { $0.frame }
+        let fwhmValues = active.compactMap { $0.medianFWHM }
+        let eccValues  = active.compactMap { $0.medianEccentricity }
+        if !fwhmValues.isEmpty || !eccValues.isEmpty {
+            lines.append("Active frames (\(active.count)):")
+            if !fwhmValues.isEmpty {
+                let med = medianValue(fwhmValues)
+                if let scale = active.compactMap({ $0.pixelScale }).first {
+                    lines.append(String(format: "  Median FWHM:         %.2fpx / %.2f\"", med, med * scale))
+                } else {
+                    lines.append(String(format: "  Median FWHM:         %.2fpx", med))
+                }
+            }
+            if !eccValues.isEmpty {
+                lines.append(String(format: "  Median eccentricity: %.3f", medianValue(eccValues)))
+            }
+        }
+        if fs.excludedFrameCount > 0 {
+            lines.append("(* = excluded from frameset)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func medianValue(_ values: [Double]) -> Double {
+        let sorted = values.sorted()
+        let n = sorted.count
+        return n % 2 == 0
+            ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
+            : sorted[n / 2]
     }
 
     private func archiveFrameSetExclude(_ args: [String: Any]) async throws -> String {
