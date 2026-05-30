@@ -93,11 +93,15 @@ public struct FrameQualityProcessor: Processor {
         // stars, so they would inflate the seeing metric if included.
         let maxFWHMPixels: Double? = {
             guard let arcsec = parameters["max_fwhm_arcsec"]?.doubleValue, arcsec > 0 else { return nil }
-            guard let scale  = inputFrame.pixelScale, scale > 0 else {
-                Logger.processor.debug("FrameQualityProcessor: max_fwhm_arcsec set but frame has no pixel scale — FWHM cutoff inactive")
-                return nil
+            if let scale = inputFrame.pixelScale, scale > 0 {
+                return arcsec / scale
             }
-            return arcsec / scale
+            // No PIXSCALE in FITS header: apply the limit directly as pixels so the
+            // filter remains active. The numeric value is the same; only the unit is wrong.
+            Logger.processor.notice(
+                "FrameQualityProcessor: max_fwhm_arcsec=\(arcsec) but frame has no PIXSCALE — applying as pixel limit"
+            )
+            return arcsec
         }()
 
         // Read eccentricity upper cutoff. Sources above this (cosmic rays, satellite trails)
