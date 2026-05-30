@@ -865,41 +865,38 @@ struct ArchiveTools {
     // MARK: - Calibration frames
 
     private func archiveCalibrationFrames(_ args: [String: Any]) async throws -> String {
-        let scope      = args["scope"]  as? String ?? "all"
-        let typeFilter = args["type"]   as? String
+        let scopeStr   = args["scope"]  as? String ?? "all"
+        let typeStr    = args["type"]   as? String
         let camera     = args["camera"] as? String
 
-        if scope == "framesets" {
-            return try await archiveCalibrationFrameSets(typeFilter: typeFilter)
+        let calibType = typeStr.flatMap { CalibrationType(rawValue: $0) }
+        let tempRange  = calibrationTemperatureRange(args)
+        let dateRange  = calibrationDateRange(args)
+        let archive    = try makeArchive()
+
+        if scopeStr == "framesets" {
+            let sets = try await archive.calibrationFrameSets(type: calibType)
+            return formatCalibrationFrameSets(sets)
         }
 
-        let baseTypes = typeFilter.map { [$0] } ?? ["bias", "dark", "darkFlat", "flat"]
-        let frameTypes: [String]
-        switch scope {
-        case "source":  frameTypes = baseTypes
-        case "masters": frameTypes = baseTypes.map { calibrationMasterVariant($0) }
-        default:        frameTypes = baseTypes.flatMap { [$0, calibrationMasterVariant($0)] }
+        let scope: CalibrationScope
+        switch scopeStr {
+        case "source":  scope = .source
+        case "masters": scope = .masters
+        default:        scope = .all
         }
 
-        var query = FrameQuery()
-        query.frameTypes = frameTypes
-        query.camera     = camera
-        if let center = args["temp_center"] as? Double {
-            let tol = args["temp_tolerance"] as? Double ?? 2.0
-            query.temperatureRange = (center - tol)...(center + tol)
-        }
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-        df.timeZone = TimeZone(identifier: "UTC")
-        if let fromStr = args["from_date"] as? String,
-           let toStr   = args["to_date"]   as? String,
-           let fromDate = df.date(from: fromStr),
-           let toDate   = df.date(from: toStr) {
-            query.dateRange = DateInterval(start: fromDate, end: toDate.addingTimeInterval(86399))
-        }
+        let frames = try await archive.calibrationFrames(
+            scope: scope,
+            type: calibType,
+            temperatureRange: tempRange,
+            dateRange: dateRange,
+            camera: camera
+        )
+        return formatCalibrationFrames(frames)
+    }
 
-        let archive = try makeArchive()
-        let frames  = try await archive.frames(matching: query)
+    private func formatCalibrationFrames(_ frames: [ArchivedFrame]) -> String {
         if frames.isEmpty { return "No calibration frames found matching the query." }
 
         let grouped   = Dictionary(grouping: frames, by: { $0.frameType })
@@ -928,20 +925,8 @@ struct ArchiveTools {
         return lines.joined(separator: "\n")
     }
 
-    private func archiveCalibrationFrameSets(typeFilter: String?) async throws -> String {
-        let calibrationTypes: Set<String> = [
-            "bias", "masterBias", "dark", "masterDark",
-            "flat", "masterFlat", "darkFlat", "masterDarkFlat",
-        ]
-        let archive = try makeArchive()
-        var sets = try await archive.frameSets()
-        sets = sets.filter { calibrationTypes.contains($0.frameType) }
-        if let t = typeFilter {
-            let variants: Set<String> = [t, calibrationMasterVariant(t)]
-            sets = sets.filter { variants.contains($0.frameType) }
-        }
+    private func formatCalibrationFrameSets(_ sets: [ArchivedFrameSet]) -> String {
         if sets.isEmpty { return "No calibration frame sets found." }
-
         let iso = ISO8601DateFormatter()
         var lines = ["Calibration Frame Sets (\(sets.count)):"]
         for fs in sets {
@@ -972,28 +957,35 @@ struct ArchiveTools {
         return lines.joined(separator: "\n")
     }
 
-    private func calibrationMasterVariant(_ t: String) -> String {
-        switch t {
-        case "bias":     return "masterBias"
-        case "dark":     return "masterDark"
-        case "flat":     return "masterFlat"
-        case "darkFlat": return "masterDarkFlat"
-        default:         return t
+    private func calibrationTypeLabel(_ type_: String) -> String {
+        switch type_ {
+        case "bias":           return "Bias"
+        case "masterBias":     return "Master Bias"
+        case "dark":           return "Dark"
+        case "masterDark":     return "Master Dark"
+        case "darkFlat":       return "Dark Flat"
+        case "masterDarkFlat": return "Master Dark Flat"
+        case "flat":           return "Flat"
+        case "masterFlat":     return "Master Flat"
+        default:               return type_
         }
     }
 
-    private func calibrationTypeLabel(_ type_: String) -> String {
-        switch type_ {
-        case "bias":          return "Bias"
-        case "masterBias":    return "Master Bias"
-        case "dark":          return "Dark"
-        case "masterDark":    return "Master Dark"
-        case "darkFlat":      return "Dark Flat"
-        case "masterDarkFlat": return "Master Dark Flat"
-        case "flat":          return "Flat"
-        case "masterFlat":    return "Master Flat"
-        default:              return type_
-        }
+    private func calibrationTemperatureRange(_ args: [String: Any]) -> ClosedRange<Double>? {
+        guard let center = args["temp_center"] as? Double else { return nil }
+        let tol = args["temp_tolerance"] as? Double ?? 2.0
+        return (center - tol)...(center + tol)
+    }
+
+    private func calibrationDateRange(_ args: [String: Any]) -> DateInterval? {
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        df.timeZone = TimeZone(identifier: "UTC")
+        guard let fromStr  = args["from_date"] as? String,
+              let toStr    = args["to_date"]   as? String,
+              let fromDate = df.date(from: fromStr),
+              let toDate   = df.date(from: toStr) else { return nil }
+        return DateInterval(start: fromDate, end: toDate.addingTimeInterval(86399))
     }
 
     private func archiveRemove(_ args: [String: Any]) async throws -> String {
