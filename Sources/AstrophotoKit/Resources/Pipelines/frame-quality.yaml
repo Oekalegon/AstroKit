@@ -148,20 +148,28 @@ steps:
           processing_stage: "morphological_processing"
           image_type: "binary"
 
-  - id: connected_components
-    type: connected_components
-    name: Connected Components
-    description: Identifies star blobs in the binary mask
+  - id: local_maxima
+    type: local_maxima
+    name: Local Maxima Detection
+    description: Finds peak pixels in the background-subtracted frame within the binary mask — one peak per star, immune to large extended objects that would merge into a single connected blob
     dataInputs:
       - name: input_frame
         type: frame
+        from: background.background_subtracted_frame
+        description: Background-subtracted continuous frame for intensity comparison
+      - name: mask_frame
+        type: frame
         from: dilation.dilated_frame
-        description: Dilated binary mask
-    parameters: []
+        description: Binary mask restricting the search to candidate star regions
+    parameters:
+      - name: min_distance
+        from: lm_min_distance
+        default_value: 5
+        description: Minimum pixel distance between accepted peaks (NMS radius)
     outputs:
       - name: pixel_coordinates
         type: table
-        description: Per-star table with centroid, axes, eccentricity, rotation_angle
+        description: Per-star table with centroid, placeholder axes, eccentricity, rotation_angle
         metadata:
           processing_stage: "star_detection"
           table_type: "star_catalog"
@@ -177,8 +185,8 @@ steps:
         description: Background-subtracted frame for moment calculation
       - name: pixel_coordinates
         type: table
-        from: connected_components.pixel_coordinates
-        description: Star positions from connected components
+        from: local_maxima.pixel_coordinates
+        description: Star positions from local maxima detection
     parameters: []
     outputs:
       - name: pixel_coordinates
