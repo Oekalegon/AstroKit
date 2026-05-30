@@ -1,14 +1,17 @@
 #include <metal_stdlib>
 using namespace metal;
 
+/// Threads per threadgroup — must match the Swift dispatch call (MTLSize(64, 1, 1)).
+constant uint kCellThreads = 64;
+
 /// Pass 1 — sigma-clipped median for one grid cell.
 ///
 /// Launch with dispatchThreadgroups(MTLSize(numCellsX, numCellsY, 1),
-///                                  threadsPerThreadgroup: MTLSize(64, 1, 1))
-/// Threadgroup memory (index 0): numHistBins × sizeof(int32) bytes.
+///                                  threadsPerThreadgroup: MTLSize(kCellThreads, 1, 1))
+/// Threadgroup memory (index 0): numHistBins × sizeof(atomic_int) bytes.
 ///
-/// Each threadgroup owns one cell.  The 64 threads collectively fill a shared
-/// 256-bin histogram, then thread 0 does two-pass sigma-clipping:
+/// Each threadgroup owns one cell.  The kCellThreads threads collectively fill a
+/// shared histogram, then thread 0 does two-pass sigma-clipping:
 ///   1. IQR → σ estimate ( σ ≈ (Q75 − Q25) / 1.349 )
 ///   2. Recompute median within [median − 3σ, median + 3σ]
 ///
@@ -19,15 +22,12 @@ kernel void compute_mesh_cell_median(
     constant int&                  cellSize      [[buffer(1)]],
     constant int&                  numCellsX     [[buffer(2)]],
     constant int&                  numHistBins   [[buffer(3)]],
-    threadgroup int*               histMem       [[threadgroup(0)]],
-    uint2 cellCoord  [[threadgroup_position_in_grid]],
-    uint  localIdx   [[thread_index_in_threadgroup]],
-    uint  localCount [[threads_per_threadgroup]]
+    threadgroup atomic_int*        hist          [[threadgroup(0)]],
+    uint2 cellCoord [[threadgroup_position_in_grid]],
+    uint  localIdx  [[thread_index_in_threadgroup]]
 ) {
-    threadgroup atomic_int* hist = (threadgroup atomic_int*)histMem;
-
     // Zero shared histogram
-    for (uint i = localIdx; i < uint(numHistBins); i += localCount) {
+    for (uint i = localIdx; i < uint(numHistBins); i += kCellThreads) {
         atomic_store_explicit(&hist[i], 0, memory_order_relaxed);
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
@@ -44,8 +44,8 @@ kernel void compute_mesh_cell_median(
     int n    = cw * ch;
 
     // Accumulate pixels into shared histogram
-    for (int p = int(localIdx); p < n; p += int(localCount)) {
-        float v  = inputTexture.read(uint2(x0 + p % cw, y0 + p / cw)).r;
+    for (int p = int(localIdx); p < n; p += int(kCellThreads)) {
+        float v   = inputTexture.read(uint2(x0 + p % cw, y0 + p / cw)).r;
         int   bin = clamp(int(v * float(numHistBins)), 0, numHistBins - 1);
         atomic_fetch_add_explicit(&hist[bin], 1, memory_order_relaxed);
     }
