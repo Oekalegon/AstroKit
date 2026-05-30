@@ -27,8 +27,9 @@ import os
 /// **Output columns**
 /// | Column                            | Type   | Description                                                                   |
 /// |-----------------------------------|--------|-------------------------------------------------------------------------------|
-/// | star_count                        | Int    | Total detected stars (including saturated).                                   |
-/// | saturated_star_count              | Int    | Stars whose peak pixel ≥ 90 % of full-scale (saturated).                     |
+/// | star_count                        | Int    | Total detected sources (including saturated and excluded).                    |
+/// | saturated_star_count              | Int    | Sources whose peak pixel ≥ 90 % of full-scale (saturated).                   |
+/// | excluded_source_count             | Int    | Unsaturated sources excluded from statistics by max_fwhm_arcsec/eccentricity.|
 /// | median_fwhm                       | Double | Median FWHM in pixels (avg major+minor), excluding outliers.                  |
 /// | median_eccentricity               | Double | Median eccentricity 0–1 (0=circular), excluding outliers.                     |
 /// | median_snr                        | Double | Median peak SNR of non-saturated, non-outlier stars (when background σ known).|
@@ -143,6 +144,7 @@ public struct FrameQualityProcessor: Processor {
         var df = DataFrame()
         df.append(column: Column(name: "star_count",           contents: [metrics.starCount]))
         df.append(column: Column(name: "saturated_star_count", contents: [metrics.saturatedStarCount]))
+        df.append(column: Column(name: "excluded_source_count", contents: [metrics.excludedCount]))
         df.append(column: Column(name: "median_fwhm",          contents: [metrics.medianFWHM ?? 0.0]))
         df.append(column: Column(name: "median_eccentricity",  contents: [metrics.medianEccentricity ?? 0.0]))
         if let snr = metrics.medianSNR {
@@ -190,6 +192,7 @@ public struct FrameQualityProcessor: Processor {
     private struct Metrics {
         let starCount: Int
         let saturatedStarCount: Int
+        let excludedCount: Int
         let medianFWHM: Double?
         let medianEccentricity: Double?
         let medianSNR: Double?
@@ -270,6 +273,7 @@ public struct FrameQualityProcessor: Processor {
         return Metrics(
             starCount: df.rows.count,
             saturatedStarCount: saturatedCount,
+            excludedCount: excludedCount,
             medianFWHM: fwhmValues.isEmpty ? nil : median(fwhmValues),
             medianEccentricity: eccValues.isEmpty  ? nil : median(eccValues),
             medianSNR: medSNR,

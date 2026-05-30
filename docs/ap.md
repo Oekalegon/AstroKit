@@ -324,8 +324,9 @@ The pipeline produces a single-row `frame_quality` table:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `star_count` | integer | Total detected sources (including saturated). |
+| `star_count` | integer | Total detected sources (including saturated and excluded). |
 | `saturated_star_count` | integer | Sources whose peak pixel ≥ 90 % of full-scale. |
+| `excluded_source_count` | integer | Unsaturated sources excluded from quality statistics by `max_fwhm_arcsec` or `max_eccentricity` (galaxy cores, nebulae, cosmic rays, satellite trails). |
 | `median_fwhm` | number | Median FWHM in pixels (average of major + minor axes). Sources above `max_fwhm_arcsec` or `max_eccentricity` are excluded. |
 | `median_eccentricity` | number | Median eccentricity 0–1 (0 = circular). Same exclusion filters as `median_fwhm`. |
 | `median_snr` | number | Median peak SNR of non-outlier, non-saturated sources (peak signal / background noise). Only present when pixel scale or FITS scale info is available for noise conversion. |
