@@ -1,7 +1,11 @@
 ---
 layout: article
 title: Plate Solving — Native Implementation Plan
+series: "Design"
+series_order: 2
 date: 2026-05-28
+categories: astrophotography pipelines image-processing design
+published: false
 ---
 
 # Plate Solving — Native Implementation Plan
