@@ -183,9 +183,13 @@ public struct FrameQualityProcessor: Processor {
             // suggested_max_fwhm_arcsec: 3× typical seeing with a 4″ floor (requires pixel scale).
             if let scale = inputFrame.pixelScale, scale > 0 {
                 let fwhmArcsec = fwhm * scale
-                // 1.5× gives headroom for seeing variation without letting galaxy
-                // features through. 3× was too loose — galaxy cores at 15+ arcsec passed.
-                df.append(column: Column(name: "suggested_max_fwhm_arcsec", contents: [max(4.0, 1.5 * fwhmArcsec)]))
+                // Suggest 1.5× measured FWHM as headroom for seeing variation,
+                // but never above the current max_fwhm_arcsec setting (default 8 arcsec).
+                // Anything above 8 arcsec is already poor seeing — we don't suggest
+                // loosening the filter past the user's own limit.
+                let currentMax = parameters["max_fwhm_arcsec"]?.doubleValue ?? 8.0
+                let suggestion = min(currentMax, max(4.0, 1.5 * fwhmArcsec))
+                df.append(column: Column(name: "suggested_max_fwhm_arcsec", contents: [suggestion]))
             }
         }
 
