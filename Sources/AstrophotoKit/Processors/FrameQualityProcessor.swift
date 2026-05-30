@@ -25,16 +25,20 @@ import os
 /// - `frame_quality` (TableData) — single-row summary table.
 ///
 /// **Output columns**
-/// | Column                 | Type   | Description                                                 |
-/// |------------------------|--------|-------------------------------------------------------------|
-/// | star_count             | Int    | Total detected stars (including saturated).                 |
-/// | saturated_star_count   | Int    | Stars whose peak pixel ≥ 90 % of full-scale (saturated).   |
-/// | median_fwhm            | Double | Median FWHM in pixels (avg major+minor), unsaturated stars. |
-/// | median_eccentricity    | Double | Median eccentricity 0–1 (0=circular), unsaturated stars.    |
-/// | background_level       | Double | Normalised background level 0–1 (for backward compatibility). |
-/// | background_level_adu       | Double | Background level in ADU (when FITS scale info available).      |
-/// | background_level_electrons | Double | Background in electrons = (ADU−offset)×EGAIN (when EGAIN       |
-/// |                            |        | is available). Cross-camera comparable.                        |
+/// | Column                            | Type   | Description                                                                   |
+/// |-----------------------------------|--------|-------------------------------------------------------------------------------|
+/// | star_count                        | Int    | Total detected stars (including saturated).                                   |
+/// | saturated_star_count              | Int    | Stars whose peak pixel ≥ 90 % of full-scale (saturated).                     |
+/// | median_fwhm                       | Double | Median FWHM in pixels (avg major+minor), excluding outliers.                  |
+/// | median_eccentricity               | Double | Median eccentricity 0–1 (0=circular), excluding outliers.                     |
+/// | median_snr                        | Double | Median peak SNR of non-saturated, non-outlier stars (when background σ known).|
+/// | low_snr_count                     | Int    | Number of stars with peak SNR below `low_snr_threshold` (default 5).         |
+/// | background_level                  | Double | Normalised background level 0–1 (for backward compatibility).                 |
+/// | background_level_adu              | Double | Background level in ADU (when FITS scale info available).                     |
+/// | background_noise_sigma_adu        | Double | Per-pixel background noise sigma in ADU (NMAD of background-subtracted frame).|
+/// | effective_detection_threshold_adu | Double | Effective detection floor = background_adu + threshold_sigma × noise_sigma_adu|
+/// | threshold_sigma_used              | Double | Detection threshold sigma multiplier used (pipeline parameter, default 3.0).  |
+/// | background_level_electrons        | Double | Background in electrons = (ADU−offset)×EGAIN (when EGAIN available).          |
 public struct FrameQualityProcessor: Processor {
 
     public var id: String { "frame_quality" }
@@ -57,14 +61,28 @@ public struct FrameQualityProcessor: Processor {
             throw ProcessorExecutionError.missingRequiredInput("pixel_coordinates")
         }
 
-        // Background level from background estimation (optional — some custom pipelines may omit it)
-        let backgroundLevelNorm: Double? = {
+        // Background level and noise sigma from background estimation.
+        // background_noise_sigma is NMAD of the background-subtracted frame (normalized 0–1).
+        let bgRow: DataFrame.Row? = {
             guard let bgTable = inputs["background_level"] as? TableData,
-                  let bgDF   = bgTable.dataFrame,
-                  let row    = bgDF.rows.first,
-                  let level  = row["background_level"] as? Double else { return nil }
-            return level
+                  let bgDF   = bgTable.dataFrame else { return nil }
+            return bgDF.rows.first
         }()
+        let backgroundLevelNorm: Double? = bgRow.flatMap { $0["background_level"] as? Double }
+        let noiseSigmaNorm:      Double? = bgRow.flatMap { $0["background_noise_sigma"] as? Double }
+
+        // Convert noise sigma to ADU: sigma is a spread so it scales by (fitsMax − fitsMin), no offset.
+        let noiseSigmaADU: Double? = noiseSigmaNorm.flatMap { sigma in
+            guard let fitsMin = inputFrame.fitsMinValue,
+                  let fitsMax = inputFrame.fitsMaxValue else { return nil }
+            return sigma * (fitsMax - fitsMin)
+        }
+
+        // Detection threshold sigma — mirrors what the threshold step used.
+        let thresholdSigma: Double = parameters["threshold_sigma"]?.doubleValue ?? 3.0
+
+        // Threshold below which a source is considered low-SNR.
+        let lowSNRThreshold: Double = parameters["low_snr_threshold"]?.doubleValue ?? 5.0
 
         // Read FWHM upper cutoff (arcseconds → pixels using pixel scale when available).
         // Sources above the cutoff are extended objects (galaxy cores, nebulae) rather than
@@ -85,8 +103,14 @@ public struct FrameQualityProcessor: Processor {
             return v
         }()
 
-        // Compute per-star quality metrics
-        let metrics = computeMetrics(from: starDF, maxFWHMPixels: maxFWHMPixels, maxEccentricity: maxEccentricity)
+        // Compute per-star quality metrics (FWHM, eccentricity, and SNR when noise sigma is known).
+        let metrics = computeMetrics(
+            from: starDF,
+            maxFWHMPixels: maxFWHMPixels,
+            maxEccentricity: maxEccentricity,
+            noiseSigmaNorm: noiseSigmaNorm,
+            lowSNRThreshold: lowSNRThreshold
+        )
 
         // Convert background level to ADU using FITS scale info when available.
         let backgroundLevelADU: Double? = backgroundLevelNorm.flatMap { inputFrame.toADU($0) }
@@ -95,13 +119,20 @@ public struct FrameQualityProcessor: Processor {
         // Formula: (adu - offset) × egain  (offset defaults to 0 when absent).
         let backgroundLevelElectrons: Double? = backgroundLevelNorm.flatMap { inputFrame.toElectrons($0) }
 
+        // Effective detection threshold in ADU: the sky floor a real source must exceed.
+        let effectiveThresholdADU: Double? = backgroundLevelADU.flatMap { bg in
+            noiseSigmaADU.map { sigma in bg + thresholdSigma * sigma }
+        }
+
         let bgInfo = backgroundLevelElectrons.map { String(format: ", bg=%.1f e⁻", $0) }
             ?? backgroundLevelADU.map { String(format: ", bg=%.1f ADU", $0) }
             ?? ""
-        let fwhmStr = String(format: "%.2f", metrics.medianFWHM ?? 0)
-        let eccStr  = String(format: "%.3f", metrics.medianEccentricity ?? 0)
+        let fwhmStr  = String(format: "%.2f", metrics.medianFWHM ?? 0)
+        let eccStr   = String(format: "%.3f", metrics.medianEccentricity ?? 0)
+        let snrStr   = metrics.medianSNR.map { String(format: ", SNR=%.1f", $0) } ?? ""
+        let noiseStr = noiseSigmaADU.map { String(format: ", σ=%.2f ADU", $0) } ?? ""
         Logger.processor.info(
-            "FrameQualityProcessor: \(metrics.starCount) stars (\(metrics.saturatedStarCount) saturated), FWHM=\(fwhmStr)px, ecc=\(eccStr)\(bgInfo)"
+            "FrameQualityProcessor: \(metrics.starCount) stars (\(metrics.saturatedStarCount) saturated), FWHM=\(fwhmStr)px, ecc=\(eccStr)\(snrStr)\(noiseStr)\(bgInfo)"
         )
 
         // Write output table
@@ -111,9 +142,20 @@ public struct FrameQualityProcessor: Processor {
         df.append(column: Column(name: "saturated_star_count", contents: [metrics.saturatedStarCount]))
         df.append(column: Column(name: "median_fwhm",          contents: [metrics.medianFWHM ?? 0.0]))
         df.append(column: Column(name: "median_eccentricity",  contents: [metrics.medianEccentricity ?? 0.0]))
-        df.append(column: Column(name: "background_level",     contents: [backgroundLevelNorm ?? 0.0]))
+        if let snr = metrics.medianSNR {
+            df.append(column: Column(name: "median_snr",   contents: [snr]))
+            df.append(column: Column(name: "low_snr_count", contents: [metrics.lowSNRCount]))
+        }
+        df.append(column: Column(name: "background_level",        contents: [backgroundLevelNorm ?? 0.0]))
+        df.append(column: Column(name: "threshold_sigma_used",     contents: [thresholdSigma]))
         if let adu = backgroundLevelADU {
             df.append(column: Column(name: "background_level_adu", contents: [adu]))
+        }
+        if let sigma = noiseSigmaADU {
+            df.append(column: Column(name: "background_noise_sigma_adu", contents: [sigma]))
+        }
+        if let threshold = effectiveThresholdADU {
+            df.append(column: Column(name: "effective_detection_threshold_adu", contents: [threshold]))
         }
         if let electrons = backgroundLevelElectrons {
             df.append(column: Column(name: "background_level_electrons", contents: [electrons]))
@@ -129,28 +171,39 @@ public struct FrameQualityProcessor: Processor {
         let saturatedStarCount: Int
         let medianFWHM: Double?
         let medianEccentricity: Double?
+        let medianSNR: Double?
+        let lowSNRCount: Int
     }
 
-    private func computeMetrics(from df: DataFrame, maxFWHMPixels: Double?, maxEccentricity: Double?) -> Metrics {
+    private func computeMetrics(
+        from df: DataFrame,
+        maxFWHMPixels: Double?,
+        maxEccentricity: Double?,
+        noiseSigmaNorm: Double?,
+        lowSNRThreshold: Double
+    ) -> Metrics {
         let fwhmMajorCol    = df.columns.first(where: { $0.name == "fwhm_major" })
         let fwhmMinorCol    = df.columns.first(where: { $0.name == "fwhm_minor" })
         let eccentricityCol = df.columns.first(where: { $0.name == "eccentricity" })
         let saturatedCol    = df.columns.first(where: { $0.name == "saturated" })
+        let fluxCol         = df.columns.first(where: { $0.name == "flux" })
 
         var saturatedCount = 0
         var fwhmValues: [Double] = []
         var eccValues:  [Double] = []
+        var snrValues:  [Double] = []
         var excludedCount = 0
 
         for i in 0..<df.rows.count {
             let sat = (saturatedCol?[i] as? Bool) ?? false
             if sat { saturatedCount += 1 }
 
-            // Only unsaturated stars contribute to FWHM and eccentricity statistics.
+            // Only unsaturated stars contribute to the statistics.
             if !sat {
                 let major = fwhmMajorCol?[i] as? Double
                 let minor = fwhmMinorCol?[i] as? Double
                 let ecc   = eccentricityCol?[i] as? Double
+                let flux  = fluxCol?[i]  as? Double
 
                 let fwhm: Double? = (major.flatMap { m in minor.map { n in (m + n) / 2.0 } }).flatMap { $0 > 0 ? $0 : nil }
                 let eccValid = ecc.flatMap { $0.isNaN ? nil : $0 }
@@ -167,6 +220,22 @@ public struct FrameQualityProcessor: Processor {
 
                 if let f = fwhm { fwhmValues.append(f) }
                 if let e = eccValid { eccValues.append(e) }
+
+                // Peak SNR estimate: flux / (noise × effective PSF area).
+                // For a 2-D Gaussian PSF: effective_pixels = 2π × σ_x × σ_y, σ = FWHM/2.355.
+                // This gives the signal-to-noise at the PSF peak, robust for all star sizes.
+                if let sigma = noiseSigmaNorm, sigma > 0,
+                   let fVal = flux, fVal > 0,
+                   let fwhmVal = fwhm, fwhmVal > 0,
+                   let majorVal = major, majorVal > 0,
+                   let minorVal = minor, minorVal > 0 {
+                    let sigmaX = majorVal / 2.355
+                    let sigmaY = minorVal / 2.355
+                    let effPixels = 2.0 * .pi * sigmaX * sigmaY
+                    guard effPixels > 0 else { continue }
+                    let snr = fVal / (sigma * sqrt(effPixels))
+                    snrValues.append(snr)
+                }
             }
         }
 
@@ -174,11 +243,16 @@ public struct FrameQualityProcessor: Processor {
             Logger.processor.debug("FrameQualityProcessor: excluded \(excludedCount) non-stellar source(s) from quality statistics")
         }
 
+        let medSNR = snrValues.isEmpty ? nil : median(snrValues)
+        let lowSNRCount = snrValues.filter { $0 < lowSNRThreshold }.count
+
         return Metrics(
             starCount: df.rows.count,
             saturatedStarCount: saturatedCount,
             medianFWHM: fwhmValues.isEmpty ? nil : median(fwhmValues),
-            medianEccentricity: eccValues.isEmpty  ? nil : median(eccValues)
+            medianEccentricity: eccValues.isEmpty  ? nil : median(eccValues),
+            medianSNR: medSNR,
+            lowSNRCount: lowSNRCount
         )
     }
 

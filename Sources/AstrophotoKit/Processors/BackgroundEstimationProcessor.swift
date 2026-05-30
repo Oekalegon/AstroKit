@@ -400,19 +400,92 @@ public struct BackgroundEstimationProcessor: Processor {
             texture: subtractedTexture
         )
 
-        // Create table with background level
+        // Compute NMAD of the background-subtracted frame as a robust noise sigma estimate.
+        // Stars are positive outliers that the NMAD naturally suppresses.
+        let noiseSigma = (try? calculateNoiseSigma(
+            texture: subtractedTexture,
+            device: device,
+            commandQueue: commandQueue
+        )) ?? 0.0
+
+        // Create table with background level and noise statistics
         if var backgroundLevelTable = outputs["background_level"] as? TableData {
             var dataFrame = DataFrame()
-            dataFrame.append(column: Column(name: "background_level", contents: [backgroundLevel]))
-            if let adu = inputFrame.toADU(backgroundLevel) {
-                dataFrame.append(column: Column(name: "background_level_adu", contents: [adu]))
+            dataFrame.append(column: Column(name: "background_level",       contents: [backgroundLevel]))
+            dataFrame.append(column: Column(name: "background_noise_sigma", contents: [noiseSigma]))
+            if let fitsMin = inputFrame.fitsMinValue, let fitsMax = inputFrame.fitsMaxValue {
+                let scale = fitsMax - fitsMin
+                dataFrame.append(column: Column(name: "background_level_adu",       contents: [backgroundLevel * scale + fitsMin]))
+                dataFrame.append(column: Column(name: "background_noise_sigma_adu", contents: [noiseSigma * scale]))
             }
             backgroundLevelTable.dataFrame = dataFrame
             outputs["background_level"] = backgroundLevelTable
         }
 
         let aduInfo = inputFrame.toADU(backgroundLevel).map { String(format: " (%.1f ADU)", $0) } ?? ""
-        Logger.processor.info("Background estimation completed (level: \(backgroundLevel)\(aduInfo))")
+        let sigmaInfo: String = {
+            guard let fitsMin = inputFrame.fitsMinValue, let fitsMax = inputFrame.fitsMaxValue else { return "" }
+            return String(format: ", σ=%.2f ADU", noiseSigma * (fitsMax - fitsMin))
+        }()
+        Logger.processor.info("Background estimation completed (level: \(backgroundLevel)\(aduInfo)\(sigmaInfo)")
+    }
+
+    /// Compute NMAD (Normalised Median Absolute Deviation) of the background-subtracted
+    /// texture as a robust per-pixel noise sigma estimate.  Stars produce large positive
+    /// outliers that the median-based statistic naturally suppresses.
+    ///
+    /// Formula: σ_NMAD = 1.4826 × median(|xi − median(x)|)
+    /// The 1.4826 factor makes NMAD consistent with the Gaussian σ.
+    private func calculateNoiseSigma(
+        texture: MTLTexture,
+        device: MTLDevice,
+        commandQueue: MTLCommandQueue
+    ) throws -> Double {
+        let sampleRate = 10
+        let width  = texture.width
+        let height = texture.height
+        let sampleWidth  = max(1, width  / sampleRate)
+        let sampleHeight = max(1, height / sampleRate)
+        let bytesPerRow = sampleWidth * MemoryLayout<Float32>.size
+        let bufferSize  = bytesPerRow * sampleHeight
+
+        guard let readBuffer = device.makeBuffer(length: bufferSize, options: [.storageModeShared]) else {
+            throw ProcessorExecutionError.couldNotCreateResource("Could not create noise-sigma read buffer")
+        }
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let blitEncoder   = commandBuffer.makeBlitCommandEncoder() else {
+            throw ProcessorExecutionError.couldNotCreateResource("Could not create command buffer for noise sigma")
+        }
+        blitEncoder.copy(
+            from: texture,
+            sourceSlice: 0, sourceLevel: 0,
+            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+            sourceSize: MTLSize(width: sampleWidth, height: sampleHeight, depth: 1),
+            to: readBuffer,
+            destinationOffset: 0,
+            destinationBytesPerRow: bytesPerRow,
+            destinationBytesPerImage: bufferSize
+        )
+        blitEncoder.endEncoding()
+        try ProcessorHelpers.executeCommandBuffer(commandBuffer)
+
+        let ptr    = readBuffer.contents().bindMemory(to: Float32.self, capacity: sampleWidth * sampleHeight)
+        var pixels = Array(UnsafeBufferPointer(start: ptr, count: sampleWidth * sampleHeight))
+            .map { Double($0) }
+        guard !pixels.isEmpty else { return 0 }
+
+        pixels.sort()
+        let med = pixels.count % 2 == 0
+            ? (pixels[pixels.count / 2 - 1] + pixels[pixels.count / 2]) / 2.0
+            : pixels[pixels.count / 2]
+
+        var absDevs = pixels.map { abs($0 - med) }
+        absDevs.sort()
+        let medAbsDev = absDevs.count % 2 == 0
+            ? (absDevs[absDevs.count / 2 - 1] + absDevs[absDevs.count / 2]) / 2.0
+            : absDevs[absDevs.count / 2]
+
+        return 1.4826 * medAbsDev
     }
 
     /// Calculate progressive window sizes for multi-pass approach

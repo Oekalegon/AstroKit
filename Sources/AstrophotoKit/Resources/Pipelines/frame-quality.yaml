@@ -222,6 +222,14 @@ steps:
         from: max_eccentricity
         default_value: 0.9
         description: Exclude sources with eccentricity above this value (0=circular, 1=line) from quality statistics
+      - name: threshold_sigma
+        from: threshold_value
+        default_value: 3.0
+        description: Detection threshold sigma used in the threshold step; carried through to compute effective_detection_threshold_adu
+      - name: low_snr_threshold
+        from: low_snr_threshold
+        default_value: 5.0
+        description: Sources with peak SNR below this value are counted in low_snr_count
     outputs:
       - name: frame_quality
         type: table

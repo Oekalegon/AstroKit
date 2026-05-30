@@ -122,6 +122,8 @@ ap run star_detection --input M51.fits --json
 
 | ID | Description |
 |----|-------------|
+| `frame_quality` | Measure per-frame quality: star count, FWHM, eccentricity, SNR, and background statistics |
+| `calibration_quality` | Measure calibration-frame quality: noise sigma, mean level, hot pixels |
 | `star_detection` | Detect stars, measure FWHM/eccentricity, and update the source FITS file |
 | `optical_quality` | Measure optical quality metrics |
 | `collimation_reflector` | Mirror collimation analysis |
@@ -297,6 +299,61 @@ ap run star_detection --input M51.fits
 ```
 
 > **Note:** This in-place update only occurs when the input file has an accessible path on disk. Frames created programmatically (e.g. in-memory pipeline chains) are skipped without error.
+
+---
+
+## Frame quality pipeline
+
+The `frame_quality` pipeline runs on a single archived light frame and writes quality metrics back to the archive. Results are also archived automatically when `ASTROARCHIVE_PATH` is set.
+
+```bash
+# Run on a single file:
+ap run frame_quality --input image.fits
+
+# Run on every frame in an archive frameset (reads UUID from archive):
+ap run frame_quality --input @frameset:3F7A1234-…
+
+# Or use the dedicated frameset command (skips frames that already have metrics):
+ap-archive frameset quality 3F7A1234-…
+ap-archive frameset quality 3F7A1234-… --force          # re-run all
+```
+
+### Output columns
+
+The pipeline produces a single-row `frame_quality` table:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `star_count` | integer | Total detected sources (including saturated). |
+| `saturated_star_count` | integer | Sources whose peak pixel ≥ 90 % of full-scale. |
+| `median_fwhm` | number | Median FWHM in pixels (average of major + minor axes). Sources above `max_fwhm_arcsec` or `max_eccentricity` are excluded. |
+| `median_eccentricity` | number | Median eccentricity 0–1 (0 = circular). Same exclusion filters as `median_fwhm`. |
+| `median_snr` | number | Median peak SNR of non-outlier, non-saturated sources (peak signal / background noise). Only present when pixel scale or FITS scale info is available for noise conversion. |
+| `low_snr_count` | integer | Number of sources with peak SNR below `low_snr_threshold` (default 5). |
+| `background_level` | number | Normalised sky background level 0–1 (backward compatibility). |
+| `threshold_sigma_used` | number | The `threshold_value` sigma multiplier that was active during detection. |
+| `background_level_adu` | number | Sky background in ADU (requires FITS scale info). |
+| `background_noise_sigma_adu` | number | Per-pixel sky noise sigma in ADU (NMAD of the background-subtracted frame). The key metric for judging detection sensitivity. |
+| `effective_detection_threshold_adu` | number | ADU value a source must exceed to be detected: `background_adu + threshold_sigma × noise_sigma_adu`. |
+| `background_level_electrons` | number | Sky background in electrons (requires EGAIN in FITS header). Cross-camera comparable. |
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `threshold_value` | 3.0 | Sigma multiplier for the binary threshold step. Also determines `effective_detection_threshold_adu`. |
+| `max_fwhm_arcsec` | 8.0 | Exclude sources with FWHM above this value (arcseconds) from the seeing statistics. Requires `PIXSCALE` in the FITS header. Galaxy cores and extended nebulae are automatically filtered. |
+| `max_eccentricity` | 0.9 | Exclude sources with eccentricity above this value from the statistics. Filters cosmic rays and satellite trails. |
+| `low_snr_threshold` | 5.0 | Peak SNR below which a source is counted in `low_snr_count`. |
+
+### Interpreting the output
+
+The `background_noise_sigma_adu` and `effective_detection_threshold_adu` columns are particularly useful for narrowband data:
+
+- A high `background_noise_sigma_adu` relative to `background_level_adu` indicates a noisy sky or insufficient integration time.
+- Comparing `effective_detection_threshold_adu` across frames with different `threshold_value` settings lets you tune detection sensitivity without re-running the pipeline.
+- `median_snr` < 5 on most sources suggests the frame is under-exposed or the seeing was poor. For narrowband, values of 5–15 are typical for reasonable sub-frames.
+- `low_snr_count` close to `star_count` means most detections are marginal; consider raising `threshold_value` to reduce false positives.
 
 ---
 
