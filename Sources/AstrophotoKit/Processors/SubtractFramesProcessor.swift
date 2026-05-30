@@ -54,7 +54,7 @@ public struct SubtractFramesProcessor: Processor {
             )
         }
 
-        logWarnings(input: inputFrame, subtract: subtractFrame)
+        try validateAndWarn(input: inputFrame, subtract: subtractFrame)
 
         let outTex = try subtract(
             input: inputTexture, subtract: subtractTexture,
@@ -67,16 +67,48 @@ public struct SubtractFramesProcessor: Processor {
         )
     }
 
-    // MARK: - Validation warnings
+    // MARK: - Validation
 
-    private func logWarnings(input: Frame, subtract: Frame) {
+    private func validateAndWarn(input: Frame, subtract: Frame) throws {
+        // Gain mismatch: calibration frames must be taken at the same gain setting.
+        if let g1 = input.gain, let g2 = subtract.gain {
+            if abs(g1 - g2) > 0.5 {
+                throw ProcessorExecutionError.executionFailed(
+                    "subtract_frames: gain mismatch — input gain \(Int(g1)) vs subtract gain \(Int(g2)). " +
+                    "Calibration frames must be taken at the same gain setting as the input frame."
+                )
+            }
+        }
+
+        // Offset mismatch: warn if camera pedestal differs.
+        if let o1 = input.offset, let o2 = subtract.offset, abs(o1 - o2) > 5 {
+            let msg = "subtract_frames: offset mismatch — input offset \(Int(o1)) vs subtract offset \(Int(o2)). Calibration quality may be reduced."
+            Logger.processor.warning("\(msg, privacy: .public)")
+        }
+
+        // Temperature check for dark subtraction.
         if let t1 = input.ccdTemperature, let t2 = subtract.ccdTemperature {
             let delta = abs(t1 - t2)
             if delta > 5.0 {
                 let msg = "subtract_frames: temperature mismatch — input \(String(format: "%.1f", t1))°C vs subtract \(String(format: "%.1f", t2))°C (Δ=\(String(format: "%.1f", delta))°C). Calibration quality may be reduced."
                 Logger.processor.warning("\(msg, privacy: .public)")
             }
+        } else if input.ccdTemperature == nil && subtract.ccdTemperature == nil {
+            // Uncooled camera: no temperature metadata. Check observation date proximity instead.
+            if let t1 = input.timestamp, let t2 = subtract.timestamp {
+                let hours = abs(t1.timeIntervalSince(t2)) / 3600
+                if hours > 12 {
+                    let msg = String(format:
+                        "subtract_frames: no CCD temperature metadata (uncooled camera?). " +
+                        "Input and calibration frame timestamps differ by %.1f h — " +
+                        "for uncooled cameras, calibration frames should be from the same observing session.",
+                        hours)
+                    Logger.processor.warning("\(msg, privacy: .public)")
+                }
+            }
         }
+
+        // Exposure time mismatch (dark vs light).
         if let e1 = input.exposureTime, let e2 = subtract.exposureTime, e1 > 0, e2 > 0 {
             let relDelta = abs(e1 - e2) / max(e1, e2)
             if relDelta > 0.05 {

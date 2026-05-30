@@ -22,10 +22,17 @@ steps:
         from: dark_frames
         is_collection: true
         collection_mode: individually
+        metadata_restrictions:
+          frame_type:
+            - dark
         description: Raw dark frames (one process per frame)
       - name: subtract_frame
         type: frame
         from: master_bias
+        metadata_restrictions:
+          frame_type:
+            - bias
+            - masterBias
         description: Master bias frame to subtract from each dark
     parameters:
       - name: clip_to_zero

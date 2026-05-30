@@ -23,6 +23,9 @@ steps:
         from: bias_frames
         is_collection: true
         collection_mode: together
+        metadata_restrictions:
+          frame_type:
+            - bias
         description: Bias frames to stack
     parameters:
       - name: method

@@ -47,6 +47,10 @@ extension Frame {
         if let s = fitsImage.metadata["FRAMETYP"]?.stringValue ?? fitsImage.metadata["IMAGETYP"]?.stringValue {
             frameType = Frame.frameType(from: s)
         }
+        // Upgrade to master variant when ISMASTER = T (written by AstrophotoKit calibration pipelines).
+        if fitsImage.metadata["ISMASTER"]?.boolValue == true, let master = frameType.masterVariant {
+            frameType = master
+        }
 
         // Extract filter using case-insensitive alias matching (rawValue lookup is insufficient
         // because the enum uses Unicode chars like Hɑ and uppercase names like OIII/SII).

@@ -26,6 +26,9 @@ steps:
         from: darkflat_frames
         is_collection: true
         collection_mode: together
+        metadata_restrictions:
+          frame_type:
+            - darkFlat
         description: Dark flat frames to stack
     parameters:
       - name: method
