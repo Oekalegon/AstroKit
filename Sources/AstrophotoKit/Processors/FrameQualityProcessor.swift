@@ -183,7 +183,9 @@ public struct FrameQualityProcessor: Processor {
             // suggested_max_fwhm_arcsec: 3× typical seeing with a 4″ floor (requires pixel scale).
             if let scale = inputFrame.pixelScale, scale > 0 {
                 let fwhmArcsec = fwhm * scale
-                df.append(column: Column(name: "suggested_max_fwhm_arcsec", contents: [max(4.0, 3.0 * fwhmArcsec)]))
+                // 1.5× gives headroom for seeing variation without letting galaxy
+                // features through. 3× was too loose — galaxy cores at 15+ arcsec passed.
+                df.append(column: Column(name: "suggested_max_fwhm_arcsec", contents: [max(4.0, 1.5 * fwhmArcsec)]))
             }
         }
 
