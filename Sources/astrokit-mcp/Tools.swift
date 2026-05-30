@@ -248,17 +248,37 @@ struct Tools {
             } else {
                 throw ToolError("Multiple pipeline inputs detected; specify input_name.")
             }
-            var frames: [Frame] = []
-            for af in archivedFrames {
-                guard FileManager.default.fileExists(atPath: af.filePath) else {
-                    throw ToolError("Archive frame file not found on disk: \(af.filePath)")
+            // Determine whether the pipeline consumes its top-level input as a FrameSet
+            // (stacking/registration pipelines) or as individual Frames (analysis pipelines
+            // such as frame_quality, star_detection, optical_quality).
+            let topLevelInputType = pipeline.steps.flatMap { $0.dataInputs }
+                .first { !$0.from.contains(".") && $0.name == resolvedName }?.type
+
+            if topLevelInputType == .frameSet {
+                // Frameset-native pipeline: pass all frames together.
+                var frames: [Frame] = []
+                for af in archivedFrames {
+                    guard FileManager.default.fileExists(atPath: af.filePath) else {
+                        throw ToolError("Archive frame file not found on disk: \(af.filePath)")
+                    }
+                    let fitsFile = try FITSFile(path: af.filePath)
+                    let img = try fitsFile.readFITSImage()
+                    let frame = try Frame(fitsImage: img, device: device, filePath: af.filePath)
+                    frames.append(frame)
                 }
-                let fitsFile = try FITSFile(path: af.filePath)
-                let img = try fitsFile.readFITSImage()
-                let frame = try Frame(fitsImage: img, device: device, filePath: af.filePath)
-                frames.append(frame)
+                pipelineInputs[resolvedName] = FrameSet(frames: frames, outputProcess: nil, inputProcesses: [])
+            } else {
+                // Single-frame pipeline: run once per archive frame and back-update quality.
+                return try await runPipelinePerFrame(
+                    pipelineID: pipelineID,
+                    pipeline: pipeline,
+                    resolvedInputName: resolvedName,
+                    archivedFrames: archivedFrames,
+                    parameters: parameters,
+                    device: device,
+                    commandQueue: commandQueue
+                )
             }
-            pipelineInputs[resolvedName] = FrameSet(frames: frames, outputProcess: nil, inputProcesses: [])
         } else if let frameID = inputFrameID {
             guard let uuid = UUID(uuidString: frameID) else {
                 throw ToolError("input_frame_id must be a valid UUID: \(frameID)")
@@ -434,6 +454,61 @@ struct Tools {
     }
 
     // MARK: - Helpers
+
+    /// Runs a single-frame pipeline once per archive frame and back-updates quality metrics.
+    /// Used when `input_frameset_id` is provided to a pipeline that expects individual frames.
+    private func runPipelinePerFrame(
+        pipelineID: String,
+        pipeline: Pipeline,
+        resolvedInputName: String,
+        archivedFrames: [ArchivedFrame],
+        parameters: [String: Parameter],
+        device: MTLDevice,
+        commandQueue: MTLCommandQueue
+    ) async throws -> String {
+        let start = Date()
+        var processedCount = 0
+        var errorCount = 0
+        var qualityNotes: [String] = []
+
+        for af in archivedFrames {
+            guard FileManager.default.fileExists(atPath: af.filePath) else {
+                errorCount += 1
+                continue
+            }
+            do {
+                let fitsFile = try FITSFile(path: af.filePath)
+                let img = try fitsFile.readFITSImage()
+                let frame = try Frame(fitsImage: img, device: device, filePath: af.filePath)
+
+                let runner = PipelineRunner(pipeline: pipeline)
+                let outputs = try await runner.execute(
+                    inputs: [resolvedInputName: frame],
+                    parameters: parameters,
+                    device: device,
+                    commandQueue: commandQueue
+                )
+
+                let tables = outputs.compactMap { $0 as? TableData }.filter { $0.isInstantiated }
+                if let note = await backUpdateQuality(tables: tables, inputFrameID: af.id, inputFilePath: nil) {
+                    qualityNotes.append(note)
+                }
+                processedCount += 1
+            } catch {
+                errorCount += 1
+            }
+        }
+
+        let elapsed = Date().timeIntervalSince(start)
+        var lines = [
+            "Pipeline '\(pipelineID)' completed in \(String(format: "%.2f", elapsed))s.",
+            "\(processedCount) frame(s) processed" + (errorCount > 0 ? ", \(errorCount) failed." : "."),
+        ]
+        if !qualityNotes.isEmpty {
+            lines.append(contentsOf: qualityNotes)
+        }
+        return lines.joined(separator: "\n")
+    }
 
     private func autoArchiveResults(
         frames: [Frame],
