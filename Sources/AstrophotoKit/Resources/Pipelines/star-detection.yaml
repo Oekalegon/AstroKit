@@ -64,15 +64,10 @@ steps:
         from: blur.blurred_frame
         description: The blurred frame to estimate background from
     parameters:
-      - name: window_size
-        default_value: 50
-        description: Window size for local median estimation (should be larger than largest stars)
-      - name: histogram_bins
-        default_value: 128
-        description: Number of histogram bins for median calculation (more bins = more accurate but slower)
-      - name: sample_step_threshold
-        default_value: 30
-        description: Window size threshold above which to sample every 2nd pixel (larger = more accurate but slower)
+      - name: cell_size
+        from: cell_size
+        default_value: 64
+        description: Mesh cell size in pixels; increase for large galaxies or nebulae
     outputs:
       - name: background_frame
         type: frame

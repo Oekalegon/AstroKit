@@ -58,12 +58,10 @@ steps:
         from: blur.blurred_frame
         description: Blurred frame
     parameters:
-      - name: window_size
-        default_value: 50
-      - name: histogram_bins
-        default_value: 128
-      - name: sample_step_threshold
-        default_value: 30
+      - name: cell_size
+        from: cell_size
+        default_value: 64
+        description: Mesh cell size in pixels
     outputs:
       - name: background_frame
         type: frame
