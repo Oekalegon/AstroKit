@@ -435,14 +435,15 @@ public struct BackgroundEstimationProcessor: Processor {
     }
 
     /// Compute NMAD (Normalised Median Absolute Deviation) of signed (input − background)
-    /// residuals as a robust per-pixel noise sigma estimate.
+    /// residuals using two GPU histogram passes — no texture blit to CPU required.
     ///
-    /// The background-subtraction shader clamps its output to [0, 1], so reading the
-    /// already-subtracted texture would give a half-normal distribution whose NMAD collapses
-    /// to ~0.  Instead we blit both textures and compute the signed difference on the CPU
-    /// so the full noise distribution (including negative sky fluctuations) is preserved.
+    /// Pass 1: `build_residual_histogram` accumulates a histogram of (input[i] − background[i])
+    ///         over the full image. CPU walks the histogram to find the median.
+    /// Pass 2: `build_residual_mad_histogram` accumulates a histogram of
+    ///         |input[i] − background[i] − median|. CPU walks to find the MAD.
     ///
     /// Stars are large positive outliers; the median-based statistic naturally suppresses them.
+    /// The only data transferred CPU←GPU are two 512-int histograms (~2 KB total).
     ///
     /// Formula: σ_NMAD = 1.4826 × median(|xi − median(x)|)
     private func calculateNoiseSigma(
@@ -451,60 +452,105 @@ public struct BackgroundEstimationProcessor: Processor {
         device: MTLDevice,
         commandQueue: MTLCommandQueue
     ) throws -> Double {
-        let sampleRate = 10
-        let width  = inputTexture.width
-        let height = inputTexture.height
-        let sampleWidth  = max(1, width  / sampleRate)
-        let sampleHeight = max(1, height / sampleRate)
-        let bytesPerRow = sampleWidth * MemoryLayout<Float32>.size
-        let bufferSize  = bytesPerRow * sampleHeight
+        let numBins = 512
+        // ±10 % of the normalised [0, 1] range covers all practical sky-noise cases.
+        // Residuals outside this window (stars, hot pixels) clamp to boundary bins and
+        // do not affect the median of the sky-dominated distribution.
+        let residualRange: Float = 0.1
 
-        guard let inputBuf = device.makeBuffer(length: bufferSize, options: [.storageModeShared]),
-              let bgBuf    = device.makeBuffer(length: bufferSize, options: [.storageModeShared]) else {
-            throw ProcessorExecutionError.couldNotCreateResource("Could not create noise-sigma read buffers")
+        let library = try ProcessorHelpers.loadShaderLibrary(device: device)
+        guard let histFn = library.makeFunction(name: "build_residual_histogram"),
+              let madFn  = library.makeFunction(name: "build_residual_mad_histogram") else {
+            throw ProcessorExecutionError.couldNotCreateResource("Could not load residual histogram shader functions")
         }
-        guard let commandBuffer = commandQueue.makeCommandBuffer(),
-              let blitEncoder   = commandBuffer.makeBlitCommandEncoder() else {
-            throw ProcessorExecutionError.couldNotCreateResource("Could not create command buffer for noise sigma")
+        let histPSO = try ProcessorHelpers.createComputePipelineState(function: histFn, device: device)
+        let madPSO  = try ProcessorHelpers.createComputePipelineState(function: madFn,  device: device)
+
+        let histByteCount = numBins * MemoryLayout<Int32>.size
+        guard let histBuf = device.makeBuffer(length: histByteCount, options: [.storageModeShared]),
+              let madBuf  = device.makeBuffer(length: histByteCount, options: [.storageModeShared]) else {
+            throw ProcessorExecutionError.couldNotCreateResource("Could not create NMAD histogram buffers")
         }
+        memset(histBuf.contents(), 0, histByteCount)
+        memset(madBuf.contents(),  0, histByteCount)
 
-        let origin = MTLOrigin(x: 0, y: 0, z: 0)
-        let size   = MTLSize(width: sampleWidth, height: sampleHeight, depth: 1)
-        blitEncoder.copy(from: inputTexture, sourceSlice: 0, sourceLevel: 0,
-                         sourceOrigin: origin, sourceSize: size,
-                         to: inputBuf, destinationOffset: 0,
-                         destinationBytesPerRow: bytesPerRow, destinationBytesPerImage: bufferSize)
-        blitEncoder.copy(from: backgroundTexture, sourceSlice: 0, sourceLevel: 0,
-                         sourceOrigin: origin, sourceSize: size,
-                         to: bgBuf, destinationOffset: 0,
-                         destinationBytesPerRow: bytesPerRow, destinationBytesPerImage: bufferSize)
-        blitEncoder.endEncoding()
-        try ProcessorHelpers.executeCommandBuffer(commandBuffer)
+        var numBinsInt  = Int32(numBins)
+        var minResidual = -residualRange
+        var maxResidual =  residualRange
+        let numBinsBuf  = try ProcessorHelpers.createBuffer(from: &numBinsInt,  device: device)
+        let minResBuf   = try ProcessorHelpers.createBuffer(from: &minResidual, device: device)
+        let maxResBuf   = try ProcessorHelpers.createBuffer(from: &maxResidual, device: device)
 
-        let count    = sampleWidth * sampleHeight
-        let inputPtr = inputBuf.contents().bindMemory(to: Float32.self, capacity: count)
-        let bgPtr    = bgBuf.contents().bindMemory(to: Float32.self, capacity: count)
-        var residuals = (0..<count).map { Double(inputPtr[$0]) - Double(bgPtr[$0]) }
-        guard !residuals.isEmpty else { return 0 }
+        let (tgSize, tgPerGrid) = ProcessorHelpers.calculateThreadgroups(for: inputTexture)
 
-        residuals.sort()
-        let med: Double = {
-            let n = residuals.count
-            return n % 2 == 0
-                ? (residuals[n / 2 - 1] + residuals[n / 2]) / 2.0
-                : residuals[n / 2]
-        }()
+        // Pass 1: histogram of (input − background) over the full image
+        let cb1  = try ProcessorHelpers.createCommandBuffer(commandQueue: commandQueue)
+        let enc1 = try ProcessorHelpers.createComputeEncoder(commandBuffer: cb1)
+        enc1.setComputePipelineState(histPSO)
+        enc1.setTexture(inputTexture,      index: 0)
+        enc1.setTexture(backgroundTexture, index: 1)
+        enc1.setBuffer(histBuf,    offset: 0, index: 0)
+        enc1.setBuffer(numBinsBuf, offset: 0, index: 1)
+        enc1.setBuffer(minResBuf,  offset: 0, index: 2)
+        enc1.setBuffer(maxResBuf,  offset: 0, index: 3)
+        enc1.dispatchThreadgroups(tgPerGrid, threadsPerThreadgroup: tgSize)
+        enc1.endEncoding()
+        try ProcessorHelpers.executeCommandBuffer(cb1)
 
-        var absDevs = residuals.map { abs($0 - med) }
-        absDevs.sort()
-        let medAbsDev: Double = {
-            let n = absDevs.count
-            return n % 2 == 0
-                ? (absDevs[n / 2 - 1] + absDevs[n / 2]) / 2.0
-                : absDevs[n / 2]
-        }()
+        // Find median from pass-1 histogram (CPU, O(numBins))
+        let histPtr   = histBuf.contents().bindMemory(to: Int32.self, capacity: numBins)
+        let histArray = Array(UnsafeBufferPointer(start: histPtr, count: numBins))
+        let totalPixels = histArray.reduce(0) { $0 + Int($1) }
+        let medianResidual = medianFromHistogram(
+            histArray, numBins: numBins, total: totalPixels,
+            minVal: Double(minResidual), maxVal: Double(maxResidual)
+        )
 
-        return 1.4826 * medAbsDev
+        // Pass 2: histogram of |residual − median|, range [0, residualRange]
+        var medianFloat = Float(medianResidual)
+        var maxAbsDev   = residualRange
+        let medBuf    = try ProcessorHelpers.createBuffer(from: &medianFloat, device: device)
+        let maxAbsBuf = try ProcessorHelpers.createBuffer(from: &maxAbsDev,   device: device)
+
+        let cb2  = try ProcessorHelpers.createCommandBuffer(commandQueue: commandQueue)
+        let enc2 = try ProcessorHelpers.createComputeEncoder(commandBuffer: cb2)
+        enc2.setComputePipelineState(madPSO)
+        enc2.setTexture(inputTexture,      index: 0)
+        enc2.setTexture(backgroundTexture, index: 1)
+        enc2.setBuffer(madBuf,     offset: 0, index: 0)
+        enc2.setBuffer(numBinsBuf, offset: 0, index: 1)
+        enc2.setBuffer(maxAbsBuf,  offset: 0, index: 2)
+        enc2.setBuffer(medBuf,     offset: 0, index: 3)
+        enc2.dispatchThreadgroups(tgPerGrid, threadsPerThreadgroup: tgSize)
+        enc2.endEncoding()
+        try ProcessorHelpers.executeCommandBuffer(cb2)
+
+        // Find MAD from pass-2 histogram (CPU, O(numBins))
+        let madPtr   = madBuf.contents().bindMemory(to: Int32.self, capacity: numBins)
+        let madArray = Array(UnsafeBufferPointer(start: madPtr, count: numBins))
+        let mad = medianFromHistogram(
+            madArray, numBins: numBins, total: totalPixels,
+            minVal: 0.0, maxVal: Double(maxAbsDev)
+        )
+
+        return 1.4826 * mad
+    }
+
+    private func medianFromHistogram(
+        _ histogram: [Int32], numBins: Int, total: Int,
+        minVal: Double, maxVal: Double
+    ) -> Double {
+        guard total > 0 else { return 0 }
+        let half = (total + 1) / 2
+        let binWidth = (maxVal - minVal) / Double(numBins)
+        var cumulative = 0
+        for (i, count) in histogram.enumerated() {
+            cumulative += Int(count)
+            if cumulative >= half {
+                return minVal + (Double(i) + 0.5) * binWidth
+            }
+        }
+        return maxVal
     }
 
     /// Calculate progressive window sizes for multi-pass approach
