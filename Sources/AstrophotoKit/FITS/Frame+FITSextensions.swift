@@ -87,6 +87,12 @@ extension Frame {
             if let v = fitsImage.metadata[key]?.doubleValue, v > 0 { pixelScale = v; break }
         }
 
+        // Extract CCD/sensor temperature in degrees Celsius.
+        var ccdTemperature: Double? = nil
+        for key in ["CCD-TEMP", "CCDTEMP", "SETTEMP", "SET-TEMP"] {
+            if let v = fitsImage.metadata[key]?.doubleValue { ccdTemperature = v; break }
+        }
+
         // Extract camera offset / bias pedestal.
         var offset: Double? = nil
         if let v = fitsImage.metadata["OFFSET"]?.doubleValue {
@@ -115,7 +121,8 @@ extension Frame {
             fitsMinValue: Double(fitsImage.originalMinValue),
             fitsMaxValue: Double(fitsImage.originalMaxValue),
             egain: egain,
-            pixelScale: pixelScale
+            pixelScale: pixelScale,
+            ccdTemperature: ccdTemperature
         )
     }
 
