@@ -37,7 +37,7 @@ steps:
         description: Maximum residual in pixels for a point pair to be considered an inlier
       - name: blur_radius
         from: blur_radius
-        default_value: 3.0
+        default_value: 1.5
         description: Gaussian blur radius in pixels applied before star detection
       - name: threshold_value
         from: threshold_value

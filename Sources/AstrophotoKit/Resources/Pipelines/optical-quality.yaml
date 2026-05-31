@@ -39,7 +39,7 @@ steps:
     parameters:
       - name: radius
         from: blur_radius
-        default_value: 3.0
+        default_value: 1.5
         description: Blur radius in pixels
     outputs:
       - name: blurred_frame
