@@ -84,70 +84,52 @@ public struct FITSCrossSectionView: View {
     }
 
     private func textureCenterRow(_ texture: MTLTexture) -> [Float] {
-        let w = texture.width, h = texture.height
-        let centerY = h / 2
-        guard let device = MetalShared.device,
-              let queue = MetalShared.queue else { return [] }
-
-        let isRGBA = isRGBAFormat(texture.pixelFormat)
-        let bpp = isRGBA ? MemoryLayout<Float32>.size * 4 : MemoryLayout<Float32>.size
-        let alignedBPR = ((w * bpp + 15) / 16) * 16
-
-        guard let buf  = device.makeBuffer(length: alignedBPR, options: .storageModeShared),
-              let cmd  = queue.makeCommandBuffer(),
-              let blit = cmd.makeBlitCommandEncoder() else { return [] }
-
-        blit.copy(from: texture, sourceSlice: 0, sourceLevel: 0,
-                  sourceOrigin: MTLOrigin(x: 0, y: centerY, z: 0),
-                  sourceSize: MTLSize(width: w, height: 1, depth: 1),
-                  to: buf, destinationOffset: 0,
-                  destinationBytesPerRow: alignedBPR, destinationBytesPerImage: alignedBPR)
-        blit.endEncoding()
-        cmd.commit(); cmd.waitUntilCompleted()
-        guard cmd.error == nil else { return [] }
-
-        let ptr = buf.contents().bindMemory(to: Float32.self, capacity: isRGBA ? w * 4 : w)
-        let range = textureMaxValue - textureMinValue
-        return (0..<w).map { x in
-            let norm = isRGBA ? ptr[x * 4] : ptr[x]
-            return textureMinValue + norm * range
-        }
+        computeCrossSection(texture: texture,
+                            pipeline: MetalShared.crossSectionRowPipeline,
+                            count: texture.width,
+                            coord: UInt32(texture.height / 2))
     }
 
     private func textureCenterColumn(_ texture: MTLTexture) -> [Float] {
-        let w = texture.width, h = texture.height
-        let centerX = w / 2
-        guard let device = MetalShared.device,
-              let queue = MetalShared.queue else { return [] }
+        computeCrossSection(texture: texture,
+                            pipeline: MetalShared.crossSectionColumnPipeline,
+                            count: texture.height,
+                            coord: UInt32(texture.width / 2))
+    }
 
-        let isRGBA = isRGBAFormat(texture.pixelFormat)
-        let bpp = isRGBA ? MemoryLayout<Float32>.size * 4 : MemoryLayout<Float32>.size
-        let alignedBPR = ((w * bpp + 15) / 16) * 16
-        let bufSize = alignedBPR * h
+    /// Dispatches a 1D compute kernel that reads one row or column from `texture` into a float buffer,
+    /// then denormalizes the results back into the original value range.
+    private func computeCrossSection(
+        texture: MTLTexture,
+        pipeline: MTLComputePipelineState?,
+        count: Int,
+        coord: UInt32
+    ) -> [Float] {
+        guard let device   = MetalShared.device,
+              let queue    = MetalShared.queue,
+              let pipeline else { return [] }
 
-        guard let buf  = device.makeBuffer(length: bufSize, options: .storageModeShared),
-              let cmd  = queue.makeCommandBuffer(),
-              let blit = cmd.makeBlitCommandEncoder() else { return [] }
+        let bufSize = count * MemoryLayout<Float>.size
+        guard let outBuf = device.makeBuffer(length: bufSize, options: .storageModeShared),
+              let cmd     = queue.makeCommandBuffer(),
+              let enc     = cmd.makeComputeCommandEncoder() else { return [] }
 
-        blit.copy(from: texture, sourceSlice: 0, sourceLevel: 0,
-                  sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
-                  sourceSize: MTLSize(width: w, height: h, depth: 1),
-                  to: buf, destinationOffset: 0,
-                  destinationBytesPerRow: alignedBPR, destinationBytesPerImage: bufSize)
-        blit.endEncoding()
+        var coordVal = coord
+        enc.setComputePipelineState(pipeline)
+        enc.setTexture(texture, index: 0)
+        enc.setBuffer(outBuf, offset: 0, index: 0)
+        enc.setBytes(&coordVal, length: MemoryLayout<UInt32>.size, index: 1)
+
+        let tgSize  = min(pipeline.maxTotalThreadsPerThreadgroup, 256)
+        let tgCount = (count + tgSize - 1) / tgSize
+        enc.dispatchThreadgroups(MTLSize(width: tgCount, height: 1, depth: 1),
+                                 threadsPerThreadgroup: MTLSize(width: tgSize, height: 1, depth: 1))
+        enc.endEncoding()
         cmd.commit(); cmd.waitUntilCompleted()
         guard cmd.error == nil else { return [] }
 
-        let stride = alignedBPR / MemoryLayout<Float32>.size
-        let ptr = buf.contents().bindMemory(to: Float32.self, capacity: isRGBA ? w * h * 4 : w * h)
+        let ptr   = outBuf.contents().bindMemory(to: Float.self, capacity: count)
         let range = textureMaxValue - textureMinValue
-        return (0..<h).map { y in
-            let idx = y * stride + (isRGBA ? centerX * 4 : centerX)
-            return textureMinValue + ptr[idx] * range
-        }
-    }
-
-    private func isRGBAFormat(_ format: MTLPixelFormat) -> Bool {
-        format == .rgba32Float || format == .rgba16Float || format == .rgba8Unorm
+        return (0..<count).map { textureMinValue + ptr[$0] * range }
     }
 }
