@@ -122,6 +122,8 @@ ap run star_detection --input M51.fits --json
 
 | ID | Description |
 |----|-------------|
+| `frame_quality` | Measure per-frame quality: star count, FWHM, eccentricity, SNR, and background statistics |
+| `calibration_quality` | Measure calibration-frame quality: noise sigma, mean level, hot pixels |
 | `star_detection` | Detect stars, measure FWHM/eccentricity, and update the source FITS file |
 | `optical_quality` | Measure optical quality metrics |
 | `collimation_reflector` | Mirror collimation analysis |
@@ -297,6 +299,80 @@ ap run star_detection --input M51.fits
 ```
 
 > **Note:** This in-place update only occurs when the input file has an accessible path on disk. Frames created programmatically (e.g. in-memory pipeline chains) are skipped without error.
+
+---
+
+## Frame quality pipeline
+
+The `frame_quality` pipeline runs on a single archived light frame and writes quality metrics back to the archive. Results are also archived automatically when `ASTROARCHIVE_PATH` is set.
+
+```bash
+# Run on a single file:
+ap run frame_quality --input image.fits
+
+# Run on every frame in an archive frameset (reads UUID from archive):
+ap run frame_quality --input @frameset:3F7A1234-…
+
+# Or use the dedicated frameset command (skips frames that already have metrics):
+ap-archive frameset quality 3F7A1234-…
+ap-archive frameset quality 3F7A1234-… --force          # re-run all
+```
+
+### Output columns
+
+The pipeline produces a single-row `frame_quality` table:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `star_count` | integer | Genuine point sources: saturated stars + unsaturated sources that passed the FWHM and eccentricity filters. |
+| `saturated_star_count` | integer | Stars whose peak pixel ≥ 90 % of full-scale. |
+| `excluded_source_count` | integer | Blobs rejected as non-stellar by `max_fwhm_arcsec` or `max_eccentricity` (galaxy cores, nebulae, cosmic rays, satellite trails). |
+| `median_fwhm` | number | Median FWHM in pixels (average of major + minor axes). Sources above `max_fwhm_arcsec` or `max_eccentricity` are excluded. |
+| `median_eccentricity` | number | Median eccentricity 0–1 (0 = circular). Same exclusion filters as `median_fwhm`. |
+| `median_snr` | number | Median peak SNR of non-outlier, non-saturated sources (peak signal / background noise). Only present when pixel scale or FITS scale info is available for noise conversion. |
+| `low_snr_count` | integer | Number of sources with peak SNR below `low_snr_threshold` (default 5). |
+| `background_level` | number | Normalised sky background level 0–1 (backward compatibility). |
+| `threshold_sigma_used` | number | The `threshold_value` sigma multiplier that was active during detection. |
+| `background_level_adu` | number | Sky background in ADU (requires FITS scale info). |
+| `background_noise_sigma_adu` | number | Per-pixel sky noise sigma in ADU (NMAD of the background-subtracted frame). The key metric for judging detection sensitivity. |
+| `effective_detection_threshold_adu` | number | ADU value a source must exceed to be detected: `background_adu + threshold_sigma × noise_sigma_adu`. |
+| `background_level_electrons` | number | Sky background in electrons (requires EGAIN in FITS header). Cross-camera comparable. |
+| `suggested_threshold_value` | number | Recommended `threshold_value` for re-running: `clamp(median_snr / 3, 1.5, 5.0)`. Present only when `median_snr` is available. |
+| `suggested_blur_radius` | number | Recommended `blur_radius` for re-running: `clamp(median_fwhm / 4, 1.0, 5.0)`. Present only when `median_fwhm` is available. |
+| `suggested_max_fwhm_arcsec` | number | Recommended `max_fwhm_arcsec` cutoff: `max(4.0, 3 × median_fwhm_arcsec)`. Present only when `median_fwhm` and `PIXSCALE` are available. |
+
+### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `threshold_value` | 3.0 | Sigma multiplier for the binary threshold step. Also determines `effective_detection_threshold_adu`. |
+| `max_fwhm_arcsec` | 8.0 | Exclude sources with FWHM above this value (arcseconds) from the seeing statistics. Requires `PIXSCALE` in the FITS header. Galaxy cores and extended nebulae are automatically filtered. |
+| `max_eccentricity` | 0.9 | Exclude sources with eccentricity above this value from the statistics. Filters cosmic rays and satellite trails. |
+| `low_snr_threshold` | 5.0 | Peak SNR below which a source is counted in `low_snr_count`. |
+
+### Interpreting the output
+
+The `background_noise_sigma_adu` and `effective_detection_threshold_adu` columns are particularly useful for narrowband data:
+
+- A high `background_noise_sigma_adu` relative to `background_level_adu` indicates a noisy sky or insufficient integration time.
+- Comparing `effective_detection_threshold_adu` across frames with different `threshold_value` settings lets you tune detection sensitivity without re-running the pipeline.
+- `median_snr` < 5 on most sources suggests the frame is under-exposed or the seeing was poor. For narrowband, values of 5–15 are typical for reasonable sub-frames.
+- `low_snr_count` close to `star_count` means most detections are marginal; consider raising `threshold_value` to reduce false positives.
+
+### Parameter suggestions
+
+The `suggested_*` columns give ready-to-use values for a follow-up run:
+
+```bash
+# Read suggestions from the first run, then re-run with them:
+ap run frame_quality --input M51.fits \
+  --param threshold_value=2.1 \
+  --param blur_radius=1.8
+```
+
+- **`suggested_threshold_value`** lowers the threshold when sources are bright (high `median_snr`), and raises it when they are marginal. Formula: `clamp(median_snr / 3, 1.5, 5.0)`.
+- **`suggested_blur_radius`** matches the blur kernel to the measured PSF size so noise smoothing doesn't smear stars. Formula: `clamp(median_fwhm / 4, 1.0, 5.0)`.
+- **`suggested_max_fwhm_arcsec`** sets the extended-source cutoff to three times the measured seeing, with a 4″ floor. Requires `PIXSCALE` in the FITS header.
 
 ---
 

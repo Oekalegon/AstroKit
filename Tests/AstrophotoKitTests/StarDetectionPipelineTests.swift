@@ -148,7 +148,7 @@ func testStarDetectionPipelineWithOverlay() async throws {
         #expect(backgroundLevelTable.isInstantiated, "Background level table should be instantiated")
         #expect(backgroundLevelTable.dataFrame != nil, "Background level table should have DataFrame")
         #expect(backgroundLevelTable.rowCount == 1, "Background level table should have 1 row")
-        #expect(backgroundLevelTable.columnCount == 1, "Background level table should have 1 column")
+        #expect(backgroundLevelTable.columnCount >= 1, "Background level table should have at least 1 column")
         print("✓ Background level table: \(backgroundLevelTable.rowCount) row(s), " +
               "\(backgroundLevelTable.columnCount) column(s)")
     }
@@ -203,11 +203,10 @@ func testStarDetectionPipelineWithOverlay() async throws {
         print("✓ Dilated frame: \(dilatedFrame.texture!.width)x\(dilatedFrame.texture!.height)")
     }
 
-    // Check for pixel_coordinates table output (from seventh step)
-    // Find data by stepLinkID: "connected_components.pixel_coordinates"
+    // Check for pixel_coordinates table output (from fwhm step)
     let pixelCoordinatesData = outputs.first { data in
         if case .output(_, _, _, let stepLinkID) = data.outputLink {
-            return stepLinkID == "connected_components.pixel_coordinates"
+            return stepLinkID == "fwhm.pixel_coordinates"
         }
         return false
     }
@@ -283,7 +282,8 @@ func testStarDetectionPipelineWithOverlay() async throws {
     let thresholdProcess = processes.first { $0.stepIdentifier == "threshold" }
     let erosionProcess = processes.first { $0.stepIdentifier == "erosion" }
     let dilationProcess = processes.first { $0.stepIdentifier == "dilation" }
-    let connectedComponentsProcess = processes.first { $0.stepIdentifier == "connected_components" }
+    let localMaximaProcess = processes.first { $0.stepIdentifier == "local_maxima" }
+    let fwhmProcess = processes.first { $0.stepIdentifier == "fwhm" }
     let fitsCatalogWriterProcess = processes.first { $0.stepIdentifier == "fits_catalog_writer" }
     let quadsProcess = processes.first { $0.stepIdentifier == "quads" }
     let overlayProcess = processes.first { $0.stepIdentifier == "overlay" }
@@ -294,16 +294,17 @@ func testStarDetectionPipelineWithOverlay() async throws {
     #expect(thresholdProcess != nil, "Should have threshold process")
     #expect(erosionProcess != nil, "Should have erosion process")
     #expect(dilationProcess != nil, "Should have dilation process")
-    #expect(connectedComponentsProcess != nil, "Should have connected_components process")
+    #expect(localMaximaProcess != nil, "Should have local_maxima process")
+    #expect(fwhmProcess != nil, "Should have fwhm process")
     #expect(fitsCatalogWriterProcess != nil, "Should have fits_catalog_writer process")
     #expect(quadsProcess != nil, "Should have quads process")
     #expect(overlayProcess != nil, "Should have overlay process")
 
     // Verify all processes have completed
     let allProcesses = [grayscaleProcess, blurProcess, backgroundProcess, thresholdProcess,
-                        erosionProcess, dilationProcess, connectedComponentsProcess,
+                        erosionProcess, dilationProcess, localMaximaProcess, fwhmProcess,
                         fitsCatalogWriterProcess, quadsProcess, overlayProcess].compactMap { $0 }
-    #expect(allProcesses.count == 10, "Should have 10 processes")
+    #expect(allProcesses.count == 11, "Should have 11 processes")
 
     for process in allProcesses {
         let isCompleted = process.statusHistory.contains { status in
@@ -335,8 +336,11 @@ func testStarDetectionPipelineWithOverlay() async throws {
     if let dilation = dilationProcess, let duration = dilation.duration {
         print("Dilation: \(String(format: "%.3f", duration))s")
     }
-    if let connectedComponents = connectedComponentsProcess, let duration = connectedComponents.duration {
-        print("Connected Components: \(String(format: "%.3f", duration))s")
+    if let localMaxima = localMaximaProcess, let duration = localMaxima.duration {
+        print("Local Maxima: \(String(format: "%.3f", duration))s")
+    }
+    if let fwhm = fwhmProcess, let duration = fwhm.duration {
+        print("FWHM: \(String(format: "%.3f", duration))s")
     }
     if let quads = quadsProcess, let duration = quads.duration {
         print("Quads: \(String(format: "%.3f", duration))s")

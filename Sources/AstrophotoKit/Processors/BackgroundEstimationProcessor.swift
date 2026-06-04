@@ -3,26 +3,45 @@ import Metal
 import os
 import TabularData
 
-/// Processor for estimating and subtracting background from frames
+/// Estimates and subtracts the sky background using a mesh-based approach.
+///
+/// The image is divided into a grid of `cell_size × cell_size` pixel cells.  Each cell
+/// computes a sigma-clipped median of its pixel values on the GPU (one threadgroup per
+/// cell, 64 threads sharing a 256-bin histogram).  A single sigma-clipping pass rejects
+/// bright outliers (stars, hot pixels, galaxy cores brighter than the cell sky floor)
+/// before computing the median.  The resulting sparse grid of background values is then
+/// bilinearly interpolated to full resolution and subtracted from the input frame.
+///
+/// This approach handles extended sources — galaxies, nebulae — far better than a
+/// per-pixel local-median window, because the cell size can be made large enough that
+/// each cell still samples enough sky even when an extended object fills part of the cell.
+/// Stars remain detectable as residuals above the smooth, interpolated background surface.
+///
+/// **Inputs**
+/// - `input_frame` (Frame) — grayscale frame to process.
+///
+/// **Outputs**
+/// - `background_frame`           (Frame)     — smooth background surface.
+/// - `background_subtracted_frame`(Frame)     — input minus background, clamped to [0, 1].
+/// - `background_level`           (TableData) — one-row table with background statistics.
+///
+/// **background_level columns**
+/// | Column                    | Description                                           |
+/// |---------------------------|-------------------------------------------------------|
+/// | `background_level`        | Mean background level, normalised 0–1.                |
+/// | `background_noise_sigma`  | Per-pixel sky noise σ (NMAD of signed residuals, 0–1).|
+/// | `background_level_adu`    | Background in ADU (when FITS scale info available).   |
+/// | `background_noise_sigma_adu` | Noise σ in ADU (when FITS scale info available).   |
+///
+/// **Parameters**
+/// - `cell_size` (default `64`) — mesh cell size in pixels.  Increase for frames dominated
+///   by a large galaxy or nebula (e.g. `128`–`256`).  The alias `window_size` is accepted
+///   for backward compatibility.
 public struct BackgroundEstimationProcessor: Processor {
 
     public var id: String { "background_estimation" }
-
     public init() {}
 
-    /// Execute the background estimation processor
-    /// - Parameters:
-    ///   - inputs: Dictionary containing "input_frame" -> ProcessData (Frame)
-    ///   - outputs: Dictionary containing:
-    ///     - "background_frame" -> ProcessData (Frame, to be instantiated)
-    ///     - "background_subtracted_frame" -> ProcessData (Frame, to be instantiated)
-    ///     - "background_level" -> ProcessData (TableData, to be instantiated).
-    ///       Contains `background_level` (normalised 0–1) and, when the input frame
-    ///       carries FITS scale info, `background_level_adu` (in ADU).
-    ///   - parameters: Dictionary (empty for this processor)
-    ///   - device: Metal device for GPU operations
-    ///   - commandQueue: Metal command queue for GPU operations
-    /// - Throws: ProcessorExecutionError if execution fails
     public func execute(
         inputs: [String: ProcessData],
         outputs: inout [String: ProcessData],
@@ -30,163 +49,73 @@ public struct BackgroundEstimationProcessor: Processor {
         device: MTLDevice,
         commandQueue: MTLCommandQueue
     ) throws {
-        // Validate input frame
         let (inputFrame, inputTexture) = try ProcessorHelpers.validateInputFrame(from: inputs)
 
         Logger.processor.debug(
-            "Estimating background (width: \(inputTexture.width), height: \(inputTexture.height))"
+            "Estimating background — mesh approach (image: \(inputTexture.width)×\(inputTexture.height))"
         )
 
-        // Get window size parameter (default: 50 to handle larger stars)
-        // Note: The window should be larger than the largest stars in the image
-        // A 50x50 window means 2500 reads per pixel, which is slower but more accurate
-        // For images with smaller stars, you can reduce this to improve performance
-        let windowSize: Int32
-        if let windowSizeParam = parameters["window_size"] {
-            if let intValue = windowSizeParam.intValue {
-                windowSize = Int32(intValue)
-            } else if let doubleValue = windowSizeParam.doubleValue {
-                windowSize = Int32(doubleValue)
-            } else {
-                throw ProcessorExecutionError.executionFailed("window_size parameter must be a number")
-            }
-        } else {
-            windowSize = 50  // Default: large enough to handle typical star sizes
-        }
+        // cell_size: how large each grid square is.  Larger = smoother background, better
+        // for extended objects.  window_size is accepted as a backward-compatible alias.
+        let cellSize: Int = {
+            let raw = (parameters["cell_size"] ?? parameters["window_size"])?.doubleValue
+            return max(8, Int(raw ?? 64))
+        }()
 
-        Logger.processor.debug("Using window size: \(windowSize)x\(windowSize)")
-
-        // Get histogram bins parameter (default: 128 for good performance/accuracy balance)
-        let numBins: Int32
-        if let numBinsParam = parameters["histogram_bins"] {
-            if let intValue = numBinsParam.intValue {
-                numBins = Int32(intValue)
-            } else if let doubleValue = numBinsParam.doubleValue {
-                numBins = Int32(doubleValue)
-            } else {
-                throw ProcessorExecutionError.executionFailed("histogram_bins parameter must be a number")
-            }
-        } else {
-            numBins = 128  // Default: good balance between performance and accuracy
-        }
-
-        // Get sample step threshold parameter (default: 30 - windows larger than this will sample every 2nd pixel)
-        let sampleStepThreshold: Int32
-        if let thresholdParam = parameters["sample_step_threshold"] {
-            if let intValue = thresholdParam.intValue {
-                sampleStepThreshold = Int32(intValue)
-            } else if let doubleValue = thresholdParam.doubleValue {
-                sampleStepThreshold = Int32(doubleValue)
-            } else {
-                throw ProcessorExecutionError.executionFailed("sample_step_threshold parameter must be a number")
-            }
-        } else {
-            sampleStepThreshold = 30  // Default: sample every 2nd pixel for windows > 30
-        }
-
-        Logger.processor.debug("Using histogram bins: \(numBins), sample step threshold: \(sampleStepThreshold)")
-
-        // Load shader library and functions
         let library = try ProcessorHelpers.loadShaderLibrary(device: device)
-        guard let localMedianFunction = library.makeFunction(name: "local_median"),
-              let localMedianSubtractFunction = library.makeFunction(name: "local_median_subtract") else {
-            throw ProcessorExecutionError.couldNotCreateResource(
-                "Could not load background estimation shader functions"
-            )
-        }
 
-        // Create compute pipeline states
-        let localMedianPipelineState = try ProcessorHelpers.createComputePipelineState(
-            function: localMedianFunction,
-            device: device
-        )
-        let localMedianSubtractPipelineState = try ProcessorHelpers.createComputePipelineState(
-            function: localMedianSubtractFunction,
-            device: device
-        )
-
-        // Image value range (assuming normalized [0, 1] for now)
-        let imageMinValue: Float = 0.0
-        let imageMaxValue: Float = 1.0
-
-        // Create textures
-        let backgroundDescriptor = ProcessorHelpers.createTextureDescriptor(
+        // Allocate output textures
+        let bgDesc = ProcessorHelpers.createTextureDescriptor(
             pixelFormat: inputTexture.pixelFormat,
             width: inputTexture.width,
             height: inputTexture.height
         )
-        let backgroundTexture = try ProcessorHelpers.createTexture(
-            descriptor: backgroundDescriptor,
-            device: device
-        )
+        let backgroundTexture = try ProcessorHelpers.createTexture(descriptor: bgDesc, device: device)
 
-        // Two intermediate textures for ping-pong buffering across multi-pass runs —
-        // reading and writing the same texture in one Metal dispatch is undefined behaviour.
-        let intermediateDescriptor = ProcessorHelpers.createTextureDescriptor(
+        let subDesc = ProcessorHelpers.createTextureDescriptor(
             pixelFormat: inputTexture.pixelFormat,
             width: inputTexture.width,
             height: inputTexture.height
         )
-        let intermediateTextureA = try ProcessorHelpers.createTexture(
-            descriptor: intermediateDescriptor,
-            device: device
-        )
-        let intermediateTextureB = try ProcessorHelpers.createTexture(
-            descriptor: intermediateDescriptor,
-            device: device
-        )
+        let subtractedTexture = try ProcessorHelpers.createTexture(descriptor: subDesc, device: device)
 
-        let subtractedDescriptor = ProcessorHelpers.createTextureDescriptor(
-            pixelFormat: inputTexture.pixelFormat,
-            width: inputTexture.width,
-            height: inputTexture.height
-        )
-        let subtractedTexture = try ProcessorHelpers.createTexture(
-            descriptor: subtractedDescriptor,
-            device: device
-        )
-
-        // Create parameter buffers (will be updated for each pass)
-        var minValue = imageMinValue
-        var maxValue = imageMaxValue
-        var numBinsInt = numBins
-        var sampleStepThresholdInt = sampleStepThreshold
-        let minValueBuffer = try ProcessorHelpers.createBuffer(from: &minValue, device: device)
-        let maxValueBuffer = try ProcessorHelpers.createBuffer(from: &maxValue, device: device)
-        let numBinsBuffer = try ProcessorHelpers.createBuffer(from: &numBinsInt, device: device)
-        let sampleStepThresholdBuffer = try ProcessorHelpers.createBuffer(from: &sampleStepThresholdInt, device: device)
-
-        // Multi-pass approach: progressively larger windows
-        let multiPassParams = MultiPassParams(
+        // Step 1 + 2: compute per-cell sigma-clipped medians → bilinear interpolation
+        try performMeshBackgroundEstimation(
             inputTexture: inputTexture,
             backgroundTexture: backgroundTexture,
-            intermediateTextureA: intermediateTextureA,
-            intermediateTextureB: intermediateTextureB,
-            windowSize: Int(windowSize),
-            localMedianPipelineState: localMedianPipelineState,
-            minValueBuffer: minValueBuffer,
-            maxValueBuffer: maxValueBuffer,
-            numBinsBuffer: numBinsBuffer,
-            sampleStepThresholdBuffer: sampleStepThresholdBuffer,
+            cellSize: cellSize,
+            library: library,
             device: device,
             commandQueue: commandQueue
         )
-        try performMultiPassBackgroundEstimation(params: multiPassParams)
 
-        // Final step: Subtract background from input
+        // Step 3: subtract (clamps to 0 — used by downstream threshold / detection steps)
+        guard let subtractFn = library.makeFunction(name: "local_median_subtract") else {
+            throw ProcessorExecutionError.couldNotCreateResource(
+                "Could not load local_median_subtract shader"
+            )
+        }
+        let subtractPSO = try ProcessorHelpers.createComputePipelineState(
+            function: subtractFn, device: device
+        )
+        var minVal: Float = 0.0
+        var maxVal: Float = 1.0
+        let minBuf = try ProcessorHelpers.createBuffer(from: &minVal, device: device)
+        let maxBuf = try ProcessorHelpers.createBuffer(from: &maxVal, device: device)
         try subtractBackgroundFromInput(
             inputTexture: inputTexture,
             backgroundTexture: backgroundTexture,
             subtractedTexture: subtractedTexture,
-            localMedianSubtractPipelineState: localMedianSubtractPipelineState,
-            minValueBuffer: minValueBuffer,
-            maxValueBuffer: maxValueBuffer,
+            subtractPipelineState: subtractPSO,
+            minValueBuffer: minBuf,
+            maxValueBuffer: maxBuf,
             commandQueue: commandQueue
         )
 
-        // Calculate average background level and update outputs
+        // Step 4: compute statistics and write output table / frames
         try finalizeOutputs(
             inputFrame: inputFrame,
+            inputTexture: inputTexture,
             backgroundTexture: backgroundTexture,
             subtractedTexture: subtractedTexture,
             outputs: &outputs,
@@ -195,261 +124,333 @@ public struct BackgroundEstimationProcessor: Processor {
         )
     }
 
-    /// Calculate average background level from background texture
-    /// - Parameters:
-    ///   - texture: The background texture
-    ///   - device: Metal device
-    ///   - commandQueue: Metal command queue
-    /// - Returns: Average background level
-    /// - Throws: ProcessorExecutionError if calculation fails
-    private func calculateAverageBackgroundLevel(
-        texture: MTLTexture,
+    // MARK: - Mesh background estimation
+
+    private func performMeshBackgroundEstimation(
+        inputTexture: MTLTexture,
+        backgroundTexture: MTLTexture,
+        cellSize: Int,
+        library: MTLLibrary,
         device: MTLDevice,
         commandQueue: MTLCommandQueue
-    ) throws -> Double {
-        // Sample a subset of pixels for performance (every 10th pixel)
-        let sampleRate = 10
-        let width = texture.width
-        let height = texture.height
-        let sampleWidth = max(1, width / sampleRate)
-        let sampleHeight = max(1, height / sampleRate)
-        let bytesPerRow = sampleWidth * MemoryLayout<Float32>.size
-        let bufferSize = bytesPerRow * sampleHeight
+    ) throws {
+        let numCellsX   = (inputTexture.width  + cellSize - 1) / cellSize
+        let numCellsY   = (inputTexture.height + cellSize - 1) / cellSize
+        let numCells    = numCellsX * numCellsY
+        let numHistBins = 256
 
-        guard let readBuffer = device.makeBuffer(length: bufferSize, options: [.storageModeShared]) else {
-            throw ProcessorExecutionError.couldNotCreateResource("Could not create read buffer")
-        }
+        Logger.processor.debug("Mesh grid: \(numCellsX)×\(numCellsY) cells (\(cellSize)px each)")
 
-        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
-            throw ProcessorExecutionError.couldNotCreateResource("Could not create command buffer")
-        }
-
-        guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else {
-            throw ProcessorExecutionError.couldNotCreateResource("Could not create blit encoder")
-        }
-
-        blitEncoder.copy(
-            from: texture,
-            sourceSlice: 0,
-            sourceLevel: 0,
-            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
-            sourceSize: MTLSize(width: sampleWidth, height: sampleHeight, depth: 1),
-            to: readBuffer,
-            destinationOffset: 0,
-            destinationBytesPerRow: bytesPerRow,
-            destinationBytesPerImage: bufferSize
-        )
-        blitEncoder.endEncoding()
-
-        try ProcessorHelpers.executeCommandBuffer(commandBuffer)
-
-        // Calculate average from sample
-        let pixelPointer = readBuffer.contents().bindMemory(to: Float32.self, capacity: sampleWidth * sampleHeight)
-        let pixels = Array(UnsafeBufferPointer(start: pixelPointer, count: sampleWidth * sampleHeight))
-        let average = pixels.reduce(0.0, +) / Float(pixels.count)
-
-        return Double(average)
-    }
-
-    /// Parameters for multi-pass background estimation
-    private struct MultiPassParams {
-        let inputTexture: MTLTexture
-        let backgroundTexture: MTLTexture
-        let intermediateTextureA: MTLTexture
-        let intermediateTextureB: MTLTexture
-        let windowSize: Int
-        let localMedianPipelineState: MTLComputePipelineState
-        let minValueBuffer: MTLBuffer
-        let maxValueBuffer: MTLBuffer
-        let numBinsBuffer: MTLBuffer
-        let sampleStepThresholdBuffer: MTLBuffer
-        let device: MTLDevice
-        let commandQueue: MTLCommandQueue
-    }
-
-    /// Perform multi-pass background estimation with progressively larger windows
-    /// - Parameter params: Multi-pass parameters
-    /// - Throws: ProcessorExecutionError if execution fails
-    private func performMultiPassBackgroundEstimation(params: MultiPassParams) throws {
-        // Start with small window and increase to target size
-        let windowSizes = calculateProgressiveWindowSizes(targetSize: params.windowSize)
-        Logger.processor.debug("Using multi-pass approach with window sizes: \(windowSizes)")
-
-        // Calculate threadgroups
-        let (threadgroupSize, threadgroupsPerGrid) = ProcessorHelpers.calculateThreadgroups(for: params.inputTexture)
-
-        // Multi-pass background estimation.
-        // Ping-pong between intermediateTextureA and intermediateTextureB so that no
-        // pass reads and writes the same texture — Metal does not permit that.
-        for (passIndex, passWindowSize) in windowSizes.enumerated() {
-            var windowSizeInt = Int32(passWindowSize)
-            let windowSizeBuffer = try ProcessorHelpers.createBuffer(from: &windowSizeInt, device: params.device)
-
-            // Create command buffer for this pass
-            let commandBuffer = try ProcessorHelpers.createCommandBuffer(commandQueue: params.commandQueue)
-
-            // Determine input and output textures for this pass.
-            // Pass 0: inputTexture → A
-            // Pass 1: A → B (or backgroundTexture if last)
-            // Pass 2: B → A (or backgroundTexture if last)
-            // ...
-            let passInputTexture: MTLTexture
-            let passOutputTexture: MTLTexture
-            if passIndex == 0 {
-                passInputTexture  = params.inputTexture
-                passOutputTexture = windowSizes.count == 1 ? params.backgroundTexture : params.intermediateTextureA
-            } else {
-                let readA = passIndex % 2 == 1
-                passInputTexture  = readA ? params.intermediateTextureA : params.intermediateTextureB
-                passOutputTexture = passIndex == windowSizes.count - 1
-                    ? params.backgroundTexture
-                    : (readA ? params.intermediateTextureB : params.intermediateTextureA)
-            }
-
-            // Estimate local median background with current window size
-            let encoder = try ProcessorHelpers.createComputeEncoder(commandBuffer: commandBuffer)
-            encoder.setComputePipelineState(params.localMedianPipelineState)
-            encoder.setTexture(passInputTexture, index: 0)
-            encoder.setTexture(passOutputTexture, index: 1)
-            encoder.setBuffer(windowSizeBuffer, offset: 0, index: 0)
-            encoder.setBuffer(params.minValueBuffer, offset: 0, index: 1)
-            encoder.setBuffer(params.maxValueBuffer, offset: 0, index: 2)
-            encoder.setBuffer(params.numBinsBuffer, offset: 0, index: 3)
-            encoder.setBuffer(params.sampleStepThresholdBuffer, offset: 0, index: 4)
-            encoder.dispatchThreadgroups(threadgroupsPerGrid, threadsPerThreadgroup: threadgroupSize)
-            encoder.endEncoding()
-
-            // Execute this pass
-            try ProcessorHelpers.executeCommandBuffer(commandBuffer)
-
-            Logger.processor.debug(
-                "Completed pass \(passIndex + 1)/\(windowSizes.count) with window size \(passWindowSize)"
+        guard let medianFn = library.makeFunction(name: "compute_mesh_cell_median"),
+              let interpFn = library.makeFunction(name: "interpolate_mesh_background") else {
+            throw ProcessorExecutionError.couldNotCreateResource(
+                "Could not load mesh background shader functions"
             )
         }
+        let medianPSO = try ProcessorHelpers.createComputePipelineState(function: medianFn, device: device)
+        let interpPSO = try ProcessorHelpers.createComputePipelineState(function: interpFn, device: device)
+
+        // Buffer that receives one Float32 per cell from the GPU
+        let cellBufLen = numCells * MemoryLayout<Float32>.size
+        guard let cellBuf = device.makeBuffer(length: cellBufLen, options: [.storageModeShared]) else {
+            throw ProcessorExecutionError.couldNotCreateResource("Could not create cell medians buffer")
+        }
+
+        var cellSizeInt    = Int32(cellSize)
+        var numCellsXInt   = Int32(numCellsX)
+        var numHistBinsInt = Int32(numHistBins)
+        let cellSizeBuf    = try ProcessorHelpers.createBuffer(from: &cellSizeInt,    device: device)
+        let numCellsXBuf   = try ProcessorHelpers.createBuffer(from: &numCellsXInt,   device: device)
+        let numHistBinsBuf = try ProcessorHelpers.createBuffer(from: &numHistBinsInt, device: device)
+
+        // Dispatch: one threadgroup per cell, 64 threads share a 256-bin histogram
+        let threadsPerGroup = 64
+        let tgMemSize       = numHistBins * MemoryLayout<Int32>.size
+
+        let cb1  = try ProcessorHelpers.createCommandBuffer(commandQueue: commandQueue)
+        let enc1 = try ProcessorHelpers.createComputeEncoder(commandBuffer: cb1)
+        enc1.setComputePipelineState(medianPSO)
+        enc1.setTexture(inputTexture,  index: 0)
+        enc1.setBuffer(cellBuf,        offset: 0, index: 0)
+        enc1.setBuffer(cellSizeBuf,    offset: 0, index: 1)
+        enc1.setBuffer(numCellsXBuf,   offset: 0, index: 2)
+        enc1.setBuffer(numHistBinsBuf, offset: 0, index: 3)
+        enc1.setThreadgroupMemoryLength(tgMemSize, index: 0)
+        enc1.dispatchThreadgroups(
+            MTLSize(width: numCellsX, height: numCellsY, depth: 1),
+            threadsPerThreadgroup: MTLSize(width: threadsPerGroup, height: 1, depth: 1)
+        )
+        enc1.endEncoding()
+        try ProcessorHelpers.executeCommandBuffer(cb1)
+
+        // Upload the small cell-median grid as an R32Float texture for bilinear sampling
+        let cellTexDesc             = MTLTextureDescriptor()
+        cellTexDesc.textureType     = .type2D
+        cellTexDesc.pixelFormat     = .r32Float
+        cellTexDesc.width           = numCellsX
+        cellTexDesc.height          = numCellsY
+        cellTexDesc.usage           = [.shaderRead]
+        cellTexDesc.storageMode     = .shared
+        guard let cellTex = device.makeTexture(descriptor: cellTexDesc) else {
+            throw ProcessorExecutionError.couldNotCreateResource("Could not create cell grid texture")
+        }
+        cellTex.replace(
+            region: MTLRegionMake2D(0, 0, numCellsX, numCellsY),
+            mipmapLevel: 0,
+            withBytes: cellBuf.contents(),
+            bytesPerRow: numCellsX * MemoryLayout<Float32>.size
+        )
+
+        // Bilinear interpolation → full-resolution background texture
+        var invCellSize = Float(1.0) / Float(cellSize)
+        let invCellBuf  = try ProcessorHelpers.createBuffer(from: &invCellSize, device: device)
+
+        let (tgSize, tgPerGrid) = ProcessorHelpers.calculateThreadgroups(for: backgroundTexture)
+        let cb2  = try ProcessorHelpers.createCommandBuffer(commandQueue: commandQueue)
+        let enc2 = try ProcessorHelpers.createComputeEncoder(commandBuffer: cb2)
+        enc2.setComputePipelineState(interpPSO)
+        enc2.setTexture(cellTex,           index: 0)
+        enc2.setTexture(backgroundTexture, index: 1)
+        enc2.setBuffer(invCellBuf, offset: 0, index: 0)
+        enc2.dispatchThreadgroups(tgPerGrid, threadsPerThreadgroup: tgSize)
+        enc2.endEncoding()
+        try ProcessorHelpers.executeCommandBuffer(cb2)
     }
 
-    /// Subtract background from input texture
-    /// - Parameters:
-    ///   - inputTexture: The input texture
-    ///   - backgroundTexture: The background texture
-    ///   - subtractedTexture: The output texture for background-subtracted result
-    ///   - localMedianSubtractPipelineState: The compute pipeline state
-    ///   - minValueBuffer: Buffer for minimum image value
-    ///   - maxValueBuffer: Buffer for maximum image value
-    ///   - commandQueue: Metal command queue
-    /// - Throws: ProcessorExecutionError if execution fails
+    // MARK: - Background subtraction
+
     private func subtractBackgroundFromInput(
         inputTexture: MTLTexture,
         backgroundTexture: MTLTexture,
         subtractedTexture: MTLTexture,
-        localMedianSubtractPipelineState: MTLComputePipelineState,
+        subtractPipelineState: MTLComputePipelineState,
         minValueBuffer: MTLBuffer,
         maxValueBuffer: MTLBuffer,
         commandQueue: MTLCommandQueue
     ) throws {
-        let (threadgroupSize, threadgroupsPerGrid) = ProcessorHelpers.calculateThreadgroups(for: inputTexture)
-        let commandBuffer = try ProcessorHelpers.createCommandBuffer(commandQueue: commandQueue)
-        let encoder = try ProcessorHelpers.createComputeEncoder(commandBuffer: commandBuffer)
-        encoder.setComputePipelineState(localMedianSubtractPipelineState)
-        encoder.setTexture(inputTexture, index: 0)
-        encoder.setTexture(backgroundTexture, index: 1)
-        encoder.setTexture(subtractedTexture, index: 2)
-        encoder.setBuffer(minValueBuffer, offset: 0, index: 0)
-        encoder.setBuffer(maxValueBuffer, offset: 0, index: 1)
-        encoder.dispatchThreadgroups(threadgroupsPerGrid, threadsPerThreadgroup: threadgroupSize)
-        encoder.endEncoding()
-        try ProcessorHelpers.executeCommandBuffer(commandBuffer)
+        let (tgSize, tgPerGrid) = ProcessorHelpers.calculateThreadgroups(for: inputTexture)
+        let cb   = try ProcessorHelpers.createCommandBuffer(commandQueue: commandQueue)
+        let enc  = try ProcessorHelpers.createComputeEncoder(commandBuffer: cb)
+        enc.setComputePipelineState(subtractPipelineState)
+        enc.setTexture(inputTexture,      index: 0)
+        enc.setTexture(backgroundTexture, index: 1)
+        enc.setTexture(subtractedTexture, index: 2)
+        enc.setBuffer(minValueBuffer, offset: 0, index: 0)
+        enc.setBuffer(maxValueBuffer, offset: 0, index: 1)
+        enc.dispatchThreadgroups(tgPerGrid, threadsPerThreadgroup: tgSize)
+        enc.endEncoding()
+        try ProcessorHelpers.executeCommandBuffer(cb)
     }
 
-    /// Finalize outputs by calculating background level and updating output frames.
-    /// Writes `background_level` (normalised 0–1) and, when FITS scale information
-    /// is available on `inputFrame`, also writes `background_level_adu` in ADU.
-    /// - Parameters:
-    ///   - inputFrame: The original input frame (for FITS scale info).
-    ///   - backgroundTexture: The background texture
-    ///   - subtractedTexture: The background-subtracted texture
-    ///   - outputs: Dictionary of processor outputs (inout)
-    ///   - device: Metal device
-    ///   - commandQueue: Metal command queue
-    /// - Throws: ProcessorExecutionError if execution fails
+    // MARK: - Finalise outputs
+
     private func finalizeOutputs(
         inputFrame: Frame,
+        inputTexture: MTLTexture,
         backgroundTexture: MTLTexture,
         subtractedTexture: MTLTexture,
         outputs: inout [String: ProcessData],
         device: MTLDevice,
         commandQueue: MTLCommandQueue
     ) throws {
-        // Calculate average background level for table output
         let backgroundLevel = try calculateAverageBackgroundLevel(
             texture: backgroundTexture,
             device: device,
             commandQueue: commandQueue
         )
 
-        // Update output frames
         try ProcessorHelpers.updateOutputFrame(
             outputs: &outputs,
             outputName: "background_frame",
             texture: backgroundTexture
         )
-
         try ProcessorHelpers.updateOutputFrame(
             outputs: &outputs,
             outputName: "background_subtracted_frame",
             texture: subtractedTexture
         )
 
-        // Create table with background level
+        // GPU-based NMAD of signed (input − background) residuals — see calculateNoiseSigma
+        let noiseSigma = (try? calculateNoiseSigma(
+            inputTexture: inputTexture,
+            backgroundTexture: backgroundTexture,
+            device: device,
+            commandQueue: commandQueue
+        )) ?? 0.0
+
         if var backgroundLevelTable = outputs["background_level"] as? TableData {
-            var dataFrame = DataFrame()
-            dataFrame.append(column: Column(name: "background_level", contents: [backgroundLevel]))
-            if let adu = inputFrame.toADU(backgroundLevel) {
-                dataFrame.append(column: Column(name: "background_level_adu", contents: [adu]))
+            var df = DataFrame()
+            df.append(column: Column(name: "background_level",       contents: [backgroundLevel]))
+            df.append(column: Column(name: "background_noise_sigma", contents: [noiseSigma]))
+            if let fitsMin = inputFrame.fitsMinValue, let fitsMax = inputFrame.fitsMaxValue {
+                let scale = fitsMax - fitsMin
+                df.append(column: Column(name: "background_level_adu",       contents: [backgroundLevel * scale + fitsMin]))
+                df.append(column: Column(name: "background_noise_sigma_adu", contents: [noiseSigma * scale]))
             }
-            backgroundLevelTable.dataFrame = dataFrame
+            backgroundLevelTable.dataFrame = df
             outputs["background_level"] = backgroundLevelTable
         }
 
-        let aduInfo = inputFrame.toADU(backgroundLevel).map { String(format: " (%.1f ADU)", $0) } ?? ""
-        Logger.processor.info("Background estimation completed (level: \(backgroundLevel)\(aduInfo))")
+        let aduInfo: String = inputFrame.toADU(backgroundLevel)
+            .map { String(format: " (%.1f ADU)", $0) } ?? ""
+        let sigmaInfo: String = {
+            guard let fitsMin = inputFrame.fitsMinValue,
+                  let fitsMax = inputFrame.fitsMaxValue else { return "" }
+            return String(format: ", σ=%.2f ADU", noiseSigma * (fitsMax - fitsMin))
+        }()
+        Logger.processor.info(
+            "Background estimation complete (level: \(backgroundLevel)\(aduInfo)\(sigmaInfo))"
+        )
     }
 
-    /// Calculate progressive window sizes for multi-pass approach
-    /// Starts with a small window and progressively increases to target size
-    /// - Parameter targetSize: The final target window size
-    /// - Returns: Array of window sizes to use in each pass
-    private func calculateProgressiveWindowSizes(targetSize: Int) -> [Int] {
-        // Start with a small window (10x10 is fast and gives good initial estimate)
-        let startSize = 10
+    // MARK: - Background level sampling
 
-        // If target is small, just use single pass
-        if targetSize <= startSize {
-            return [targetSize]
+    private func calculateAverageBackgroundLevel(
+        texture: MTLTexture,
+        device: MTLDevice,
+        commandQueue: MTLCommandQueue
+    ) throws -> Double {
+        let sampleRate   = 10
+        let sampleWidth  = max(1, texture.width  / sampleRate)
+        let sampleHeight = max(1, texture.height / sampleRate)
+        let bytesPerRow  = sampleWidth * MemoryLayout<Float32>.size
+        let bufferSize   = bytesPerRow * sampleHeight
+
+        guard let readBuf = device.makeBuffer(length: bufferSize, options: [.storageModeShared]) else {
+            throw ProcessorExecutionError.couldNotCreateResource("Could not create background-level read buffer")
         }
+        guard let cb  = commandQueue.makeCommandBuffer(),
+              let enc = cb.makeBlitCommandEncoder() else {
+            throw ProcessorExecutionError.couldNotCreateResource("Could not create blit encoder")
+        }
+        enc.copy(
+            from: texture,
+            sourceSlice: 0, sourceLevel: 0,
+            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+            sourceSize: MTLSize(width: sampleWidth, height: sampleHeight, depth: 1),
+            to: readBuf,
+            destinationOffset: 0,
+            destinationBytesPerRow: bytesPerRow,
+            destinationBytesPerImage: bufferSize
+        )
+        enc.endEncoding()
+        try ProcessorHelpers.executeCommandBuffer(cb)
 
-        // Build progressive sizes: 10 -> 20 -> 40 -> 50 (or closest)
-        var sizes: [Int] = [startSize]
-        var currentSize = startSize
+        let ptr    = readBuf.contents().bindMemory(to: Float32.self, capacity: sampleWidth * sampleHeight)
+        let pixels = Array(UnsafeBufferPointer(start: ptr, count: sampleWidth * sampleHeight))
+        return Double(pixels.reduce(0.0, +) / Float(pixels.count))
+    }
 
-        while currentSize < targetSize {
-            // Double the size each time, but don't exceed target
-            let nextSize = min(currentSize * 2, targetSize)
-            if nextSize > currentSize {
-                sizes.append(nextSize)
-                currentSize = nextSize
-            } else {
-                break
+    // MARK: - GPU NMAD noise sigma
+
+    /// Two-pass GPU histogram NMAD of signed (input − background) residuals.
+    ///
+    /// The `local_median_subtract` shader clamps its output to [0, 1], so the
+    /// already-subtracted texture cannot be used here — its sky pixels are all 0.
+    /// Instead, both textures are read raw inside the shader and the signed difference
+    /// is computed per thread, preserving the full noise distribution.
+    ///
+    /// Pass 1: `build_residual_histogram` → CPU finds median from 512-bin histogram.
+    /// Pass 2: `build_residual_mad_histogram` → CPU finds MAD from 512-bin histogram.
+    /// σ_NMAD = 1.4826 × MAD.  Total CPU←GPU transfer: ~2 KB.
+    private func calculateNoiseSigma(
+        inputTexture: MTLTexture,
+        backgroundTexture: MTLTexture,
+        device: MTLDevice,
+        commandQueue: MTLCommandQueue
+    ) throws -> Double {
+        let numBins       = 512
+        let residualRange: Float = 0.1   // ±10 % of normalised range
+
+        let library = try ProcessorHelpers.loadShaderLibrary(device: device)
+        guard let histFn = library.makeFunction(name: "build_residual_histogram"),
+              let madFn  = library.makeFunction(name: "build_residual_mad_histogram") else {
+            throw ProcessorExecutionError.couldNotCreateResource(
+                "Could not load residual histogram shader functions"
+            )
+        }
+        let histPSO = try ProcessorHelpers.createComputePipelineState(function: histFn, device: device)
+        let madPSO  = try ProcessorHelpers.createComputePipelineState(function: madFn,  device: device)
+
+        let histByteCount = numBins * MemoryLayout<Int32>.size
+        guard let histBuf = device.makeBuffer(length: histByteCount, options: [.storageModeShared]),
+              let madBuf  = device.makeBuffer(length: histByteCount, options: [.storageModeShared]) else {
+            throw ProcessorExecutionError.couldNotCreateResource("Could not create NMAD histogram buffers")
+        }
+        memset(histBuf.contents(), 0, histByteCount)
+        memset(madBuf.contents(),  0, histByteCount)
+
+        var numBinsInt  = Int32(numBins)
+        var minResidual = -residualRange
+        var maxResidual =  residualRange
+        let numBinsBuf  = try ProcessorHelpers.createBuffer(from: &numBinsInt,  device: device)
+        let minResBuf   = try ProcessorHelpers.createBuffer(from: &minResidual, device: device)
+        let maxResBuf   = try ProcessorHelpers.createBuffer(from: &maxResidual, device: device)
+
+        let (tgSize, tgPerGrid) = ProcessorHelpers.calculateThreadgroups(for: inputTexture)
+
+        let cb1  = try ProcessorHelpers.createCommandBuffer(commandQueue: commandQueue)
+        let enc1 = try ProcessorHelpers.createComputeEncoder(commandBuffer: cb1)
+        enc1.setComputePipelineState(histPSO)
+        enc1.setTexture(inputTexture,      index: 0)
+        enc1.setTexture(backgroundTexture, index: 1)
+        enc1.setBuffer(histBuf,    offset: 0, index: 0)
+        enc1.setBuffer(numBinsBuf, offset: 0, index: 1)
+        enc1.setBuffer(minResBuf,  offset: 0, index: 2)
+        enc1.setBuffer(maxResBuf,  offset: 0, index: 3)
+        enc1.dispatchThreadgroups(tgPerGrid, threadsPerThreadgroup: tgSize)
+        enc1.endEncoding()
+        try ProcessorHelpers.executeCommandBuffer(cb1)
+
+        let histPtr     = histBuf.contents().bindMemory(to: Int32.self, capacity: numBins)
+        let histArray   = Array(UnsafeBufferPointer(start: histPtr, count: numBins))
+        let totalPixels = histArray.reduce(0) { $0 + Int($1) }
+        let medianRes   = medianFromHistogram(
+            histArray, numBins: numBins, total: totalPixels,
+            minVal: Double(minResidual), maxVal: Double(maxResidual)
+        )
+
+        var medianFloat = Float(medianRes)
+        var maxAbsDev   = residualRange
+        let medBuf    = try ProcessorHelpers.createBuffer(from: &medianFloat, device: device)
+        let maxAbsBuf = try ProcessorHelpers.createBuffer(from: &maxAbsDev,   device: device)
+
+        let cb2  = try ProcessorHelpers.createCommandBuffer(commandQueue: commandQueue)
+        let enc2 = try ProcessorHelpers.createComputeEncoder(commandBuffer: cb2)
+        enc2.setComputePipelineState(madPSO)
+        enc2.setTexture(inputTexture,      index: 0)
+        enc2.setTexture(backgroundTexture, index: 1)
+        enc2.setBuffer(madBuf,     offset: 0, index: 0)
+        enc2.setBuffer(numBinsBuf, offset: 0, index: 1)
+        enc2.setBuffer(maxAbsBuf,  offset: 0, index: 2)
+        enc2.setBuffer(medBuf,     offset: 0, index: 3)
+        enc2.dispatchThreadgroups(tgPerGrid, threadsPerThreadgroup: tgSize)
+        enc2.endEncoding()
+        try ProcessorHelpers.executeCommandBuffer(cb2)
+
+        let madPtr   = madBuf.contents().bindMemory(to: Int32.self, capacity: numBins)
+        let madArray = Array(UnsafeBufferPointer(start: madPtr, count: numBins))
+        let mad      = medianFromHistogram(
+            madArray, numBins: numBins, total: totalPixels,
+            minVal: 0.0, maxVal: Double(maxAbsDev)
+        )
+        return 1.4826 * mad
+    }
+
+    private func medianFromHistogram(
+        _ histogram: [Int32], numBins: Int, total: Int,
+        minVal: Double, maxVal: Double
+    ) -> Double {
+        guard total > 0 else { return 0 }
+        let half     = (total + 1) / 2
+        let binWidth = (maxVal - minVal) / Double(numBins)
+        var cumulative = 0
+        for (i, count) in histogram.enumerated() {
+            cumulative += Int(count)
+            if cumulative >= half {
+                return minVal + (Double(i) + 0.5) * binWidth
             }
         }
-
-        // Ensure we end with the exact target size
-        if sizes.last != targetSize {
-            sizes.append(targetSize)
-        }
-
-        return sizes
+        return maxVal
     }
 }
-
-

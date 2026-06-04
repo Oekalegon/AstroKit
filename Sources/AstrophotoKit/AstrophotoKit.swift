@@ -67,10 +67,13 @@ public struct AstrophotoKit {
             "GaussianBlurShader",
             "LocalMedianShader",
             "BackgroundSubtractionShader",
+            "MeshBackgroundShader",
+            "StatisticsShader",
             "ThresholdShader",
             "ErosionShader",
             "DilationShader",
             "ConnectedComponentsShader",
+            "LocalMaximaShader",
             "StarDetectionOverlayShader",
             "WaveletDonutShader",
             "FWHMShader",
@@ -109,10 +112,11 @@ public struct AstrophotoKit {
         var shaderSources: [String] = []
         let allShaderFiles = [
             "ImageShader", "ImageInverseShader", "HistogramShader", "GaussianBlurShader",
-            "GrayscaleShader", "BackgroundSubtractionShader", "ThresholdShader",
-            "LocalMedianShader", "StatisticsShader", "ErosionShader", "DilationShader",
-            "ConnectedComponentsShader", "StarDetectionOverlayShader", "WaveletDonutShader",
-            "FWHMShader", "HFDShader", "HoughCircleShader", "RegistrationMatchingShader"
+            "GrayscaleShader", "BackgroundSubtractionShader", "MeshBackgroundShader",
+            "ThresholdShader", "LocalMedianShader", "StatisticsShader", "ErosionShader",
+            "DilationShader", "ConnectedComponentsShader", "LocalMaximaShader",
+            "StarDetectionOverlayShader", "WaveletDonutShader", "FWHMShader", "HFDShader",
+            "HoughCircleShader", "WarpShader", "StackShader", "RegistrationMatchingShader"
         ]
         let shaderFiles = requiredShaders ?? allShaderFiles
         Logger.swiftfitsio.debug(

@@ -39,7 +39,7 @@ steps:
     parameters:
       - name: radius
         from: blur_radius
-        default_value: 3.0
+        default_value: 1.5
     outputs:
       - name: blurred_frame
         type: frame
@@ -58,12 +58,10 @@ steps:
         from: blur.blurred_frame
         description: Blurred frame
     parameters:
-      - name: window_size
-        default_value: 50
-      - name: histogram_bins
-        default_value: 128
-      - name: sample_step_threshold
-        default_value: 30
+      - name: cell_size
+        from: cell_size
+        default_value: 64
+        description: Mesh cell size in pixels
     outputs:
       - name: background_frame
         type: frame
@@ -141,19 +139,28 @@ steps:
           processing_stage: "morphological_processing"
           image_type: "binary"
 
-  - id: connected_components
-    type: connected_components
-    name: Connected Components
-    description: Identifies star blobs
+  - id: local_maxima
+    type: local_maxima
+    name: Local Maxima Detection
+    description: Finds peak pixels in the background-subtracted frame within the binary mask — one peak per star, immune to large extended objects that would merge into a single connected blob
     dataInputs:
       - name: input_frame
         type: frame
+        from: background.background_subtracted_frame
+        description: Background-subtracted continuous frame for intensity comparison
+      - name: mask_frame
+        type: frame
         from: dilation.dilated_frame
-    parameters: []
+        description: Binary mask restricting the search to candidate star regions
+    parameters:
+      - name: min_distance
+        from: lm_min_distance
+        default_value: 5
+        description: Minimum pixel distance between accepted peaks (NMS radius)
     outputs:
       - name: pixel_coordinates
         type: table
-        description: Per-star blob properties
+        description: Per-star table with centroid, placeholder axes, eccentricity, rotation_angle
         metadata:
           processing_stage: "star_detection"
           table_type: "star_catalog"
@@ -168,7 +175,7 @@ steps:
         from: background.background_subtracted_frame
       - name: pixel_coordinates
         type: table
-        from: connected_components.pixel_coordinates
+        from: local_maxima.pixel_coordinates
     parameters: []
     outputs:
       - name: pixel_coordinates

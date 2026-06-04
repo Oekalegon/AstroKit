@@ -195,6 +195,36 @@ actor ArchiveDatabase {
         ALTER TABLE frame_set_members ADD COLUMN excluded_reason TEXT;
         CREATE INDEX IF NOT EXISTS idx_fsm_excluded ON frame_set_members(frame_set_id, excluded);
         """,
+        // v19: quality aggregates on frame_sets — medians over active member frames.
+        // Populated on frameset creation and refreshed by `ap-archive frameset quality`.
+        """
+        ALTER TABLE frame_sets ADD COLUMN median_star_count REAL;
+        ALTER TABLE frame_sets ADD COLUMN median_fwhm REAL;
+        ALTER TABLE frame_sets ADD COLUMN median_eccentricity REAL;
+        ALTER TABLE frame_sets ADD COLUMN median_background_noise REAL;
+        ALTER TABLE frame_sets ADD COLUMN median_background_noise_electrons REAL;
+        """,
+        // v20: normalize bare "H" filter to "Hɑ" — same pattern as v11 for other Ha aliases.
+        // Uses REPLACE(frame_signature, '|h|', '|hɑ|') rather than recomputing the whole
+        // signature, so it works regardless of whether fileDate or timestamp was used when
+        // the frame was originally ingested.
+        // Archives that contain both an 'H' frame and an 'Hɑ' frame for the same observation
+        // (ingested twice with different filter spellings) have a true duplicate. The 'H' copy
+        // is deleted first to avoid a UNIQUE constraint violation on the signature update.
+        """
+        DELETE FROM frames
+        WHERE LOWER(filter) = 'h'
+          AND EXISTS (
+            SELECT 1 FROM frames AS dup
+            WHERE dup.frame_signature = REPLACE(frames.frame_signature, '|h|', '|hɑ|')
+          );
+        UPDATE frames SET
+            filter = 'Hɑ',
+            frame_signature = REPLACE(frame_signature, '|h|', '|hɑ|')
+        WHERE LOWER(filter) = 'h';
+        UPDATE frame_sets SET filter = 'Hɑ'
+        WHERE LOWER(filter) = 'h';
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -380,7 +410,7 @@ actor ArchiveDatabase {
     // frames ingested before and after the "Ha" → "Hɑ" rename.
     static func normalizeFilterComponent(_ filter: String) -> String {
         switch filter.lowercased() {
-        case "ha", "h-alpha", "h_alpha", "halpha", "h alpha", "hα", "hɑ":
+        case "h", "ha", "h-alpha", "h_alpha", "halpha", "h alpha", "hα", "hɑ":
             return "hɑ"
         default:
             return filter.lowercased()
@@ -393,7 +423,7 @@ actor ArchiveDatabase {
     static func canonicalFilterName(_ filter: String?) -> String? {
         guard let filter = filter else { return nil }
         switch filter.lowercased() {
-        case "ha", "h-alpha", "h_alpha", "halpha", "h alpha", "hα", "hɑ":
+        case "h", "ha", "h-alpha", "h_alpha", "halpha", "h alpha", "hα", "hɑ":
             return "Hɑ"
         default:
             return filter
@@ -609,7 +639,8 @@ actor ArchiveDatabase {
     // MARK: - Frame sets
 
     // Shared SELECT columns for both list and single-item queries.
-    // Indices: 0–13 = v6 core, 14–21 = v7 extras, 22 = frame_count, 23 = excluded_count.
+    // Indices: 0–13 = v6 core, 14–21 = v7 extras,
+    //          22–26 = v19 quality aggregates, 27 = frame_count, 28 = excluded_count.
     private static let frameSetSelectSQL = """
         SELECT fs.id, fs.name, fs.frame_type, fs.processing_level,
                fs.object_name, fs.filter, fs.camera, fs.exposure_time, fs.temperature,
@@ -617,6 +648,8 @@ actor ArchiveDatabase {
                fs.date_from, fs.date_to,
                fs.temperature_mean, fs.temperature_min, fs.temperature_max,
                fs.pixel_scale, fs.focal_length, fs.position_angle,
+               fs.median_star_count, fs.median_fwhm, fs.median_eccentricity,
+               fs.median_background_noise, fs.median_background_noise_electrons,
                COUNT(fsm.frame_id) AS frame_count,
                SUM(CASE WHEN fsm.excluded = 1 THEN 1 ELSE 0 END) AS excluded_count
         FROM frame_sets fs
@@ -636,8 +669,10 @@ actor ArchiveDatabase {
         (id, name, frame_type, processing_level, object_name, filter, camera,
          exposure_time, temperature, gain, offset, width, height, created_at,
          date_from, date_to, temperature_mean, temperature_min, temperature_max,
-         pixel_scale, focal_length, position_angle)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         pixel_scale, focal_length, position_angle,
+         median_star_count, median_fwhm, median_eccentricity,
+         median_background_noise, median_background_noise_electrons)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -663,6 +698,11 @@ actor ArchiveDatabase {
         bind(stmt, 20, fs.pixelScale)
         bind(stmt, 21, fs.focalLength)
         bind(stmt, 22, fs.positionAngle)
+        bind(stmt, 23, fs.medianStarCount)
+        bind(stmt, 24, fs.medianFWHM)
+        bind(stmt, 25, fs.medianEccentricity)
+        bind(stmt, 26, fs.medianBackgroundNoise)
+        bind(stmt, 27, fs.medianBackgroundNoiseElectrons)
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -689,9 +729,77 @@ actor ArchiveDatabase {
     }
 
     func queryFrameSets() throws -> [ArchivedFrameSet] {
-        let sql = ArchiveDatabase.frameSetSelectSQL + " GROUP BY fs.id ORDER BY fs.created_at DESC"
+        try queryFrameSets(matching: FrameSetQuery())
+    }
+
+    func queryFrameSets(matching query: FrameSetQuery) throws -> [ArchivedFrameSet] {
+        var conditions: [String] = []
+        var bindings: [Any] = []
+
+        if let name = query.name {
+            conditions.append("fs.name LIKE ?")
+            bindings.append("%\(name)%")
+        }
+        if let obj = query.objectName {
+            conditions.append("fs.object_name LIKE ?")
+            bindings.append("%\(obj)%")
+        }
+        if let types = query.frameTypes, !types.isEmpty {
+            conditions.append("fs.frame_type IN (\(types.map { _ in "?" }.joined(separator: ",")))")
+            for t in types { bindings.append(t) }
+        }
+        if let filters = query.filters, !filters.isEmpty {
+            let normalized = filters.map { ArchiveDatabase.normalizeFilterComponent($0) }
+            // A frameset's filter column may be a single name or a comma-separated list
+            // (when created with --force). Match if any requested filter appears in the field.
+            let filterClauses = normalized.map { _ in
+                "(LOWER(fs.filter) = ? OR LOWER(fs.filter) LIKE ? OR LOWER(fs.filter) LIKE ? OR LOWER(fs.filter) LIKE ?)"
+            }.joined(separator: " OR ")
+            conditions.append("(\(filterClauses))")
+            for f in normalized {
+                bindings.append(f)
+                bindings.append("\(f),%")
+                bindings.append("%,\(f)")
+                bindings.append("%,\(f),%")
+            }
+        }
+        if let lvl = query.processingLevel {
+            conditions.append("fs.processing_level = ?")
+            bindings.append(lvl.rawValue)
+        }
+        if let cam = query.camera {
+            conditions.append("fs.camera = ?")
+            bindings.append(cam)
+        }
+        if let range = query.dateRange {
+            let iso = ISO8601DateFormatter()
+            // Overlap: frameset spans [date_from, date_to]; query spans [start, end].
+            // Overlap iff date_from <= end AND date_to >= start.
+            // NULLs in date_from/date_to mean the frameset has no timestamp data — include it.
+            conditions.append("(fs.date_from IS NULL OR fs.date_from <= ?)")
+            bindings.append(iso.string(from: range.end))
+            conditions.append("(fs.date_to IS NULL OR fs.date_to >= ?)")
+            bindings.append(iso.string(from: range.start))
+        }
+
+        var sql = ArchiveDatabase.frameSetSelectSQL
+        if !conditions.isEmpty { sql += " WHERE " + conditions.joined(separator: " AND ") }
+        sql += " GROUP BY fs.id ORDER BY fs.created_at DESC"
+
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
+
+        for (i, value) in bindings.enumerated() {
+            let pos = Int32(i + 1)
+            switch value {
+            case let s as String: sqlite3_bind_text(stmt, pos, s, -1, SQLITE_TRANSIENT)
+            case let d as Double: sqlite3_bind_double(stmt, pos, d)
+            case let n as Int:    sqlite3_bind_int(stmt, pos, Int32(n))
+            case let n as Int64:  sqlite3_bind_int64(stmt, pos, n)
+            default: break
+            }
+        }
+
         var results: [ArchivedFrameSet] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let fs = rowToFrameSet(stmt) { results.append(fs) }
@@ -785,6 +893,33 @@ actor ArchiveDatabase {
         }
     }
 
+    func updateFrameSetQuality(
+        id: UUID,
+        medianStarCount: Double?,
+        medianFWHM: Double?,
+        medianEccentricity: Double?,
+        medianBackgroundNoise: Double?,
+        medianBackgroundNoiseElectrons: Double?
+    ) throws {
+        var setClauses: [String] = []
+        var values: [Double] = []
+        if let v = medianStarCount               { setClauses.append("median_star_count = ?");                   values.append(v) }
+        if let v = medianFWHM                    { setClauses.append("median_fwhm = ?");                        values.append(v) }
+        if let v = medianEccentricity            { setClauses.append("median_eccentricity = ?");                values.append(v) }
+        if let v = medianBackgroundNoise         { setClauses.append("median_background_noise = ?");            values.append(v) }
+        if let v = medianBackgroundNoiseElectrons { setClauses.append("median_background_noise_electrons = ?"); values.append(v) }
+        guard !setClauses.isEmpty else { return }
+
+        let sql = "UPDATE frame_sets SET \(setClauses.joined(separator: ", ")) WHERE id = ?"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        for (i, v) in values.enumerated() { sqlite3_bind_double(stmt, Int32(i + 1), v) }
+        bind(stmt, Int32(values.count + 1), id.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
     private func rowToFrameSet(_ stmt: OpaquePointer?) -> ArchivedFrameSet? {
         // Column map — see frameSetSelectSQL for ordering.
         // 0–13: v6 core, 14–21: v7 extras, 22: frame_count, 23: excluded_count
@@ -808,8 +943,8 @@ actor ArchiveDatabase {
             frameType: frameType,
             processingLevel: processingLevel,
             createdAt: createdAt,
-            frameCount: Int(sqlite3_column_int(stmt, 22)),
-            excludedFrameCount: Int(sqlite3_column_int(stmt, 23)),
+            frameCount: Int(sqlite3_column_int(stmt, 27)),
+            excludedFrameCount: Int(sqlite3_column_int(stmt, 28)),
             objectName:   columnText(stmt, 4),
             filter:       columnText(stmt, 5),
             camera:       columnText(stmt, 6),
@@ -825,7 +960,12 @@ actor ArchiveDatabase {
             dateTo:   columnText(stmt, 15).flatMap { iso.date(from: $0) },
             temperatureMean: tempMean,
             temperatureMin:  columnDouble(stmt, 17),
-            temperatureMax:  columnDouble(stmt, 18)
+            temperatureMax:  columnDouble(stmt, 18),
+            medianStarCount:               columnDouble(stmt, 22),
+            medianFWHM:                    columnDouble(stmt, 23),
+            medianEccentricity:            columnDouble(stmt, 24),
+            medianBackgroundNoise:         columnDouble(stmt, 25),
+            medianBackgroundNoiseElectrons: columnDouble(stmt, 26)
         )
     }
 

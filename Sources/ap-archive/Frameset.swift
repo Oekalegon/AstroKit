@@ -7,7 +7,7 @@ struct Frameset: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "frameset",
         abstract: "Manage frame sets.",
-        subcommands: [Create.self, List.self, Show.self, Exclude.self, Include.self, Delete.self]
+        subcommands: [Create.self, Show.self, Quality.self, Exclude.self, Include.self, Delete.self]
     )
 
     // MARK: - Shared query options
@@ -301,52 +301,6 @@ struct Frameset: AsyncParsableCommand {
         }
     }
 
-    // MARK: - List
-
-    struct List: AsyncParsableCommand {
-        static let configuration = CommandConfiguration(
-            abstract: "List all frame sets."
-        )
-
-        @OptionGroup var archiveOptions: ArchivePathOption
-
-        @Flag(name: .long, help: "Output as JSON.")
-        var json: Bool = false
-
-        func run() async throws {
-            let config  = try archiveOptions.makeConfiguration()
-            let archive = try Archive(configuration: config)
-            let sets = try await archive.frameSets()
-
-            if sets.isEmpty {
-                print("No frame sets in archive.")
-                return
-            }
-
-            if json {
-                let iso = ISO8601DateFormatter()
-                let arr = sets.map { frameSetDict($0, iso: iso) }
-                writeJSON(arr)
-                return
-            }
-
-            print("Frame sets (\(sets.count)):\n")
-            var table = TextTable(columns: [
-                .init("ID"),
-                .init("Count", .right),
-                .init("Type"),
-                .init("Level"),
-                .init("Filter"),
-                .init("Name"),
-            ])
-            for fs in sets {
-                let filterLabel = fs.filter ?? "-"
-                table.addRow([fs.id.uuidString, "\(fs.frameCount)", fs.frameType, fs.processingLevel.rawValue, filterLabel, fs.name])
-            }
-            print(table.render())
-        }
-    }
-
     // MARK: - Show
 
     struct Show: AsyncParsableCommand {
@@ -430,6 +384,27 @@ struct Frameset: AsyncParsableCommand {
             }
             row("Created", iso.string(from: fs.createdAt))
 
+            let hasQualityAggregates = fs.medianFWHM != nil || fs.medianStarCount != nil
+            if hasQualityAggregates {
+                print("")
+                print("Quality (medians over active frames):")
+                print(String(repeating: "─", count: 60))
+                if let v = fs.medianStarCount { row("Median stars", String(format: "%.0f", v)) }
+                if let px = fs.medianFWHM {
+                    if let arcsec = fs.medianFWHMArcsec {
+                        row("Median FWHM", String(format: "%.2f px / %.2f\"", px, arcsec))
+                    } else {
+                        row("Median FWHM", String(format: "%.2f px", px))
+                    }
+                }
+                if let v = fs.medianEccentricity { row("Median ecc.", String(format: "%.3f", v)) }
+                if let e = fs.medianBackgroundNoiseElectrons {
+                    row("Median bg.", String(format: "%.2f e⁻", e))
+                } else if let n = fs.medianBackgroundNoise {
+                    row("Median bg.", String(format: "%.2f ADU", n))
+                }
+            }
+
             if !members.isEmpty {
                 let frames = members.map { $0.frame }
                 let hasQuality = frames.contains { $0.starCount != nil || $0.medianFWHM != nil || $0.medianEccentricity != nil }
@@ -439,12 +414,15 @@ struct Frameset: AsyncParsableCommand {
                     var table = TextTable(columns: [
                         .init("UUID"),
                         .init("Object"),
+                        .init("Level"),
                         .init("Filter"),
                         .init("Exposure", .right),
                         .init("Stars", .right),
                         .init("FWHM", .right),
                         .init("Ecc", .right),
+                        .init("Background", .right),
                         .init("Date"),
+                        .init("File"),
                     ])
                     for m in members {
                         let f = m.frame
@@ -460,9 +438,16 @@ struct Frameset: AsyncParsableCommand {
                                 fwhm = String(format: "%.2fpx", px)
                             }
                         } else { fwhm = "-" }
-                        let ecc  = f.medianEccentricity.map { String(format: "%.3f", $0) } ?? "-"
+                        let ecc = f.medianEccentricity.map { String(format: "%.3f", $0) } ?? "-"
+                        let bg: String
+                        if let e = f.backgroundNoiseElectrons {
+                            bg = String(format: "%.1fe⁻", e)
+                        } else if let n = f.backgroundNoise {
+                            bg = String(format: "%.1fADU", n)
+                        } else { bg = "-" }
                         let date = f.timestamp.map { String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ") } ?? "-"
-                        table.addRow([f.id.uuidString, obj, filt, exp, stars, fwhm, ecc, date])
+                        table.addRow([f.id.uuidString, obj, f.processingLevel.rawValue,
+                                      filt, exp, stars, fwhm, ecc, bg, date, f.filePath])
                     }
                     let lines = table.renderLines(indent: "  ")
                     for (i, line) in lines.enumerated() {
@@ -474,9 +459,11 @@ struct Frameset: AsyncParsableCommand {
                     var table = TextTable(columns: [
                         .init("UUID"),
                         .init("Object"),
+                        .init("Level"),
                         .init("Filter"),
                         .init("Exposure", .right),
                         .init("Date"),
+                        .init("File"),
                     ])
                     for m in members {
                         let f = m.frame
@@ -484,7 +471,7 @@ struct Frameset: AsyncParsableCommand {
                         let filt = f.filter ?? "-"
                         let exp  = f.exposureTime.map { String(format: "%.0fs", $0) } ?? "-"
                         let date = f.timestamp.map { String(iso.string(from: $0).prefix(16)).replacingOccurrences(of: "T", with: " ") } ?? "-"
-                        table.addRow([f.id.uuidString, obj, filt, exp, date])
+                        table.addRow([f.id.uuidString, obj, f.processingLevel.rawValue, filt, exp, date, f.filePath])
                     }
                     let lines = table.renderLines(indent: "  ")
                     for (i, line) in lines.enumerated() {
@@ -618,6 +605,12 @@ private func frameSetDict(_ fs: ArchivedFrameSet, iso: ISO8601DateFormatter) -> 
     if let v = fs.positionAngle { d["position_angle"]  = v }
     if let v = fs.dateFrom      { d["date_from"] = iso.string(from: v) }
     if let v = fs.dateTo        { d["date_to"]   = iso.string(from: v) }
+    if let v = fs.medianStarCount               { d["median_star_count"]                = v }
+    if let v = fs.medianFWHM                    { d["median_fwhm"]                      = v }
+    if let v = fs.medianFWHMArcsec              { d["median_fwhm_arcsec"]               = v }
+    if let v = fs.medianEccentricity            { d["median_eccentricity"]              = v }
+    if let v = fs.medianBackgroundNoise         { d["median_background_noise"]          = v }
+    if let v = fs.medianBackgroundNoiseElectrons { d["median_background_noise_electrons"] = v }
     return d
 }
 
@@ -649,10 +642,18 @@ private func inspectionDict(_ inspection: FrameSetInspection, iso: ISO8601DateFo
 
 private func frameBriefDict(_ f: ArchivedFrame, iso: ISO8601DateFormatter) -> [String: Any] {
     var d: [String: Any] = ["id": f.id.uuidString, "frame_type": f.frameType, "file_path": f.filePath]
-    if let v = f.objectName   { d["object_name"]  = v }
-    if let v = f.filter       { d["filter"]       = v }
-    if let v = f.exposureTime { d["exposure_time"] = v }
-    if let v = f.timestamp    { d["timestamp"]    = iso.string(from: v) }
+    if let v = f.objectName              { d["object_name"]                   = v }
+    if let v = f.filter                  { d["filter"]                         = v }
+    if let v = f.exposureTime            { d["exposure_time"]                  = v }
+    if let v = f.timestamp               { d["timestamp"]                      = iso.string(from: v) }
+    if let v = f.starCount               { d["star_count"]                     = v }
+    if let v = f.medianFWHM              { d["median_fwhm"]                    = v }
+    if let v = f.medianFWHMArcsec        { d["median_fwhm_arcsec"]             = v }
+    if let v = f.medianEccentricity      { d["median_eccentricity"]            = v }
+    if let v = f.backgroundNoise         { d["background_noise"]               = v }
+    if let v = f.backgroundNoiseElectrons { d["background_noise_electrons"]    = v }
+    if let v = f.saturatedStarCount      { d["saturated_star_count"]           = v }
+    if let v = f.hotPixelCount           { d["hot_pixel_count"]                = v }
     return d
 }
 

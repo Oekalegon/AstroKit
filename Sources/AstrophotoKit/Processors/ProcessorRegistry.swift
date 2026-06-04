@@ -59,6 +59,11 @@ public actor ProcessorRegistry {
             register(connectedComponents)
         }
 
+        let localMaxima = LocalMaximaProcessor()
+        if implementations[localMaxima.id] == nil {
+            register(localMaxima)
+        }
+
         let quads = QuadsProcessor()
         if implementations[quads.id] == nil {
             register(quads)

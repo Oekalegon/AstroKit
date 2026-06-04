@@ -98,15 +98,16 @@ public struct ThresholdProcessor: Processor {
     ) throws -> Float {
         switch method {
         case "sigma":
-            // Calculate mean and stddev, then threshold = mean + N * sigma
-            let (mean, stdDev) = try calculateMeanAndStdDev(
+            // Robust sigma: median + N × NMAD over the full image.
+            // NMAD = 1.4826 × median(|xi − median(x)|), resistant to stars and galaxies.
+            let (med, nmad) = try calculateMedianAndNMAD(
                 texture: texture,
                 device: device,
                 commandQueue: commandQueue
             )
-            let actualThreshold = mean + Float(thresholdValue) * stdDev
+            let actualThreshold = med + Float(thresholdValue) * nmad
             Logger.processor.debug(
-                "Calculated sigma threshold: \(actualThreshold) (mean: \(mean), stddev: \(stdDev))"
+                "Calculated sigma threshold: \(actualThreshold) (median: \(med), NMAD: \(nmad))"
             )
             return actualThreshold
         case "fixed":
@@ -172,63 +173,107 @@ public struct ThresholdProcessor: Processor {
         return outputTexture
     }
 
-    /// Calculate mean and standard deviation from texture
-    /// - Parameters:
-    ///   - texture: The input texture
-    ///   - device: Metal device
-    ///   - commandQueue: Metal command queue
-    /// - Returns: Tuple of (mean, stdDev)
-    /// - Throws: ProcessorExecutionError if calculation fails
-    private func calculateMeanAndStdDev(
+    /// Computes the median and NMAD of the full texture using GPU histograms.
+    ///
+    /// Two-pass approach using `build_histogram` (pass 1) and `build_mad_histogram` (pass 2)
+    /// from StatisticsShader.metal. Both kernels operate on the entire image so there is no
+    /// spatial sampling bias. The NMAD (= 1.4826 × MAD) is robust against bright stars and
+    /// galaxy residuals that would inflate a plain standard deviation.
+    ///
+    /// The input texture is expected to be normalised in [0, 1].
+    private func calculateMedianAndNMAD(
         texture: MTLTexture,
         device: MTLDevice,
         commandQueue: MTLCommandQueue
-    ) throws -> (mean: Float, stdDev: Float) {
-        // Sample a subset of pixels for performance (every 10th pixel)
-        let sampleRate = 10
-        let width = texture.width
-        let height = texture.height
-        let sampleWidth = max(1, width / sampleRate)
-        let sampleHeight = max(1, height / sampleRate)
-        let bytesPerRow = sampleWidth * MemoryLayout<Float32>.size
-        let bufferSize = bytesPerRow * sampleHeight
-
-        guard let readBuffer = device.makeBuffer(length: bufferSize, options: [.storageModeShared]) else {
-            throw ProcessorExecutionError.couldNotCreateResource("Could not create read buffer")
+    ) throws -> (median: Float, nmad: Float) {
+        let library = try ProcessorHelpers.loadShaderLibrary(device: device)
+        guard let histFn = library.makeFunction(name: "build_histogram"),
+              let madFn  = library.makeFunction(name: "build_mad_histogram") else {
+            throw ProcessorExecutionError.couldNotCreateResource(
+                "Could not load statistics shader functions (build_histogram / build_mad_histogram)"
+            )
         }
 
-        let commandBuffer = try ProcessorHelpers.createCommandBuffer(commandQueue: commandQueue)
+        let histPipeline = try ProcessorHelpers.createComputePipelineState(function: histFn, device: device)
+        let madPipeline  = try ProcessorHelpers.createComputePipelineState(function: madFn,  device: device)
 
-        guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else {
-            throw ProcessorExecutionError.couldNotCreateResource("Could not create blit encoder")
+        let numBins  = 8192
+        var numBinsI = Int32(numBins)
+        var minVal   = Float(0.0)
+        var maxVal   = Float(1.0)
+
+        let numBinsBuf = try ProcessorHelpers.createBuffer(from: &numBinsI, device: device)
+        let minValBuf  = try ProcessorHelpers.createBuffer(from: &minVal,   device: device)
+        let maxValBuf  = try ProcessorHelpers.createBuffer(from: &maxVal,   device: device)
+
+        let totalPixels = texture.width * texture.height
+        let halfPixels  = totalPixels / 2
+
+        // --- Pass 1: pixel histogram → median ---
+        guard let histBuf = device.makeBuffer(
+            length: numBins * MemoryLayout<Int32>.size, options: .storageModeShared
+        ) else {
+            throw ProcessorExecutionError.couldNotCreateResource("Could not create histogram buffer")
         }
+        memset(histBuf.contents(), 0, histBuf.length)
 
-        blitEncoder.copy(
-            from: texture,
-            sourceSlice: 0,
-            sourceLevel: 0,
-            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
-            sourceSize: MTLSize(width: sampleWidth, height: sampleHeight, depth: 1),
-            to: readBuffer,
-            destinationOffset: 0,
-            destinationBytesPerRow: bytesPerRow,
-            destinationBytesPerImage: bufferSize
-        )
-        blitEncoder.endEncoding()
+        let cb1  = try ProcessorHelpers.createCommandBuffer(commandQueue: commandQueue)
+        let enc1 = try ProcessorHelpers.createComputeEncoder(commandBuffer: cb1)
+        enc1.setComputePipelineState(histPipeline)
+        enc1.setTexture(texture, index: 0)
+        enc1.setBuffer(histBuf,    offset: 0, index: 0)
+        enc1.setBuffer(numBinsBuf, offset: 0, index: 1)
+        enc1.setBuffer(minValBuf,  offset: 0, index: 2)
+        enc1.setBuffer(maxValBuf,  offset: 0, index: 3)
+        let (tgSize, tgGrid) = ProcessorHelpers.calculateThreadgroups(for: texture)
+        enc1.dispatchThreadgroups(tgGrid, threadsPerThreadgroup: tgSize)
+        enc1.endEncoding()
+        try ProcessorHelpers.executeCommandBuffer(cb1)
 
-        try ProcessorHelpers.executeCommandBuffer(commandBuffer)
+        let histPtr = histBuf.contents().bindMemory(to: Int32.self, capacity: numBins)
+        var cumul   = 0
+        var medBin  = numBins / 2
+        for i in 0..<numBins {
+            cumul += Int(histPtr[i])
+            if cumul >= halfPixels { medBin = i; break }
+        }
+        let median = (Float(medBin) + 0.5) / Float(numBins)   // imageMin=0, imageRange=1
 
-        // Calculate mean and stddev from sample
-        let pixelPointer = readBuffer.contents().bindMemory(to: Float32.self, capacity: sampleWidth * sampleHeight)
-        let pixels = Array(UnsafeBufferPointer(start: pixelPointer, count: sampleWidth * sampleHeight))
+        // --- Pass 2: |xi − median| histogram → MAD ---
+        guard let madBuf = device.makeBuffer(
+            length: numBins * MemoryLayout<Int32>.size, options: .storageModeShared
+        ) else {
+            throw ProcessorExecutionError.couldNotCreateResource("Could not create MAD histogram buffer")
+        }
+        memset(madBuf.contents(), 0, madBuf.length)
 
-        let count = Float(pixels.count)
-        let sum = pixels.reduce(0.0, +)
-        let mean = sum / count
+        var medianF   = median
+        let medianBuf = try ProcessorHelpers.createBuffer(from: &medianF, device: device)
 
-        let variance = pixels.map { pow($0 - mean, 2) }.reduce(0.0, +) / count
-        let stdDev = sqrt(max(0.0, variance))  // Ensure non-negative
+        let cb2  = try ProcessorHelpers.createCommandBuffer(commandQueue: commandQueue)
+        let enc2 = try ProcessorHelpers.createComputeEncoder(commandBuffer: cb2)
+        enc2.setComputePipelineState(madPipeline)
+        enc2.setTexture(texture, index: 0)
+        enc2.setBuffer(madBuf,     offset: 0, index: 0)
+        enc2.setBuffer(numBinsBuf, offset: 0, index: 1)
+        enc2.setBuffer(minValBuf,  offset: 0, index: 2)
+        enc2.setBuffer(maxValBuf,  offset: 0, index: 3)
+        enc2.setBuffer(medianBuf,  offset: 0, index: 4)
+        enc2.dispatchThreadgroups(tgGrid, threadsPerThreadgroup: tgSize)
+        enc2.endEncoding()
+        try ProcessorHelpers.executeCommandBuffer(cb2)
 
-        return (mean, stdDev)
+        let madPtr = madBuf.contents().bindMemory(to: Int32.self, capacity: numBins)
+        cumul = 0
+        var madBin = numBins / 2
+        for i in 0..<numBins {
+            cumul += Int(madPtr[i])
+            if cumul >= halfPixels { madBin = i; break }
+        }
+        // absdev is mapped over [0, imageRange=1.0]
+        let mad  = (Float(madBin) + 0.5) / Float(numBins)
+        let nmad = 1.4826 * mad
+
+        return (median, nmad)
     }
 }
