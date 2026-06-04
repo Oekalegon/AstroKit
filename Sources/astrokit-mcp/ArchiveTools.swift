@@ -25,6 +25,52 @@ struct ArchiveTools {
             ] as [String: Any],
         ],
         [
+            "name": "archive_search",
+            "description": "Search the archive for frames, frame sets, or both. Equivalent to Finder search — returns files (frames) and folders (frame sets) together by default. Use kind to restrict to one type.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "kind": [
+                        "type": "string",
+                        "enum": ["both", "frames", "framesets"],
+                        "description": "What to search: frames, framesets, or both (default: both).",
+                    ],
+                    "object_name": ["type": "string", "description": "Partial object name match (applies to both frames and frame sets)."],
+                    "frame_types": [
+                        "type": "array",
+                        "items": ["type": "string"],
+                        "description": "Frame types to include (light, dark, flat, bias, diagnostic). Applies to both.",
+                    ],
+                    "filters": [
+                        "type": "array",
+                        "items": ["type": "string"],
+                        "description": "Optical filters (Hɑ, SII, OIII, R, G, B, L). Applies to both.",
+                    ],
+                    "processing_level": [
+                        "type": "string",
+                        "enum": ["raw", "calibrated", "stacked", "stretched"],
+                        "description": "Filter by processing level. Applies to both.",
+                    ],
+                    "camera": ["type": "string", "description": "Camera name, exact match. Applies to both."],
+                    "from_date": ["type": "string", "description": "Start date YYYY-MM-DD. Applies to both (date span overlap for frame sets)."],
+                    "to_date": ["type": "string", "description": "End date YYYY-MM-DD. Applies to both."],
+                    "name": ["type": "string", "description": "Partial match on frame set name (frame sets only)."],
+                    "max_fwhm": ["type": "number", "description": "Frames only: median FWHM ≤ this value (pixels)."],
+                    "min_stars": ["type": "integer", "description": "Frames only: at least this many detected stars."],
+                    "max_background_noise": ["type": "number", "description": "Frames only: background noise ≤ this value."],
+                    "max_eccentricity": ["type": "number", "description": "Frames only: median star eccentricity ≤ this value (0=circular)."],
+                    "stacked": ["type": "boolean", "description": "Frames only: only stacked (master) frames. Shorthand for processing_level=stacked."],
+                    "include_rejected": ["type": "boolean", "description": "Frames only: include rejected frames (default false)."],
+                    "rejected_only": ["type": "boolean", "description": "Frames only: return only rejected frames."],
+                    "ra": ["type": "number", "description": "Frames only: cone search centre RA (degrees)."],
+                    "dec": ["type": "number", "description": "Frames only: cone search centre Dec (degrees)."],
+                    "radius_deg": ["type": "number", "description": "Frames only: cone search radius (degrees)."],
+                    "limit": ["type": "integer", "description": "Frames only: maximum number of frames to return."],
+                ] as [String: Any],
+                "required": [],
+            ] as [String: Any],
+        ],
+        [
             "name": "archive_get",
             "description": "Show all stored information for a single archive frame by UUID.",
             "inputSchema": [
@@ -33,53 +79,6 @@ struct ArchiveTools {
                     "id": ["type": "string", "description": "Archive frame UUID (from archive_find)."],
                 ] as [String: Any],
                 "required": ["id"],
-            ] as [String: Any],
-        ],
-        [
-            "name": "archive_find",
-            "description": "Search the archive for frames matching a query. Returns matching frames as JSON.",
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "object_name": [
-                        "type": "string",
-                        "description": "Partial object name to match (e.g. 'M51').",
-                    ],
-                    "frame_types": [
-                        "type": "array",
-                        "items": ["type": "string"],
-                        "description": "Frame types to include (light, dark, flat, bias, diagnostic).",
-                    ],
-                    "filters": [
-                        "type": "array",
-                        "items": ["type": "string"],
-                        "description": "Filters to include (Hɑ, SII, OIII, R, G, B, L).",
-                    ],
-                    "processing_level": [
-                        "type": "string",
-                        "enum": ["raw", "calibrated", "stacked", "stretched"],
-                        "description": "Filter by processing level.",
-                    ],
-                    "calibrated": [
-                        "type": "boolean",
-                        "description": "Only return calibrated frames.",
-                    ],
-                    "stacked": [
-                        "type": "boolean",
-                        "description": "Only return stacked frames.",
-                    ],
-                    "ra": ["type": "number", "description": "Cone search centre RA (degrees)."],
-                    "dec": ["type": "number", "description": "Cone search centre Dec (degrees)."],
-                    "radius_deg": ["type": "number", "description": "Cone search radius (degrees)."],
-                    "limit": ["type": "integer", "description": "Maximum number of results."],
-                    "include_rejected": ["type": "boolean", "description": "Include rejected frames in results (default false)."],
-                    "rejected_only": ["type": "boolean", "description": "Return only rejected frames."],
-                    "max_fwhm": ["type": "number", "description": "Only frames with median FWHM ≤ this value (pixels). Frames without quality data are excluded."],
-                    "min_stars": ["type": "integer", "description": "Only frames with at least this many detected stars. Frames without quality data are excluded."],
-                    "max_background_noise": ["type": "number", "description": "Only frames with background noise ≤ this value (ADU for frames processed with quality pipelines). Frames without quality data are excluded."],
-                    "max_eccentricity": ["type": "number", "description": "Only frames with median star eccentricity ≤ this value (0=circular). Frames without quality data are excluded."],
-                ] as [String: Any],
-                "required": [],
             ] as [String: Any],
         ],
         [
@@ -148,15 +147,6 @@ struct ArchiveTools {
                     "force": ["type": "boolean", "description": "Allow mixed optical filters; stored as comma-separated list on the frame set (default false)."],
                 ] as [String: Any],
                 "required": ["frame_type"],
-            ] as [String: Any],
-        ],
-        [
-            "name": "archive_frameset_list",
-            "description": "List all frame sets in the archive.",
-            "inputSchema": [
-                "type": "object",
-                "properties": [String: Any](),
-                "required": [String](),
             ] as [String: Any],
         ],
         [
@@ -264,26 +254,77 @@ struct ArchiveTools {
         ],
     ]
 
+    // MARK: - Quality formatting helpers
+
+    /// Core identification fields for a single frame (level, rejection state), after the basic type/object/filter/exp/date.
+    private func frameIdentityParts(_ f: ArchivedFrame) -> [String] {
+        var parts: [String] = []
+        parts.append("level: \(f.processingLevel.rawValue)")
+        if f.rejected { parts.append("rejected: true") }
+        return parts
+    }
+
+    /// Quality fields for a single frame, ready to append to a parts array.
+    private func frameQualityParts(_ f: ArchivedFrame) -> [String] {
+        var parts: [String] = []
+        if let v = f.starCount          { parts.append("stars: \(v)") }
+        if let px = f.medianFWHM {
+            if let arcsec = f.medianFWHMArcsec {
+                parts.append(String(format: "fwhm: %.2fpx/%.2f\"", px, arcsec))
+            } else {
+                parts.append(String(format: "fwhm: %.2fpx", px))
+            }
+        }
+        if let v = f.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
+        if let e = f.backgroundNoiseElectrons {
+            parts.append(String(format: "bg: %.1fe⁻", e))
+        } else if let n = f.backgroundNoise {
+            parts.append(String(format: "bg: %.1fADU", n))
+        }
+        if let v = f.saturatedStarCount, v > 0 { parts.append("sat_stars: \(v)") }
+        if let v = f.hotPixelCount,      v > 0 { parts.append("hot_px: \(v)") }
+        return parts
+    }
+
+    /// Quality aggregate fields for a frameset (medians over active members).
+    private func frameSetQualityParts(_ fs: ArchivedFrameSet) -> [String] {
+        var parts: [String] = []
+        if let v = fs.medianStarCount { parts.append(String(format: "med_stars: %.0f", v)) }
+        if let px = fs.medianFWHM {
+            if let arcsec = fs.medianFWHMArcsec {
+                parts.append(String(format: "med_fwhm: %.2fpx/%.2f\"", px, arcsec))
+            } else {
+                parts.append(String(format: "med_fwhm: %.2fpx", px))
+            }
+        }
+        if let v = fs.medianEccentricity { parts.append(String(format: "med_ecc: %.3f", v)) }
+        if let e = fs.medianBackgroundNoiseElectrons {
+            parts.append(String(format: "med_bg: %.1fe⁻", e))
+        } else if let n = fs.medianBackgroundNoise {
+            parts.append(String(format: "med_bg: %.1fADU", n))
+        }
+        return parts
+    }
+
     // MARK: - Dispatch
 
     func call(name: String, arguments: [String: Any]) async throws -> String {
         switch name {
-        case "archive_add":              return try await archiveAdd(arguments)
-        case "archive_get":              return try await archiveGet(arguments)
-        case "archive_find":             return try await archiveFind(arguments)
-        case "archive_recent":           return try await archiveRecent(arguments)
-        case "archive_list_objects":     return try await archiveListObjects()
-        case "archive_stats":            return try await archiveStats()
-        case "archive_remove":           return try await archiveRemove(arguments)
-        case "archive_reject":           return try await archiveReject(arguments)
-        case "archive_update_quality":   return try await archiveUpdateQuality(arguments)
+        case "archive_add":               return try await archiveAdd(arguments)
+        case "archive_get":               return try await archiveGet(arguments)
+        case "archive_search":            return try await archiveSearch(arguments)
+        case "archive_recent":            return try await archiveRecent(arguments)
+        case "archive_list_objects":      return try await archiveListObjects()
+        case "archive_stats":             return try await archiveStats()
+        case "archive_remove":            return try await archiveRemove(arguments)
+        case "archive_reject":            return try await archiveReject(arguments)
+        case "archive_update_quality":    return try await archiveUpdateQuality(arguments)
         case "archive_frameset_inspect":  return try await archiveFrameSetInspect(arguments)
-        case "archive_frameset_create":  return try await archiveFrameSetCreate(arguments)
-        case "archive_frameset_list":    return try await archiveFrameSetList()
-        case "archive_frameset_get":     return try await archiveFrameSetGet(arguments)
-        case "archive_frameset_quality": return try await archiveFrameSetQuality(arguments)
-        case "archive_frameset_exclude": return try await archiveFrameSetExclude(arguments)
-        case "archive_frameset_delete":  return try await archiveFrameSetDelete(arguments)
+        case "archive_frameset_create":   return try await archiveFrameSetCreate(arguments)
+        case "archive_frameset_get":      return try await archiveFrameSetGet(arguments)
+        case "archive_frameset_quality":  return try await archiveFrameSetQuality(arguments)
+        case "archive_frameset_exclude":  return try await archiveFrameSetExclude(arguments)
+        case "archive_frameset_delete":   return try await archiveFrameSetDelete(arguments)
         default: throw ToolError("Unknown archive tool: \(name)")
         }
     }
@@ -452,51 +493,107 @@ struct ArchiveTools {
         return lines.joined(separator: "\n")
     }
 
-    private func archiveFind(_ args: [String: Any]) async throws -> String {
+    private func archiveSearch(_ args: [String: Any]) async throws -> String {
+        let kindStr = args["kind"] as? String ?? "both"
+        let showFrames    = kindStr == "both" || kindStr == "frames"
+        let showFrameSets = kindStr == "both" || kindStr == "framesets"
         let archive = try makeArchive()
 
-        var query = FrameQuery()
-        query.objectName = args["object_name"] as? String
-        query.limit      = args["limit"]       as? Int
-        query.frameTypes = args["frame_types"] as? [String]
-        query.filters    = args["filters"]     as? [String]
-        if let lvl = args["processing_level"] as? String {
-            query.processingLevel = ProcessingLevel(rawValue: lvl)
-        }
-        if let cal = args["calibrated"] as? Bool { query.calibrated = cal }
-        if let stk = args["stacked"]    as? Bool { query.stacked    = stk }
-        if let ra = args["ra"] as? Double,
-           let dec = args["dec"] as? Double,
-           let r = args["radius_deg"] as? Double {
-            query.coneSearch = FrameQuery.ConeSearch(ra: ra, dec: dec, radiusDeg: r)
-        }
-        if args["rejected_only"] as? Bool == true {
-            query.rejectionFilter = .onlyRejected
-        } else if args["include_rejected"] as? Bool == true {
-            query.rejectionFilter = .includeAll
-        }
-        query.maxFWHM            = args["max_fwhm"]             as? Double
-        query.minStarCount       = args["min_stars"]            as? Int
-        query.maxBackgroundNoise = args["max_background_noise"] as? Double
-        query.maxEccentricity    = args["max_eccentricity"]     as? Double
-
-        let frames = try await archive.frames(matching: query)
-        if frames.isEmpty { return "No frames found matching the query." }
+        let df = DateFormatter()
+        df.dateFormat = "yyyy-MM-dd"
+        df.timeZone = TimeZone(identifier: "UTC")
+        let dateRange: DateInterval? = {
+            guard let fromStr = args["from_date"] as? String,
+                  let toStr   = args["to_date"]   as? String,
+                  let fromDate = df.date(from: fromStr),
+                  let toDate   = df.date(from: toStr) else { return nil }
+            return DateInterval(start: fromDate, end: toDate)
+        }()
 
         let iso = ISO8601DateFormatter()
-        var lines = ["Found \(frames.count) frame(s):"]
-        for f in frames {
-            var parts: [String] = [
-                "id: \(f.id.uuidString)",
-                "type: \(f.frameType)",
-            ]
-            if let v = f.objectName   { parts.append("object: \(v)") }
-            if let v = f.filter       { parts.append("filter: \(v)") }
-            if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
-            if let v = f.timestamp    { parts.append("date: \(String(iso.string(from: v).prefix(16)).replacingOccurrences(of: "T", with: " "))") }
-            parts.append("file: \((f.filePath as NSString).lastPathComponent)")
-            lines.append("  { \(parts.joined(separator: ", ")) }")
+        func shortDate(_ d: Date) -> String {
+            String(iso.string(from: d).prefix(16)).replacingOccurrences(of: "T", with: " ")
         }
+
+        var lines: [String] = []
+
+        if showFrames {
+            var query = FrameQuery()
+            query.objectName = args["object_name"] as? String
+            query.camera     = args["camera"]      as? String
+            query.limit      = args["limit"]       as? Int
+            query.frameTypes = args["frame_types"] as? [String]
+            query.filters    = args["filters"]     as? [String]
+            if let lvl = args["processing_level"] as? String { query.processingLevel = ProcessingLevel(rawValue: lvl) }
+            if args["stacked"] as? Bool == true { query.stacked = true }
+            query.dateRange  = dateRange
+            if let ra = args["ra"] as? Double,
+               let dec = args["dec"] as? Double,
+               let r = args["radius_deg"] as? Double {
+                query.coneSearch = FrameQuery.ConeSearch(ra: ra, dec: dec, radiusDeg: r)
+            }
+            if args["rejected_only"] as? Bool == true {
+                query.rejectionFilter = .onlyRejected
+            } else if args["include_rejected"] as? Bool == true {
+                query.rejectionFilter = .includeAll
+            }
+            query.maxFWHM            = args["max_fwhm"]             as? Double
+            query.minStarCount       = args["min_stars"]            as? Int
+            query.maxBackgroundNoise = args["max_background_noise"] as? Double
+            query.maxEccentricity    = args["max_eccentricity"]     as? Double
+
+            let frames = try await archive.frames(matching: query)
+            lines.append("Frames (\(frames.count)):")
+            if frames.isEmpty {
+                lines.append("  (none)")
+            } else {
+                for f in frames {
+                    var parts: [String] = ["id: \(f.id.uuidString)", "type: \(f.frameType)"]
+                    if let v = f.objectName   { parts.append("object: \(v)") }
+                    if let v = f.filter       { parts.append("filter: \(v)") }
+                    if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
+                    if let v = f.timestamp    { parts.append("date: \(shortDate(v))") }
+                    parts += frameIdentityParts(f)
+                    parts += frameQualityParts(f)
+                    parts.append("file: \(f.filePath)")
+                    lines.append("  { \(parts.joined(separator: ", ")) }")
+                }
+            }
+        }
+
+        if showFrameSets {
+            if !lines.isEmpty { lines.append("") }
+            var query = FrameSetQuery()
+            query.name       = args["name"]        as? String
+            query.objectName = args["object_name"] as? String
+            query.camera     = args["camera"]      as? String
+            query.frameTypes = args["frame_types"] as? [String]
+            query.filters    = args["filters"]     as? [String]
+            if let lvl = args["processing_level"] as? String { query.processingLevel = ProcessingLevel(rawValue: lvl) }
+            query.dateRange  = dateRange
+
+            let sets = try await archive.frameSets(matching: query)
+            lines.append("Frame Sets (\(sets.count)):")
+            if sets.isEmpty {
+                lines.append("  (none)")
+            } else {
+                for fs in sets {
+                    var parts = [
+                        "id: \(fs.id.uuidString)",
+                        "name: \(fs.name)",
+                        "type: \(fs.frameType)",
+                        "frames: \(fs.frameCount)",
+                        "level: \(fs.processingLevel.rawValue)",
+                    ]
+                    if let v = fs.objectName { parts.append("object: \(v)") }
+                    if let v = fs.filter     { parts.append("filter: \(v)") }
+                    parts += frameSetQualityParts(fs)
+                    parts.append("created: \(shortDate(fs.createdAt))")
+                    lines.append("  { \(parts.joined(separator: ", ")) }")
+                }
+            }
+        }
+
         return lines.joined(separator: "\n")
     }
 
@@ -522,6 +619,8 @@ struct ArchiveTools {
             if let v = f.filter       { parts.append("filter: \(v)") }
             if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
             if let v = f.timestamp    { parts.append("date: \(shortDate(v))") }
+            parts += frameIdentityParts(f)
+            parts += frameQualityParts(f)
             parts.append("file: \((f.filePath as NSString).lastPathComponent)")
             lines.append("  { \(parts.joined(separator: ", ")) }")
         }
@@ -670,28 +769,6 @@ struct ArchiveTools {
         return lines.joined(separator: "\n")
     }
 
-    private func archiveFrameSetList() async throws -> String {
-        let archive = try makeArchive()
-        let sets = try await archive.frameSets()
-        if sets.isEmpty { return "No frame sets in archive." }
-        var lines = ["Frame sets (\(sets.count)):"]
-        let iso = ISO8601DateFormatter()
-        for fs in sets {
-            var parts = [
-                "id: \(fs.id.uuidString)",
-                "name: \(fs.name)",
-                "type: \(fs.frameType)",
-                "frames: \(fs.frameCount)",
-                "level: \(fs.processingLevel.rawValue)",
-            ]
-            if let v = fs.objectName { parts.append("object: \(v)") }
-            if let v = fs.filter     { parts.append("filter: \(v)") }
-            parts.append("created: \(String(iso.string(from: fs.createdAt).prefix(16)).replacingOccurrences(of: "T", with: " "))")
-            lines.append("  { \(parts.joined(separator: ", ")) }")
-        }
-        return lines.joined(separator: "\n")
-    }
-
     private func archiveFrameSetGet(_ args: [String: Any]) async throws -> String {
         guard let idStr = args["id"] as? String, let uuid = UUID(uuidString: idStr) else {
             throw ToolError("archive_frameset_get requires a valid 'id' UUID.")
@@ -742,6 +819,13 @@ struct ArchiveTools {
         }
         lines.append(row("Created", iso.string(from: fs.createdAt)))
 
+        let fsQuality = frameSetQualityParts(fs)
+        if !fsQuality.isEmpty {
+            lines.append("")
+            lines.append("Quality (medians over active frames):")
+            for part in fsQuality { lines.append("  \(part)") }
+        }
+
         if !members.isEmpty {
             lines.append("")
             lines.append("Members:")
@@ -754,6 +838,9 @@ struct ArchiveTools {
                 if let v = f.filter       { parts.append("filter: \(v)") }
                 if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
                 if let v = f.timestamp    { parts.append("date: \(String(iso.string(from: v).prefix(16)).replacingOccurrences(of: "T", with: " "))") }
+                parts += frameIdentityParts(f)
+                parts += frameQualityParts(f)
+                parts.append("file: \(f.filePath)")
                 lines.append("  { \(parts.joined(separator: ", ")) }")
             }
         }

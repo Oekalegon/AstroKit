@@ -63,6 +63,11 @@ extension Frameset {
                 members = try await archive.members(inFrameSet: fsUUID)
             }
 
+            // Update the frameset's stored quality aggregates to reflect any newly computed metrics.
+            if !toCompute.isEmpty {
+                try await archive.recomputeFrameSetQuality(id: fsUUID)
+            }
+
             if json {
                 printJSON(fs: fs, members: members)
             } else {

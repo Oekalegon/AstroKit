@@ -105,10 +105,14 @@ enum FITSHeaderReader {
         let egain  = doubleValue(headers, keys: ["EGAIN"])
         let offset = doubleValue(headers, keys: ["OFFSET", "PEDESTAL"])
 
+        // CALIBRAT: AstrophotoKit custom keyword.
+        // CALSTAT: written by MaxIm DL and compatible tools — non-empty string means calibration was applied.
+        // IMAGETYP containing "calibrat": written by some capture tools (e.g. "Calibrated Light").
         let calibrated = headers["CALIBRAT"]?.boolValue
-            ?? imageType.contains("calibrat")
+            ?? (headers["CALSTAT"]?.stringValue.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? false)
+            || imageType.contains("calibrat")
         let stacked = headers["STACKED"]?.boolValue
-            ?? ((headers["NFRAMES"]?.intValue ?? 1) > 1)
+            ?? ((headers["NFRAMES"]?.intValue ?? headers["NCOMBINE"]?.intValue ?? 1) > 1)
         let stretched = headers["STRETCHD"]?.boolValue ?? false
 
         let processingLevel: ProcessingLevel

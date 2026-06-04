@@ -41,6 +41,16 @@ public struct ArchivedFrameSet: Sendable, Identifiable {
     public var temperatureMin: Double?
     public var temperatureMax: Double?
 
+    // Quality aggregates — medians over active (non-excluded) member frames.
+    // Populated on creation and refreshed by `ap-archive frameset quality`.
+    public var medianStarCount: Double?
+    public var medianFWHM: Double?
+    /// Derived from `medianFWHM × pixelScale`. Only available when both are known.
+    public var medianFWHMArcsec: Double? { medianFWHM.flatMap { fwhm in pixelScale.map { fwhm * $0 } } }
+    public var medianEccentricity: Double?
+    public var medianBackgroundNoise: Double?
+    public var medianBackgroundNoiseElectrons: Double?
+
     public init(
         id: UUID, name: String, frameType: String, processingLevel: ProcessingLevel,
         createdAt: Date, frameCount: Int, excludedFrameCount: Int = 0,
@@ -49,7 +59,10 @@ public struct ArchivedFrameSet: Sendable, Identifiable {
         width: Int?, height: Int?,
         pixelScale: Double?, focalLength: Double?, positionAngle: Double?,
         dateFrom: Date?, dateTo: Date?,
-        temperatureMean: Double?, temperatureMin: Double?, temperatureMax: Double?
+        temperatureMean: Double?, temperatureMin: Double?, temperatureMax: Double?,
+        medianStarCount: Double? = nil, medianFWHM: Double? = nil,
+        medianEccentricity: Double? = nil, medianBackgroundNoise: Double? = nil,
+        medianBackgroundNoiseElectrons: Double? = nil
     ) {
         self.id = id
         self.name = name
@@ -74,5 +87,10 @@ public struct ArchivedFrameSet: Sendable, Identifiable {
         self.temperatureMean = temperatureMean
         self.temperatureMin = temperatureMin
         self.temperatureMax = temperatureMax
+        self.medianStarCount = medianStarCount
+        self.medianFWHM = medianFWHM
+        self.medianEccentricity = medianEccentricity
+        self.medianBackgroundNoise = medianBackgroundNoise
+        self.medianBackgroundNoiseElectrons = medianBackgroundNoiseElectrons
     }
 }

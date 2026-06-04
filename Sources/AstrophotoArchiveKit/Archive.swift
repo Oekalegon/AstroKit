@@ -450,6 +450,7 @@ public actor Archive {
             if !reasons.isEmpty { excludedReasons[f.id] = reasons.joined(separator: "; ") }
         }
 
+        let activeFrames = matchedFrames.filter { !excludedIDs.contains($0.id) }
         let frameSet = ArchivedFrameSet(
             id: UUID(), name: name, frameType: frameType, processingLevel: processingLevel,
             createdAt: Date(), frameCount: matchedFrames.count,
@@ -469,7 +470,12 @@ public actor Archive {
             dateTo:   inspection.dateTo,
             temperatureMean: inspection.temperatureMean,
             temperatureMin:  inspection.temperatureMin,
-            temperatureMax:  inspection.temperatureMax
+            temperatureMax:  inspection.temperatureMax,
+            medianStarCount:               median(activeFrames.compactMap { $0.starCount.map { Double($0) } }),
+            medianFWHM:                    median(activeFrames.compactMap { $0.medianFWHM }),
+            medianEccentricity:            median(activeFrames.compactMap { $0.medianEccentricity }),
+            medianBackgroundNoise:         median(activeFrames.compactMap { $0.backgroundNoise }),
+            medianBackgroundNoiseElectrons: median(activeFrames.compactMap { $0.backgroundNoiseElectrons })
         )
         try await database.insertFrameSet(
             frameSet,
@@ -480,9 +486,9 @@ public actor Archive {
         return (frameSet, inspection)
     }
 
-    /// Returns all frame sets ordered by creation date (newest first).
-    public func frameSets() async throws -> [ArchivedFrameSet] {
-        try await database.queryFrameSets()
+    /// Returns frame sets matching the given query, ordered by creation date (newest first).
+    public func frameSets(matching query: FrameSetQuery = FrameSetQuery()) async throws -> [ArchivedFrameSet] {
+        try await database.queryFrameSets(matching: query)
     }
 
     /// Returns a single frame set by its ID.
@@ -544,6 +550,22 @@ public actor Archive {
     /// Deletes a frame set. Member frames are not affected.
     public func deleteFrameSet(id: UUID) async throws {
         try await database.deleteFrameSet(id: id)
+    }
+
+    /// Recomputes quality aggregates (medians over active member frames) and persists them on the frameset.
+    ///
+    /// Call this after running a quality pipeline on frameset members so the summary reflects
+    /// the latest per-frame metrics.
+    public func recomputeFrameSetQuality(id: UUID) async throws {
+        let activeFrames = try await frames(inFrameSet: id)
+        try await database.updateFrameSetQuality(
+            id: id,
+            medianStarCount:               median(activeFrames.compactMap { $0.starCount.map { Double($0) } }),
+            medianFWHM:                    median(activeFrames.compactMap { $0.medianFWHM }),
+            medianEccentricity:            median(activeFrames.compactMap { $0.medianEccentricity }),
+            medianBackgroundNoise:         median(activeFrames.compactMap { $0.backgroundNoise }),
+            medianBackgroundNoiseElectrons: median(activeFrames.compactMap { $0.backgroundNoiseElectrons })
+        )
     }
 
     // MARK: - Inspection builder
@@ -646,6 +668,15 @@ public actor Archive {
             frames: matchedFrames,
             excludedFrames: excludedFrames
         )
+    }
+
+    // MARK: - Math helpers
+
+    private func median(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let n = sorted.count
+        return n % 2 == 0 ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0 : sorted[n / 2]
     }
 
     // MARK: - Shared property helpers
