@@ -1,19 +1,12 @@
 import SwiftUI
-import Metal
 
 /// Displays FITS header metadata and image properties.
 @available(iOS 16.0, macOS 13.0, *)
 public struct FITSInformationView: View {
     let fitsImage: FITSImage?
-    let texture: MTLTexture?
-    let textureWidth: Int
-    let textureHeight: Int
 
-    public init(fitsImage: FITSImage? = nil, texture: MTLTexture? = nil, textureWidth: Int = 0, textureHeight: Int = 0) {
+    public init(fitsImage: FITSImage? = nil) {
         self.fitsImage = fitsImage
-        self.texture = texture
-        self.textureWidth = textureWidth
-        self.textureHeight = textureHeight
     }
 
     public var body: some View {

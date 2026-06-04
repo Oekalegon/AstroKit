@@ -96,7 +96,7 @@ public struct FITSInfoPanelView: View {
             .padding()
 
             TabView(selection: $selectedTab) {
-                FITSInformationView(fitsImage: fitsImage, texture: texture, textureWidth: textureWidth, textureHeight: textureHeight)
+                FITSInformationView(fitsImage: fitsImage)
                     .tag(FITSInfoPanelTab.information)
 
                 FITSImageToolsView(
