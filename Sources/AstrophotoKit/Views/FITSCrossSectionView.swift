@@ -79,14 +79,11 @@ public struct FITSCrossSectionView: View {
                         xResult = img.getCenterXCrossSection()
                         yResult = img.getCenterYCrossSection()
                     } else if let tex {
-                        xResult = FITSCrossSectionView.computeSection(
-                            texture: tex, pipeline: MetalShared.crossSectionRowPipeline,
-                            count: tex.width,  coord: UInt32(tex.height / 2),
-                            minValue: minV, maxValue: maxV)
-                        yResult = FITSCrossSectionView.computeSection(
-                            texture: tex, pipeline: MetalShared.crossSectionColumnPipeline,
-                            count: tex.height, coord: UInt32(tex.width / 2),
-                            minValue: minV, maxValue: maxV)
+                        let reader = FITSTextureReader(texture: tex, minValue: minV, maxValue: maxV)
+                        xResult = reader.readSection(pipeline: MetalShared.crossSectionRowPipeline,
+                                                     count: tex.width,  coord: UInt32(tex.height / 2))
+                        yResult = reader.readSection(pipeline: MetalShared.crossSectionColumnPipeline,
+                                                     count: tex.height, coord: UInt32(tex.width / 2))
                     }
                     return (xResult, yResult)
                 }.value
@@ -115,43 +112,4 @@ public struct FITSCrossSectionView: View {
         return ""
     }
 
-    // MARK: - Static compute helper (callable from Task.detached without self)
-
-    /// Dispatches a 1D compute kernel that reads one row or column from `texture`,
-    /// then denormalizes the results into the original value range.
-    nonisolated private static func computeSection(
-        texture: MTLTexture,
-        pipeline: MTLComputePipelineState?,
-        count: Int,
-        coord: UInt32,
-        minValue: Float,
-        maxValue: Float
-    ) -> [Float] {
-        guard let device   = MetalShared.device,
-              let queue    = MetalShared.queue,
-              let pipeline else { return [] }
-
-        let bufSize = count * MemoryLayout<Float>.size
-        guard let outBuf = device.makeBuffer(length: bufSize, options: .storageModeShared),
-              let cmd     = queue.makeCommandBuffer(),
-              let enc     = cmd.makeComputeCommandEncoder() else { return [] }
-
-        var coordVal = coord
-        enc.setComputePipelineState(pipeline)
-        enc.setTexture(texture, index: 0)
-        enc.setBuffer(outBuf, offset: 0, index: 0)
-        enc.setBytes(&coordVal, length: MemoryLayout<UInt32>.size, index: 1)
-
-        let tgSize  = min(pipeline.maxTotalThreadsPerThreadgroup, 256)
-        let tgCount = (count + tgSize - 1) / tgSize
-        enc.dispatchThreadgroups(MTLSize(width: tgCount, height: 1, depth: 1),
-                                 threadsPerThreadgroup: MTLSize(width: tgSize, height: 1, depth: 1))
-        enc.endEncoding()
-        cmd.commit(); cmd.waitUntilCompleted()
-        guard cmd.error == nil else { return [] }
-
-        let ptr   = outBuf.contents().bindMemory(to: Float.self, capacity: count)
-        let range = maxValue - minValue
-        return (0..<count).map { minValue + ptr[$0] * range }
-    }
 }

@@ -212,8 +212,8 @@ public struct FITSImageToolsView: View {
                         zoom: z, panOffset: pan, aspectRatio: ar) else { return nil }
                     let px = Int(coord.x * Float(w))
                     let py = Int(coord.y * Float(h))
-                    let intensity = FITSImageToolsView.readTexturePixel(
-                        texture: tex, x: px, y: py, minValue: minV, maxValue: maxV)
+                    let intensity = FITSTextureReader(texture: tex, minValue: minV, maxValue: maxV)
+                        .readPixel(x: px, y: py)
                     return PixelSample(x: px, y: py, intensity: intensity)
                 } else if let img {
                     guard let px = img.screenToImagePixel(
@@ -276,28 +276,4 @@ public struct FITSImageToolsView: View {
         }
     }
 
-    nonisolated private static func readTexturePixel(texture: MTLTexture, x: Int, y: Int, minValue: Float, maxValue: Float) -> Float? {
-        guard x >= 0 && x < texture.width && y >= 0 && y < texture.height else { return nil }
-        guard let device = MetalShared.device,
-              let queue = MetalShared.queue else { return nil }
-
-        let isRGBA = texture.pixelFormat == .rgba32Float || texture.pixelFormat == .rgba16Float || texture.pixelFormat == .rgba8Unorm
-        let bufSize = isRGBA ? 16 : max(16, MemoryLayout<Float32>.size)
-
-        guard let buf  = device.makeBuffer(length: bufSize, options: .storageModeShared),
-              let cmd  = queue.makeCommandBuffer(),
-              let blit = cmd.makeBlitCommandEncoder() else { return nil }
-
-        blit.copy(from: texture, sourceSlice: 0, sourceLevel: 0,
-                  sourceOrigin: MTLOrigin(x: x, y: y, z: 0),
-                  sourceSize: MTLSize(width: 1, height: 1, depth: 1),
-                  to: buf, destinationOffset: 0,
-                  destinationBytesPerRow: bufSize, destinationBytesPerImage: bufSize)
-        blit.endEncoding()
-        cmd.commit(); cmd.waitUntilCompleted()
-        guard cmd.error == nil else { return nil }
-
-        let ptr = buf.contents().bindMemory(to: Float32.self, capacity: isRGBA ? 4 : 1)
-        return minValue + ptr[0] * (maxValue - minValue)
-    }
 }
