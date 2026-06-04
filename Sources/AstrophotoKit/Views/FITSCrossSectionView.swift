@@ -17,6 +17,9 @@ public struct FITSCrossSectionView: View {
     let textureMinValue: Float
     let textureMaxValue: Float
 
+    @State private var xData: [Float] = []
+    @State private var yData: [Float] = []
+
     public init(fitsImage: FITSImage? = nil, texture: MTLTexture? = nil, textureMinValue: Float = 0.0, textureMaxValue: Float = 1.0) {
         self.fitsImage = fitsImage
         self.texture = texture
@@ -28,7 +31,7 @@ public struct FITSCrossSectionView: View {
         if fitsImage != nil || texture != nil {
             VStack(alignment: .leading, spacing: 4) {
                 Chart {
-                    ForEach(Array(xSection().enumerated()), id: \.offset) { index, intensity in
+                    ForEach(Array(xData.enumerated()), id: \.offset) { index, intensity in
                         LineMark(x: .value("Position", Float(index)), y: .value("Intensity", intensity))
                             .foregroundStyle(.blue)
                             .lineStyle(StrokeStyle(lineWidth: 1.5))
@@ -36,7 +39,7 @@ public struct FITSCrossSectionView: View {
                     }
                     .foregroundStyle(by: .value("Series", "X-axis"))
 
-                    ForEach(Array(ySection().enumerated()), id: \.offset) { index, intensity in
+                    ForEach(Array(yData.enumerated()), id: \.offset) { index, intensity in
                         LineMark(x: .value("Position", Float(index)), y: .value("Intensity", intensity))
                             .foregroundStyle(.green)
                             .lineStyle(StrokeStyle(lineWidth: 1.5))
@@ -63,6 +66,33 @@ public struct FITSCrossSectionView: View {
                 }
             }
             .padding(.vertical, 4)
+            .task(id: sourceID) {
+                // Capture value-type copies so Task.detached doesn't need self.
+                let img  = fitsImage
+                let tex  = texture
+                let minV = textureMinValue
+                let maxV = textureMaxValue
+                let (x, y) = await Task.detached(priority: .userInitiated) {
+                    var xResult = [Float]()
+                    var yResult = [Float]()
+                    if let img {
+                        xResult = img.getCenterXCrossSection()
+                        yResult = img.getCenterYCrossSection()
+                    } else if let tex {
+                        xResult = FITSCrossSectionView.computeSection(
+                            texture: tex, pipeline: MetalShared.crossSectionRowPipeline,
+                            count: tex.width,  coord: UInt32(tex.height / 2),
+                            minValue: minV, maxValue: maxV)
+                        yResult = FITSCrossSectionView.computeSection(
+                            texture: tex, pipeline: MetalShared.crossSectionColumnPipeline,
+                            count: tex.height, coord: UInt32(tex.width / 2),
+                            minValue: minV, maxValue: maxV)
+                    }
+                    return (xResult, yResult)
+                }.value
+                xData = x
+                yData = y
+            }
         } else {
             Text("No cross-section data")
                 .foregroundColor(.secondary)
@@ -71,39 +101,31 @@ public struct FITSCrossSectionView: View {
         }
     }
 
-    private func xSection() -> [Float] {
-        if let img = fitsImage  { return img.getCenterXCrossSection() }
-        if let tex = texture    { return textureCenterRow(tex) }
-        return []
+    // MARK: - Data source identity
+
+    /// A string that changes whenever the underlying data source changes,
+    /// used as the `.task` ID to trigger recomputation.
+    private var sourceID: String {
+        if let tex = texture {
+            return "tex-\(ObjectIdentifier(tex as AnyObject).hashValue)-\(textureMinValue)-\(textureMaxValue)"
+        }
+        if let img = fitsImage {
+            return "img-\(img.width)-\(img.height)-\(img.originalMinValue)-\(img.originalMaxValue)"
+        }
+        return ""
     }
 
-    private func ySection() -> [Float] {
-        if let img = fitsImage  { return img.getCenterYCrossSection() }
-        if let tex = texture    { return textureCenterColumn(tex) }
-        return []
-    }
+    // MARK: - Static compute helper (callable from Task.detached without self)
 
-    private func textureCenterRow(_ texture: MTLTexture) -> [Float] {
-        computeCrossSection(texture: texture,
-                            pipeline: MetalShared.crossSectionRowPipeline,
-                            count: texture.width,
-                            coord: UInt32(texture.height / 2))
-    }
-
-    private func textureCenterColumn(_ texture: MTLTexture) -> [Float] {
-        computeCrossSection(texture: texture,
-                            pipeline: MetalShared.crossSectionColumnPipeline,
-                            count: texture.height,
-                            coord: UInt32(texture.width / 2))
-    }
-
-    /// Dispatches a 1D compute kernel that reads one row or column from `texture` into a float buffer,
-    /// then denormalizes the results back into the original value range.
-    private func computeCrossSection(
+    /// Dispatches a 1D compute kernel that reads one row or column from `texture`,
+    /// then denormalizes the results into the original value range.
+    nonisolated private static func computeSection(
         texture: MTLTexture,
         pipeline: MTLComputePipelineState?,
         count: Int,
-        coord: UInt32
+        coord: UInt32,
+        minValue: Float,
+        maxValue: Float
     ) -> [Float] {
         guard let device   = MetalShared.device,
               let queue    = MetalShared.queue,
@@ -129,7 +151,7 @@ public struct FITSCrossSectionView: View {
         guard cmd.error == nil else { return [] }
 
         let ptr   = outBuf.contents().bindMemory(to: Float.self, capacity: count)
-        let range = textureMaxValue - textureMinValue
-        return (0..<count).map { textureMinValue + ptr[$0] * range }
+        let range = maxValue - minValue
+        return (0..<count).map { minValue + ptr[$0] * range }
     }
 }

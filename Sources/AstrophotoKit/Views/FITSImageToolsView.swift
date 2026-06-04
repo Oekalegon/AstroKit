@@ -26,8 +26,31 @@ public struct FITSImageToolsView: View {
     @State private var useLogScale: Bool = false
     @State private var extractedRegionZoom: Float = 1.0
     @State private var extractedRegionPanOffset: SIMD2<Float> = SIMD2<Float>(0, 0)
+    @State private var pixelSample: PixelSample? = nil
 
     private let regionSizes = [10, 20, 30, 40, 50]
+
+    private struct PixelSample {
+        let x: Int; let y: Int; let intensity: Float?
+    }
+
+    private struct SampleKey: Hashable {
+        let cursor: SIMD2<Float>?
+        let zoom: Float
+        let panOffset: SIMD2<Float>
+        let aspectRatio: SIMD2<Float>
+        let textureHash: Int
+    }
+
+    private var sampleKey: SampleKey {
+        SampleKey(
+            cursor: cursorPosition,
+            zoom: zoom,
+            panOffset: panOffset,
+            aspectRatio: aspectRatio,
+            textureHash: texture.map { ObjectIdentifier($0 as AnyObject).hashValue } ?? 0
+        )
+    }
 
     public init(
         fitsImage: FITSImage? = nil,
@@ -70,42 +93,15 @@ public struct FITSImageToolsView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                if let cursorPos = cursorPosition {
+                if cursorPosition != nil {
                     GroupBox("Pixel Information") {
                         VStack(alignment: .leading, spacing: 8) {
-                            if let texture = texture {
-                                let texCoord = FITSCoordinateConverter.screenToTextureCoord(
-                                    normalizedX: cursorPos.x,
-                                    normalizedY: cursorPos.y,
-                                    zoom: zoom,
-                                    panOffset: panOffset,
-                                    aspectRatio: aspectRatio
-                                )
-                                if let coord = texCoord {
-                                    let pixelX = Int(coord.x * Float(textureWidth))
-                                    let pixelY = Int(coord.y * Float(textureHeight))
-                                    InfoRow(label: "X", value: "\(pixelX)")
-                                    InfoRow(label: "Y", value: "\(pixelY)")
-                                    if let intensity = readTexturePixel(texture: texture, x: pixelX, y: pixelY) {
-                                        InfoRow(label: "Intensity", value: String(format: "%.6f", intensity))
-                                    } else {
-                                        InfoRow(label: "Intensity", value: "N/A")
-                                    }
-                                } else {
-                                    Text("Cursor outside image bounds").font(.caption).foregroundColor(.secondary)
-                                }
-                            } else if let fitsImage = fitsImage {
-                                if let px = fitsImage.screenToImagePixel(normalizedX: cursorPos.x, normalizedY: cursorPos.y, zoom: zoom, panOffset: panOffset, aspectRatio: aspectRatio) {
-                                    InfoRow(label: "X", value: "\(px.x)")
-                                    InfoRow(label: "Y", value: "\(px.y)")
-                                    if let intensity = fitsImage.getPixelValue(x: px.x, y: px.y) {
-                                        InfoRow(label: "Intensity", value: String(format: "%.6f", intensity))
-                                    } else {
-                                        InfoRow(label: "Intensity", value: "N/A")
-                                    }
-                                } else {
-                                    Text("Cursor outside image bounds").font(.caption).foregroundColor(.secondary)
-                                }
+                            if let sample = pixelSample {
+                                InfoRow(label: "X", value: "\(sample.x)")
+                                InfoRow(label: "Y", value: "\(sample.y)")
+                                InfoRow(label: "Intensity", value: sample.intensity.map { String(format: "%.6f", $0) } ?? "N/A")
+                            } else {
+                                Text("Cursor outside image bounds").font(.caption).foregroundColor(.secondary)
                             }
                         }
                         .padding(.vertical, 4)
@@ -197,6 +193,38 @@ public struct FITSImageToolsView: View {
             }
             .padding()
         }
+        .task(id: sampleKey) {
+            guard let cursor = cursorPosition else { pixelSample = nil; return }
+            // Capture value-type copies so Task.detached doesn't need self.
+            let tex  = texture
+            let img  = fitsImage
+            let w    = textureWidth
+            let h    = textureHeight
+            let minV = textureMinValue
+            let maxV = textureMaxValue
+            let z    = zoom
+            let pan  = panOffset
+            let ar   = aspectRatio
+            let sample = await Task.detached(priority: .userInitiated) { () -> PixelSample? in
+                if let tex {
+                    guard let coord = FITSCoordinateConverter.screenToTextureCoord(
+                        normalizedX: cursor.x, normalizedY: cursor.y,
+                        zoom: z, panOffset: pan, aspectRatio: ar) else { return nil }
+                    let px = Int(coord.x * Float(w))
+                    let py = Int(coord.y * Float(h))
+                    let intensity = FITSImageToolsView.readTexturePixel(
+                        texture: tex, x: px, y: py, minValue: minV, maxValue: maxV)
+                    return PixelSample(x: px, y: py, intensity: intensity)
+                } else if let img {
+                    guard let px = img.screenToImagePixel(
+                        normalizedX: cursor.x, normalizedY: cursor.y,
+                        zoom: z, panOffset: pan, aspectRatio: ar) else { return nil }
+                    return PixelSample(x: px.x, y: px.y, intensity: img.getPixelValue(x: px.x, y: px.y))
+                }
+                return nil
+            }.value
+            pixelSample = sample
+        }
     }
 
     @ViewBuilder
@@ -248,14 +276,13 @@ public struct FITSImageToolsView: View {
         }
     }
 
-    private func readTexturePixel(texture: MTLTexture, x: Int, y: Int) -> Float? {
+    nonisolated private static func readTexturePixel(texture: MTLTexture, x: Int, y: Int, minValue: Float, maxValue: Float) -> Float? {
         guard x >= 0 && x < texture.width && y >= 0 && y < texture.height else { return nil }
         guard let device = MetalShared.device,
               let queue = MetalShared.queue else { return nil }
 
         let isRGBA = texture.pixelFormat == .rgba32Float || texture.pixelFormat == .rgba16Float || texture.pixelFormat == .rgba8Unorm
         let bufSize = isRGBA ? 16 : max(16, MemoryLayout<Float32>.size)
-        let bpr     = bufSize
 
         guard let buf  = device.makeBuffer(length: bufSize, options: .storageModeShared),
               let cmd  = queue.makeCommandBuffer(),
@@ -265,13 +292,12 @@ public struct FITSImageToolsView: View {
                   sourceOrigin: MTLOrigin(x: x, y: y, z: 0),
                   sourceSize: MTLSize(width: 1, height: 1, depth: 1),
                   to: buf, destinationOffset: 0,
-                  destinationBytesPerRow: bpr, destinationBytesPerImage: bufSize)
+                  destinationBytesPerRow: bufSize, destinationBytesPerImage: bufSize)
         blit.endEncoding()
         cmd.commit(); cmd.waitUntilCompleted()
         guard cmd.error == nil else { return nil }
 
         let ptr = buf.contents().bindMemory(to: Float32.self, capacity: isRGBA ? 4 : 1)
-        let normalized = ptr[0]
-        return textureMinValue + normalized * (textureMaxValue - textureMinValue)
+        return minValue + ptr[0] * (maxValue - minValue)
     }
 }
