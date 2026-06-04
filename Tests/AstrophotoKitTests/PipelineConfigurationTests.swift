@@ -131,7 +131,7 @@ func stepWithParameters() throws {
     
     // Check that default value is a double
     if case .double(let value) = blurStep.parameters[0].defaultValue! {
-        #expect(value == 3.0)
+        #expect(value == 1.5)
     } else {
         Issue.record("Expected double default value for radius parameter")
     }

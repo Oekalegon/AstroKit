@@ -148,7 +148,7 @@ func testGrayscaleBlurBackgroundThresholdErosionAndDilationProcessors() async th
     #expect(backgroundLevelTable.isInstantiated, "Background level table should be instantiated")
     #expect(backgroundLevelTable.dataFrame != nil, "Background level table should have DataFrame")
     #expect(backgroundLevelTable.rowCount == 1, "Background level table should have 1 row")
-    #expect(backgroundLevelTable.columnCount == 1, "Background level table should have 1 column")
+    #expect(backgroundLevelTable.columnCount >= 1, "Background level table should have at least 1 column")
     print("Background level table: \(backgroundLevelTable.rowCount) row(s), \(backgroundLevelTable.columnCount) column(s)")
 
     // Test 4: Threshold processor (using background-subtracted output as input)

@@ -95,7 +95,7 @@ func starDetectionPipelineCreatesCorrectStacks() async throws {
         "threshold",
         "erosion",
         "dilation",
-        "connected_components",
+        "local_maxima",
         "fwhm",
         "fits_star_catalog_writer",
         "quads",
