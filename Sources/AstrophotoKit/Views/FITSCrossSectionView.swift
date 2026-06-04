@@ -86,8 +86,8 @@ public struct FITSCrossSectionView: View {
     private func textureCenterRow(_ texture: MTLTexture) -> [Float] {
         let w = texture.width, h = texture.height
         let centerY = h / 2
-        guard let device = MTLCreateSystemDefaultDevice(),
-              let queue = device.makeCommandQueue() else { return [] }
+        guard let device = MetalShared.device,
+              let queue = MetalShared.queue else { return [] }
 
         let isRGBA = isRGBAFormat(texture.pixelFormat)
         let bpp = isRGBA ? MemoryLayout<Float32>.size * 4 : MemoryLayout<Float32>.size
@@ -117,8 +117,8 @@ public struct FITSCrossSectionView: View {
     private func textureCenterColumn(_ texture: MTLTexture) -> [Float] {
         let w = texture.width, h = texture.height
         let centerX = w / 2
-        guard let device = MTLCreateSystemDefaultDevice(),
-              let queue = device.makeCommandQueue() else { return [] }
+        guard let device = MetalShared.device,
+              let queue = MetalShared.queue else { return [] }
 
         let isRGBA = isRGBAFormat(texture.pixelFormat)
         let bpp = isRGBA ? MemoryLayout<Float32>.size * 4 : MemoryLayout<Float32>.size

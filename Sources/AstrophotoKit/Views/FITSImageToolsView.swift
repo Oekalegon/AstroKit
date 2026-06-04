@@ -250,8 +250,8 @@ public struct FITSImageToolsView: View {
 
     private func readTexturePixel(texture: MTLTexture, x: Int, y: Int) -> Float? {
         guard x >= 0 && x < texture.width && y >= 0 && y < texture.height else { return nil }
-        guard let device = MTLCreateSystemDefaultDevice(),
-              let queue = device.makeCommandQueue() else { return nil }
+        guard let device = MetalShared.device,
+              let queue = MetalShared.queue else { return nil }
 
         let isRGBA = texture.pixelFormat == .rgba32Float || texture.pixelFormat == .rgba16Float || texture.pixelFormat == .rgba8Unorm
         let bufSize = isRGBA ? 16 : max(16, MemoryLayout<Float32>.size)
