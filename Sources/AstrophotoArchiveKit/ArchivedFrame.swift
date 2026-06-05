@@ -1,3 +1,4 @@
+import AstrophotoKit
 import Foundation
 
 public struct ArchivedFrame: Sendable, Identifiable {
@@ -80,6 +81,13 @@ public struct ArchivedFrame: Sendable, Identifiable {
     /// Populated by calibration_quality pipeline or read from FITS header NHOTPIX.
     public var hotPixelCount: Int?
 
+    // MARK: - Display settings
+
+    /// Saved display stretch. Nil is equivalent to `StretchSettings.identity`.
+    /// Stored as normalized [0, 1] values independent of bit depth and data range.
+    /// Only the display is affected — the underlying FITS data is never modified.
+    public var stretchSettings: StretchSettings?
+
     public init(
         id: UUID, filePath: String, objectName: String?, ra: Double?, dec: Double?,
         healpixPixel: Int64?, frameType: String, filter: String?, camera: String?,
@@ -104,7 +112,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
         saturatedStarCount: Int? = nil,
         hotPixelCount: Int? = nil,
         egain: Double? = nil,
-        backgroundNoiseElectrons: Double? = nil
+        backgroundNoiseElectrons: Double? = nil,
+        stretchSettings: StretchSettings? = nil
     ) {
         self.id = id
         self.filePath = filePath
@@ -148,5 +157,6 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.saturatedStarCount = saturatedStarCount
         self.hotPixelCount = hotPixelCount
         self.backgroundNoiseElectrons = backgroundNoiseElectrons
+        self.stretchSettings = stretchSettings
     }
 }

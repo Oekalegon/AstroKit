@@ -31,6 +31,7 @@ public struct FITSInfoPanelView: View {
     let imageID: String?
     @Binding var blackPoint: Float
     @Binding var whitePoint: Float
+    @Binding var stretchSettings: StretchSettings
     let cursorPosition: SIMD2<Float>?
     let aspectRatio: SIMD2<Float>
     let extractedRegion: FITSImage?
@@ -53,6 +54,7 @@ public struct FITSInfoPanelView: View {
         imageID: String? = nil,
         blackPoint: Binding<Float>,
         whitePoint: Binding<Float>,
+        stretchSettings: Binding<StretchSettings> = .constant(.identity),
         cursorPosition: SIMD2<Float>? = nil,
         aspectRatio: SIMD2<Float> = SIMD2<Float>(1.0, 1.0),
         extractedRegion: FITSImage? = nil,
@@ -73,6 +75,7 @@ public struct FITSInfoPanelView: View {
         self.imageID = imageID
         self._blackPoint = blackPoint
         self._whitePoint = whitePoint
+        self._stretchSettings = stretchSettings
         self.cursorPosition = cursorPosition
         self.aspectRatio = aspectRatio
         self.extractedRegion = extractedRegion
@@ -108,6 +111,7 @@ public struct FITSInfoPanelView: View {
                         imageID: imageID,
                         blackPoint: $blackPoint,
                         whitePoint: $whitePoint,
+                        stretchSettings: $stretchSettings,
                         cursorPosition: cursorPosition,
                         aspectRatio: aspectRatio,
                         extractedRegion: extractedRegion,

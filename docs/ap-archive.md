@@ -504,6 +504,40 @@ Copied 18 frame(s) from 'M51 Hɑ 2024' to /Users/don/Desktop/M51_Ha_lights.
 
 ---
 
+### `ap-archive stretch`
+
+Saves or clears the display stretch for an archived frame. The stretch is stored as normalized
+[0, 1] black and white points relative to the frame's full tonal range, making it independent
+of bit depth and sensor gain. The underlying FITS file is **never modified** — only the archive
+database is updated.
+
+The typical workflow is to adjust the stretch interactively in Navi and press **Normalize**, which
+bakes the current slider positions into the archive automatically. Use this command to set or
+override the saved stretch from the command line.
+
+```
+ap-archive stretch <id> --black <value> --white <value>
+ap-archive stretch <id> --reset
+```
+
+| Option | Description |
+|--------|-------------|
+| `--black <value>` | Normalized [0, 1] black point (maps to display black). Must be < `--white`. |
+| `--white <value>` | Normalized [0, 1] white point (maps to display white). Must be > `--black`. |
+| `--reset` | Clear the saved stretch and revert to the full image range. |
+
+**Examples:**
+
+```bash
+# Show only the bottom 10 % of the tonal range (classic narrowband stretch entry point)
+ap-archive stretch A3F2B1C0-... --black 0.0 --white 0.1
+
+# Clear a previously saved stretch
+ap-archive stretch A3F2B1C0-... --reset
+```
+
+---
+
 ### `ap-archive remove`
 
 Removes a frame from the archive by its UUID. Optionally deletes the FITS file from disk.

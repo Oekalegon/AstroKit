@@ -1,3 +1,4 @@
+import AstrophotoKit
 import Foundation
 import HEALPixKit
 
@@ -315,6 +316,16 @@ public actor Archive {
             hotPixelCount: hotPixelCount,
             backgroundNoiseElectrons: backgroundNoiseElectrons
         )
+    }
+
+    // MARK: - Stretch settings
+
+    /// Persists the display stretch for a frame.
+    ///
+    /// Pass `nil` to clear a previously saved stretch (equivalent to identity).
+    /// The underlying FITS file is never modified — only the archive database is updated.
+    public func updateStretchSettings(_ settings: StretchSettings?, id: UUID) async throws {
+        try await database.updateStretchSettings(id: id, settings: settings)
     }
 
     // MARK: - Rejection

@@ -1,3 +1,4 @@
+import AstrophotoKit
 import Foundation
 import SQLite3
 
@@ -225,6 +226,11 @@ actor ArchiveDatabase {
         UPDATE frame_sets SET filter = 'Hɑ'
         WHERE LOWER(filter) = 'h';
         """,
+        // v21: per-frame display stretch settings — JSON-encoded StretchSettings.
+        // Stores the normalized [0,1] black/white points the user last applied and saved.
+        // NULL means identity stretch (full range). Persisted here rather than in FITS
+        // headers so the original file is never modified.
+        "ALTER TABLE frames ADD COLUMN stretch_settings TEXT;",
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -611,6 +617,23 @@ actor ArchiveDatabase {
             }
         }
         bind(stmt, Int32(values.count + 1), id.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
+    func updateStretchSettings(id: UUID, settings: StretchSettings?) throws {
+        let json: String?
+        if let settings {
+            let data = try JSONEncoder().encode(settings)
+            json = String(data: data, encoding: .utf8)
+        } else {
+            json = nil
+        }
+        let stmt = try prepare("UPDATE frames SET stretch_settings = ? WHERE id = ?")
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, json)
+        bind(stmt, 2, id.uuidString)
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
         }
@@ -1244,7 +1267,10 @@ actor ArchiveDatabase {
             saturatedStarCount: sqlite3_column_type(stmt, 38) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 38)) : nil,
             hotPixelCount: sqlite3_column_type(stmt, 39) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 39)) : nil,
             egain: columnDouble(stmt, 40),
-            backgroundNoiseElectrons: columnDouble(stmt, 41)
+            backgroundNoiseElectrons: columnDouble(stmt, 41),
+            stretchSettings: columnText(stmt, 42)
+                .flatMap { Data($0.utf8) }
+                .flatMap { try? JSONDecoder().decode(StretchSettings.self, from: $0) }
         )
     }
 

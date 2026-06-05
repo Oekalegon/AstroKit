@@ -1,5 +1,6 @@
-import Foundation
+import AstrophotoKit
 import AstrophotoArchiveKit
+import Foundation
 
 struct ArchiveTools {
 
@@ -72,6 +73,7 @@ struct ArchiveTools {
         case "archive_remove":            return try await archiveRemove(arguments)
         case "archive_reject":            return try await archiveReject(arguments)
         case "archive_update_quality":    return try await archiveUpdateQuality(arguments)
+        case "archive_update_stretch":    return try await archiveUpdateStretch(arguments)
         case "archive_frameset_inspect":  return try await archiveFrameSetInspect(arguments)
         case "archive_frameset_create":   return try await archiveFrameSetCreate(arguments)
         case "archive_frameset_get":      return try await archiveFrameSetGet(arguments)
@@ -212,6 +214,14 @@ struct ArchiveTools {
                 lines.append(row("Bg. noise", String(format: "%.2f ADU\(eStr)", v)))
             }
             if let v = f.hotPixelCount      { lines.append(row("Hot pixels",   "≈\(v)")) }
+        }
+
+        if let s = f.stretchSettings, !s.isIdentity {
+            lines.append("")
+            lines.append("Display stretch")
+            lines.append(String(repeating: "─", count: 60))
+            lines.append(row("Black", String(format: "%.4f", s.inputBlack)))
+            lines.append(row("White", String(format: "%.4f", s.inputWhite)))
         }
 
         lines.append(row("Added at",   iso.string(from: f.addedAt)))
@@ -766,6 +776,38 @@ struct ArchiveTools {
         if let v = medianEccentricity { updated.append(String(format: "median_eccentricity=%.3f", v)) }
         if let v = hotPixelCount      { updated.append("hot_pixel_count=\(v)") }
         return "Updated quality metrics for frame \(idStr): \(updated.joined(separator: ", "))."
+    }
+
+    private func archiveUpdateStretch(_ args: [String: Any]) async throws -> String {
+        guard let idStr = args["id"] as? String, let uuid = UUID(uuidString: idStr) else {
+            throw ToolError("archive_update_stretch requires a valid 'id' UUID.")
+        }
+        let archive = try makeArchive()
+
+        if args["reset"] as? Bool == true {
+            try await archive.updateStretchSettings(nil, id: uuid)
+            return "Cleared stretch settings for frame \(idStr) — reverted to identity (full range)."
+        }
+
+        let inputBlack = args["input_black"] as? Double
+        let inputWhite = args["input_white"] as? Double
+        guard inputBlack != nil || inputWhite != nil else {
+            throw ToolError(
+                "Provide input_black and input_white (both normalized [0, 1]), or pass reset: true to clear."
+            )
+        }
+        let black = Float(inputBlack ?? 0.0)
+        let white = Float(inputWhite ?? 1.0)
+        guard black < white else {
+            throw ToolError("input_black (\(black)) must be less than input_white (\(white)).")
+        }
+        guard black >= 0.0, white <= 1.0 else {
+            throw ToolError("input_black and input_white must both be in [0, 1].")
+        }
+
+        let settings = StretchSettings(inputBlack: black, inputWhite: white)
+        try await archive.updateStretchSettings(settings, id: uuid)
+        return String(format: "Saved stretch for frame %@: black=%.4f  white=%.4f", idStr, black, white)
     }
 
     private func archiveRemove(_ args: [String: Any]) async throws -> String {

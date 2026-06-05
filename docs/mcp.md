@@ -421,6 +421,39 @@ Updated quality metrics for frame A3F2B1C0-...: star_count=312, median_fwhm=3.85
 
 ---
 
+### `archive_update_stretch`
+
+Saves or clears the display stretch for an archived frame. Stored as normalized [0, 1] black/white
+points relative to the frame's full tonal range — independent of bit depth and sensor gain.
+The underlying FITS file is never modified.
+
+The saved stretch is applied by Navi when the frame is opened, and is shown in `archive_get` output
+when non-identity. The typical workflow is to set the stretch interactively via the **Normalize**
+button in Navi; use this tool to override it programmatically.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `id` | string (UUID) | Yes | Archive frame UUID. |
+| `input_black` | number | No | Normalized [0, 1] black point. Must be < `input_white`. |
+| `input_white` | number | No | Normalized [0, 1] white point. Must be > `input_black`. |
+| `reset` | boolean | No | When `true`, clears the saved stretch (reverts to full range). Overrides `input_black`/`input_white`. |
+
+**Examples:**
+```python
+# Save the bottom 10 % of the tonal range as the display stretch
+archive_update_stretch(id="A3F2B1C0-...", input_black=0.0, input_white=0.1)
+
+# Clear a previously saved stretch
+archive_update_stretch(id="A3F2B1C0-...", reset=True)
+```
+
+Response:
+```
+Saved stretch for frame A3F2B1C0-...: black=0.0000  white=0.1000
+```
+
+---
+
 ## Frame set tools
 
 Frame sets are named, homogeneous collections of archived frames. All members share the same frame type, processing level, and optical filter. They serve as inputs to processing pipelines and as calibration references for future processed frames.
