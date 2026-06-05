@@ -15,7 +15,9 @@ struct FITSTextureReader {
         guard x >= 0 && x < texture.width && y >= 0 && y < texture.height else { return nil }
         guard let (device, queue) = metalResources else { return nil }
 
-        let bufSize = isRGBA ? 16 : max(16, MemoryLayout<Float32>.size)
+        // Metal requires bytesPerRow to be aligned to the pixel format's natural size;
+        // 16 bytes is the minimum that satisfies this for all common float formats.
+        let bufSize = 16
         guard let buf  = device.makeBuffer(length: bufSize, options: .storageModeShared),
               let cmd  = queue.makeCommandBuffer(),
               let blit = cmd.makeBlitCommandEncoder() else { return nil }
