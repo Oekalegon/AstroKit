@@ -1,3 +1,4 @@
+import Accelerate
 import Metal
 
 /// Internal Metal texture readback helper, shared by FITSImageToolsView and FITSCrossSectionView.
@@ -57,8 +58,13 @@ struct FITSTextureReader {
         cmd.commit(); cmd.waitUntilCompleted()
         guard cmd.error == nil else { return [] }
 
-        let ptr = outBuf.contents().bindMemory(to: Float.self, capacity: count)
-        return (0..<count).map { denormalize(ptr[$0]) }
+        // Denormalize the entire output buffer in one SIMD pass: result = ptr * range + minValue
+        var result = [Float](repeating: 0, count: count)
+        var scale  = maxValue - minValue
+        var bias   = minValue
+        let ptr    = outBuf.contents().bindMemory(to: Float.self, capacity: count)
+        vDSP_vsmsa(ptr, 1, &scale, &bias, &result, 1, vDSP_Length(count))
+        return result
     }
 
     // MARK: - Private
