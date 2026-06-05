@@ -247,6 +247,13 @@ Quality metrics
   Eccentricity:      0.312
   Bg. noise:         0.0028
 
+Display stretch
+────────────────────────────────────────────────────────────
+  Norm black:        0.0000
+  Norm white:        0.1000
+  Slider black:      0.0000
+  Slider white:      0.0400
+
 Provenance
 ────────────────────────────────────────────────────────────
   Run ID:            D1E2F3A4-5678-9ABC-DEF0-123456789ABC
