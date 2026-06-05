@@ -172,13 +172,13 @@ public struct FITSImageToolsView: View {
                     if let extractedRegionTexture = extractedRegionTexture {
                         extractedRegionBox(texture: extractedRegionTexture, fitsImage: nil)
                         GroupBox("Cross Sections") {
-                            FITSCrossSectionView(texture: extractedRegionTexture, textureMinValue: textureMinValue, textureMaxValue: textureMaxValue)
+                            FITSCrossSectionView(texture: extractedRegionTexture, textureMinValue: textureMinValue, textureMaxValue: textureMaxValue, imageID: imageID)
                                 .frame(height: 200)
                         }
                     } else if let extractedRegion = extractedRegion {
                         extractedRegionBox(texture: nil, fitsImage: extractedRegion)
                         GroupBox("Cross Sections") {
-                            FITSCrossSectionView(fitsImage: extractedRegion)
+                            FITSCrossSectionView(fitsImage: extractedRegion, imageID: imageID)
                                 .frame(height: 200)
                         }
                     }

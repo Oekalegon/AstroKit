@@ -9,15 +9,21 @@ public struct FITSCrossSectionView: View {
     let texture: MTLTexture?
     let textureMinValue: Float
     let textureMaxValue: Float
+    /// Stable caller-supplied identifier for the image content.
+    /// When provided, cross-sections recompute whenever this value changes, which correctly
+    /// distinguishes two FITSImage values that share the same dimensions and value range.
+    /// When nil the ID falls back to width/height/min/max, which may miss same-sized swaps.
+    let imageID: String?
 
     @State private var xData: [Float] = []
     @State private var yData: [Float] = []
 
-    public init(fitsImage: FITSImage? = nil, texture: MTLTexture? = nil, textureMinValue: Float = 0.0, textureMaxValue: Float = 1.0) {
+    public init(fitsImage: FITSImage? = nil, texture: MTLTexture? = nil, textureMinValue: Float = 0.0, textureMaxValue: Float = 1.0, imageID: String? = nil) {
         self.fitsImage = fitsImage
         self.texture = texture
         self.textureMinValue = textureMinValue
         self.textureMaxValue = textureMaxValue
+        self.imageID = imageID
     }
 
     public var body: some View {
@@ -100,7 +106,7 @@ public struct FITSCrossSectionView: View {
             return "tex-\(ObjectIdentifier(tex as AnyObject))-\(textureMinValue)-\(textureMaxValue)"
         }
         if let img = fitsImage {
-            return "img-\(img.width)-\(img.height)-\(img.originalMinValue)-\(img.originalMaxValue)"
+            return "img-\(imageID ?? "")-\(img.width)-\(img.height)-\(img.originalMinValue)-\(img.originalMaxValue)"
         }
         return ""
     }
