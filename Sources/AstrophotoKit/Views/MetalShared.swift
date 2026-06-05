@@ -1,4 +1,7 @@
 import Metal
+import OSLog
+
+private let logger = Logger(subsystem: "com.astrophotokit", category: "MetalShared")
 
 /// Shared Metal device, command queue, and pipeline states.
 /// All properties are allocated once on first access and reused across all views.
@@ -21,9 +24,12 @@ enum MetalShared {
     /// Loads CrossSectionShader.metal as its own MTLLibrary, independent of the
     /// combined makeShaderLibrary path (which concatenates all shaders and can fail
     /// to compile in environments where the full combined source has conflicts).
+    ///
+    /// Returns nil — and logs an error — if the source file cannot be found in any
+    /// bundle candidate. Cross-section views show empty charts in that case, making
+    /// the failure visible rather than silently serving a stale inline copy.
     private static let crossSectionLibrary: MTLLibrary? = {
         guard let device else { return nil }
-        // Try loading the .metal source file from any known bundle location.
         let candidates: [(Bundle, String?)] = [
             (Bundle.module, nil),
             (Bundle.module, "Shaders"),
@@ -39,33 +45,7 @@ enum MetalShared {
                 return lib
             }
         }
-        // Inline fallback — guaranteed to work as long as Metal is available.
-        return try? device.makeLibrary(source: crossSectionShaderSource, options: nil)
+        logger.error("CrossSectionShader.metal not found in any bundle candidate — cross-section views will be empty")
+        return nil
     }()
-
-    /// Verbatim copy of CrossSectionShader.metal used as an inline compilation fallback.
-    private static let crossSectionShaderSource = """
-    #include <metal_stdlib>
-    using namespace metal;
-
-    kernel void cross_section_column(
-        texture2d<float, access::read> tex [[texture(0)]],
-        device float                  *out [[buffer(0)]],
-        constant uint                 &col [[buffer(1)]],
-        uint gid [[thread_position_in_grid]]
-    ) {
-        if (gid >= tex.get_height()) return;
-        out[gid] = tex.read(uint2(col, gid)).r;
-    }
-
-    kernel void cross_section_row(
-        texture2d<float, access::read> tex [[texture(0)]],
-        device float                  *out [[buffer(0)]],
-        constant uint                 &row [[buffer(1)]],
-        uint gid [[thread_position_in_grid]]
-    ) {
-        if (gid >= tex.get_width()) return;
-        out[gid] = tex.read(uint2(gid, row)).r;
-    }
-    """
 }
