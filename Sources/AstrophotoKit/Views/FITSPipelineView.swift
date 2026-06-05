@@ -37,7 +37,8 @@ public struct FITSPipelineView: View {
                     }
                 }
 
-                if frame == nil && table == nil {
+                let hasContent = (frame?.texture != nil) || (table?.dataFrame != nil)
+                if !hasContent {
                     Text("No pipeline data available")
                         .foregroundColor(.secondary)
                         .frame(maxWidth: .infinity, alignment: .center)
