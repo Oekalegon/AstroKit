@@ -17,23 +17,13 @@ public struct FITSHistogramView: View {
     let showNormalized: Bool
     let blackPoint: Float?
     let whitePoint: Float?
-    let showFullRange: Bool
     let useLogScale: Bool
-    
-    /// Initialize the histogram view
-    /// - Parameters:
-    ///   - histogram: The histogram data to display
-    ///   - showNormalized: If true, shows normalized values (0-1), otherwise shows raw counts
-    ///   - blackPoint: Optional black point for filtering (in original pixel value range)
-    ///   - whitePoint: Optional white point for filtering (in original pixel value range)
-    ///   - showFullRange: If true, shows full range; if false, shows only black/white point range
-    ///   - useLogScale: If true, applies logarithmic transformation to Y-axis for better visualization of wide dynamic ranges
-    public init(histogram: Histogram, showNormalized: Bool = true, blackPoint: Float? = nil, whitePoint: Float? = nil, showFullRange: Bool = true, useLogScale: Bool = false) {
+
+    public init(histogram: Histogram, showNormalized: Bool = true, blackPoint: Float? = nil, whitePoint: Float? = nil, useLogScale: Bool = false) {
         self.histogram = histogram
         self.showNormalized = showNormalized
         self.blackPoint = blackPoint
         self.whitePoint = whitePoint
-        self.showFullRange = showFullRange
         self.useLogScale = useLogScale
     }
     
@@ -150,16 +140,15 @@ public struct FITSHistogramChart: View {
     let showNormalized: Bool
     let blackPoint: Float?
     let whitePoint: Float?
-    let showFullRange: Bool
     let useLogScale: Bool
     @State private var histogram: Histogram?
     @State private var isLoading: Bool = false
     @State private var errorMessage: String?
     @State private var currentTask: Task<Void, Never>?
     @State private var lastComputedImageID: String = ""
-    
+
     /// Initialize with FITS image
-    public init(fitsImage: FITSImage?, imageID: String? = nil, numBins: Int? = nil, showNormalized: Bool = false, blackPoint: Float? = nil, whitePoint: Float? = nil, showFullRange: Bool = true, useLogScale: Bool = false) {
+    public init(fitsImage: FITSImage?, imageID: String? = nil, numBins: Int? = nil, showNormalized: Bool = false, blackPoint: Float? = nil, whitePoint: Float? = nil, useLogScale: Bool = false) {
         self.fitsImage = fitsImage
         self.texture = nil
         self.textureMinValue = 0.0
@@ -169,12 +158,11 @@ public struct FITSHistogramChart: View {
         self.showNormalized = showNormalized
         self.blackPoint = blackPoint
         self.whitePoint = whitePoint
-        self.showFullRange = showFullRange
         self.useLogScale = useLogScale
     }
-    
+
     /// Initialize with texture
-    public init(texture: MTLTexture?, textureMinValue: Float, textureMaxValue: Float, imageID: String? = nil, numBins: Int? = nil, showNormalized: Bool = false, blackPoint: Float? = nil, whitePoint: Float? = nil, showFullRange: Bool = true, useLogScale: Bool = false) {
+    public init(texture: MTLTexture?, textureMinValue: Float, textureMaxValue: Float, imageID: String? = nil, numBins: Int? = nil, showNormalized: Bool = false, blackPoint: Float? = nil, whitePoint: Float? = nil, useLogScale: Bool = false) {
         self.fitsImage = nil
         self.texture = texture
         self.textureMinValue = textureMinValue
@@ -184,7 +172,6 @@ public struct FITSHistogramChart: View {
         self.showNormalized = showNormalized
         self.blackPoint = blackPoint
         self.whitePoint = whitePoint
-        self.showFullRange = showFullRange
         self.useLogScale = useLogScale
     }
     
@@ -218,7 +205,7 @@ public struct FITSHistogramChart: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let histogram = histogram {
-                FITSHistogramView(histogram: histogram, showNormalized: showNormalized, blackPoint: blackPoint, whitePoint: whitePoint, showFullRange: showFullRange, useLogScale: useLogScale)
+                FITSHistogramView(histogram: histogram, showNormalized: showNormalized, blackPoint: blackPoint, whitePoint: whitePoint, useLogScale: useLogScale)
             } else if isLoading {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -364,7 +351,7 @@ public struct FITSHistogramChart: View {
         }
         
         // Debug: Print histogram computation parameters
-        Logger.ui.debug("Computing histogram: showFullRange=\(showFullRange), histogramRange=[\(histogramMin), \(histogramMax)], imageRange=[\(imageMinValue), \(imageMaxValue)], bins=\(binsToUse)")
+        Logger.ui.debug("Computing histogram: histogramRange=[\(histogramMin), \(histogramMax)], imageRange=[\(imageMinValue), \(imageMaxValue)], bins=\(binsToUse)")
         if let blackPoint = blackPoint, let whitePoint = whitePoint {
             Logger.ui.debug("Black point: \(blackPoint), White point: \(whitePoint)")
         }

@@ -30,7 +30,6 @@ public struct FITSImageToolsView: View {
     @Binding var panOffset: SIMD2<Float>
     let onExtractedRegionSizeChanged: ((Int) -> Void)?
 
-    @State private var showFullRange: Bool = true
     @State private var useLogScale: Bool = false
     @State private var extractedRegionZoom: Float = 1.0
     @State private var extractedRegionPanOffset: SIMD2<Float> = SIMD2<Float>(0, 0)
@@ -175,8 +174,7 @@ public struct FITSImageToolsView: View {
                 if texture != nil || fitsImage != nil {
                     GroupBox("Histogram") {
                         VStack(alignment: .leading, spacing: 8) {
-                            Toggle("Show Full Range", isOn: $showFullRange).font(.caption)
-                            Toggle("Use Log Scale",   isOn: $useLogScale).font(.caption)
+                            Toggle("Use Log Scale", isOn: $useLogScale).font(.caption)
                             if let texture = texture {
                                 FITSHistogramChart(
                                     texture: texture,
@@ -187,7 +185,6 @@ public struct FITSImageToolsView: View {
                                     showNormalized: false,
                                     blackPoint: effectiveBlackPoint,
                                     whitePoint: effectiveWhitePoint,
-                                    showFullRange: showFullRange,
                                     useLogScale: useLogScale
                                 )
                             } else if let fitsImage = fitsImage {
@@ -198,7 +195,6 @@ public struct FITSImageToolsView: View {
                                     showNormalized: false,
                                     blackPoint: effectiveBlackPoint,
                                     whitePoint: effectiveWhitePoint,
-                                    showFullRange: showFullRange,
                                     useLogScale: useLogScale
                                 )
                             }
