@@ -116,7 +116,8 @@ public struct AstrophotoKit {
             "ThresholdShader", "LocalMedianShader", "StatisticsShader", "ErosionShader",
             "DilationShader", "ConnectedComponentsShader", "LocalMaximaShader",
             "StarDetectionOverlayShader", "WaveletDonutShader", "FWHMShader", "HFDShader",
-            "HoughCircleShader", "WarpShader", "StackShader", "RegistrationMatchingShader"
+            "HoughCircleShader", "WarpShader", "StackShader", "RegistrationMatchingShader",
+            "CrossSectionShader",
         ]
         let shaderFiles = requiredShaders ?? allShaderFiles
         Logger.swiftfitsio.debug(
