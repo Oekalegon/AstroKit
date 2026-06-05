@@ -1,3 +1,4 @@
+import Metal
 import SwiftUI
 
 /// Tab selection for the info panel.
