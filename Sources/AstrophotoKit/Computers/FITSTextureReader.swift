@@ -12,8 +12,7 @@ struct FITSTextureReader {
     /// Returns nil when coordinates are out of bounds or the GPU read fails.
     func readPixel(x: Int, y: Int) -> Float? {
         guard x >= 0 && x < texture.width && y >= 0 && y < texture.height else { return nil }
-        guard let device = MetalShared.device,
-              let queue  = MetalShared.queue else { return nil }
+        guard let (device, queue) = metalResources else { return nil }
 
         let bufSize = isRGBA ? 16 : max(16, MemoryLayout<Float32>.size)
         guard let buf  = device.makeBuffer(length: bufSize, options: .storageModeShared),
@@ -36,8 +35,7 @@ struct FITSTextureReader {
     /// Dispatch a 1D compute kernel (cross_section_row or cross_section_column) and return
     /// the denormalized float array. Returns an empty array on any failure.
     func readSection(pipeline: MTLComputePipelineState?, count: Int, coord: UInt32) -> [Float] {
-        guard let device   = MetalShared.device,
-              let queue    = MetalShared.queue,
+        guard let (device, queue) = metalResources,
               let pipeline else { return [] }
 
         let bufSize = count * MemoryLayout<Float>.size
@@ -64,6 +62,11 @@ struct FITSTextureReader {
     }
 
     // MARK: - Private
+
+    private var metalResources: (MTLDevice, MTLCommandQueue)? {
+        guard let d = MetalShared.device, let q = MetalShared.queue else { return nil }
+        return (d, q)
+    }
 
     private var isRGBA: Bool {
         // Only rgba32Float is safe to read via Float32 blit (16 bytes per pixel).
