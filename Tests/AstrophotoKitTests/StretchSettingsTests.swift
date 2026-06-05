@@ -158,4 +158,34 @@ struct StretchSettingsInvariantTests {
         #expect(abs(s.effective(sliderNorm: 0.5) - 0.3) < 1e-6)
         #expect(abs(s.effective(sliderNorm: 1.0) - 0.3) < 1e-6)
     }
+
+    @Test("effective extrapolates linearly for sliderNorm outside [0, 1] — model does not clamp")
+    func effectiveExtrapolatesOutsideUnitInterval() {
+        // The model itself does not clamp sliderNorm. Values outside [0, 1] produce
+        // effective values outside [inputBlack, inputWhite]. The shader clamps those at
+        // display time. This test documents the contract so callers know what to expect.
+        let s = StretchSettings(inputBlack: 0.2, inputWhite: 0.6)
+        // sliderNorm = -0.5 → 0.2 + (-0.5) * (0.6 - 0.2) = 0.2 - 0.2 = 0.0
+        #expect(abs(s.effective(sliderNorm: -0.5) - 0.0) < 1e-6)
+        // sliderNorm = 1.5 → 0.2 + 1.5 * (0.6 - 0.2) = 0.2 + 0.6 = 0.8
+        #expect(abs(s.effective(sliderNorm: 1.5) - 0.8) < 1e-6)
+    }
+
+    @Test("after normalize, full slider travel [0, 1] maps exactly to the previously visible sub-range")
+    func afterNormalizeFullRangeMapsToOldSubRange() {
+        // This verifies the post-normalize guarantee: the caller resets sliders to (0, 1)
+        // and the new stretch must reproduce the exact same effective endpoints as before.
+        let stretch = StretchSettings(inputBlack: 0.0, inputWhite: 0.1)
+        let blackNorm: Float = 0.0   // slider was at minValue (full left)
+        let whiteNorm: Float = 0.4   // slider was at 40 % → effective = 0.04
+
+        let normalized = stretch.normalized(sliderBlackNorm: blackNorm, sliderWhiteNorm: whiteNorm)
+
+        // After reset: sliders are at 0.0 and 1.0 (full travel in the new space)
+        #expect(abs(normalized.effective(sliderNorm: 0.0) - stretch.effective(sliderNorm: blackNorm)) < 1e-6)
+        #expect(abs(normalized.effective(sliderNorm: 1.0) - stretch.effective(sliderNorm: whiteNorm)) < 1e-6)
+        // Concrete values: effective black = 0.0, effective white = 0.04
+        #expect(abs(normalized.effective(sliderNorm: 0.0) - 0.0)  < 1e-6)
+        #expect(abs(normalized.effective(sliderNorm: 1.0) - 0.04) < 1e-5)
+    }
 }

@@ -166,6 +166,24 @@ struct ArchiveStretchTests {
         #expect(fetched?.sliderWhiteNorm == nil)
     }
 
+    @Test("out-of-range slider norms are stored and retrieved as-is — validation is the caller's responsibility")
+    func outOfRangeSliderNormsStoredAsIs() async throws {
+        // ArchiveDatabase does not validate slider norms. CLI (--slider-black/--slider-white)
+        // and MCP (archive_update_stretch) validate at their respective entry points.
+        // This test documents that the storage layer is a faithful round-trip.
+        let (db, url) = try makeTestDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let frame = makeFrame()
+        _ = try await db.insertFrame(frame)
+
+        try await db.updateStretchSettings(id: frame.id, settings: nil, sliderBlackNorm: -0.1, sliderWhiteNorm: 1.5)
+
+        let fetched = try await db.frameByID(frame.id)
+        #expect(abs((fetched?.sliderBlackNorm ?? 99) - (-0.1)) < 1e-5)
+        #expect(abs((fetched?.sliderWhiteNorm ?? 99) -   1.5)  < 1e-5)
+    }
+
     @Test("updating stretch on non-existent frame is a silent no-op")
     func updateNonExistentFrame() async throws {
         let (db, url) = try makeTestDatabase()
