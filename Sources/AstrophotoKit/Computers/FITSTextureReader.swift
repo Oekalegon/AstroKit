@@ -38,6 +38,7 @@ struct FITSTextureReader {
     /// Dispatch a 1D compute kernel (cross_section_row or cross_section_column) and return
     /// the denormalized float array. Returns an empty array on any failure.
     func readSection(pipeline: MTLComputePipelineState?, count: Int, coord: UInt32) -> [Float] {
+        guard count > 0 else { return [] }
         guard let (device, queue) = metalResources,
               let pipeline else { return [] }
 
