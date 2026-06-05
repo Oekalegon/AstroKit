@@ -134,6 +134,28 @@ struct FITSTextureReaderPixelGrayscaleTests {
             FITSTextureReader(texture: tex, minValue: 0, maxValue: 255).readPixel(x: 0, y: 0)!,
             255.0))
     }
+
+    @Test("NaN pixel value propagates — readPixel returns non-nil NaN")
+    func nanPropagates() {
+        // Denormalization: minValue + NaN * range = NaN. The value is returned as non-nil NaN
+        // rather than nil so callers can distinguish "read failed" from "pixel is NaN".
+        guard let tex = makeGrayscaleTexture(width: 1, height: 1, values: [Float.nan]) else {
+            Issue.record("Metal unavailable"); return
+        }
+        let result = FITSTextureReader(texture: tex, minValue: 0, maxValue: 1).readPixel(x: 0, y: 0)
+        #expect(result != nil)
+        #expect(result!.isNaN)
+    }
+
+    @Test("Inf pixel value propagates — readPixel returns non-nil Inf")
+    func infPropagates() {
+        guard let tex = makeGrayscaleTexture(width: 1, height: 1, values: [Float.infinity]) else {
+            Issue.record("Metal unavailable"); return
+        }
+        let result = FITSTextureReader(texture: tex, minValue: 0, maxValue: 1).readPixel(x: 0, y: 0)
+        #expect(result != nil)
+        #expect(result!.isInfinite)
+    }
 }
 
 // MARK: - readPixel: RGBA texture
@@ -342,6 +364,81 @@ struct FITSTextureReaderSectionEdgeCaseTests {
         #expect(approxEqual(result[0], 0.1))
         #expect(approxEqual(result[1], 0.4))
         #expect(approxEqual(result[2], 0.7))
+    }
+
+    @Test("returns empty array when count is 0")
+    func countZero() {
+        guard let pipeline = MetalShared.crossSectionRowPipeline else {
+            Issue.record("crossSectionRowPipeline unavailable"); return
+        }
+        guard let tex = makeGrayscaleTexture(width: 3, height: 3, values: Array(repeating: 0.5, count: 9)) else {
+            Issue.record("Metal unavailable"); return
+        }
+        let result = FITSTextureReader(texture: tex, minValue: 0, maxValue: 1)
+            .readSection(pipeline: pipeline, count: 0, coord: 0)
+        #expect(result.isEmpty)
+    }
+
+    @Test("readSection row on a 1×1 texture returns one element")
+    func singlePixelRow() {
+        guard let pipeline = MetalShared.crossSectionRowPipeline else {
+            Issue.record("crossSectionRowPipeline unavailable"); return
+        }
+        guard let tex = makeGrayscaleTexture(width: 1, height: 1, values: [0.75]) else {
+            Issue.record("Metal unavailable"); return
+        }
+        let result = FITSTextureReader(texture: tex, minValue: 0, maxValue: 1)
+            .readSection(pipeline: pipeline, count: 1, coord: 0)
+        #expect(result.count == 1)
+        #expect(approxEqual(result[0], 0.75))
+    }
+
+    @Test("readSection column on a 1×1 texture returns one element")
+    func singlePixelColumn() {
+        guard let pipeline = MetalShared.crossSectionColumnPipeline else {
+            Issue.record("crossSectionColumnPipeline unavailable"); return
+        }
+        guard let tex = makeGrayscaleTexture(width: 1, height: 1, values: [0.25]) else {
+            Issue.record("Metal unavailable"); return
+        }
+        let result = FITSTextureReader(texture: tex, minValue: 0, maxValue: 1)
+            .readSection(pipeline: pipeline, count: 1, coord: 0)
+        #expect(result.count == 1)
+        #expect(approxEqual(result[0], 0.25))
+    }
+
+    @Test("readSection row on a 1-pixel-tall texture returns full width")
+    func singleRowTexture() {
+        guard let pipeline = MetalShared.crossSectionRowPipeline else {
+            Issue.record("crossSectionRowPipeline unavailable"); return
+        }
+        let values: [Float] = [0.1, 0.5, 0.9]
+        guard let tex = makeGrayscaleTexture(width: 3, height: 1, values: values) else {
+            Issue.record("Metal unavailable"); return
+        }
+        let result = FITSTextureReader(texture: tex, minValue: 0, maxValue: 1)
+            .readSection(pipeline: pipeline, count: 3, coord: 0)
+        #expect(result.count == 3)
+        #expect(approxEqual(result[0], 0.1))
+        #expect(approxEqual(result[1], 0.5))
+        #expect(approxEqual(result[2], 0.9))
+    }
+
+    @Test("readSection column on a 1-pixel-wide texture returns full height")
+    func singleColumnTexture() {
+        guard let pipeline = MetalShared.crossSectionColumnPipeline else {
+            Issue.record("crossSectionColumnPipeline unavailable"); return
+        }
+        let values: [Float] = [0.2, 0.6, 0.8]
+        guard let tex = makeGrayscaleTexture(width: 1, height: 3, values: values) else {
+            Issue.record("Metal unavailable"); return
+        }
+        let result = FITSTextureReader(texture: tex, minValue: 0, maxValue: 1)
+            .readSection(pipeline: pipeline, count: 3, coord: 0)
+        #expect(result.count == 3)
+        #expect(approxEqual(result[0], 0.2))
+        #expect(approxEqual(result[1], 0.6))
+        #expect(approxEqual(result[2], 0.8))
     }
 }
 
