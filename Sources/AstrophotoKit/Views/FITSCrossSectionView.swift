@@ -2,13 +2,6 @@ import SwiftUI
 import Charts
 import Metal
 
-private struct CrossSectionPoint: Identifiable {
-    let id: UUID = UUID()
-    let position: Float
-    let intensity: Float
-    let series: String
-}
-
 /// Displays intensity cross-sections along the horizontal and vertical centre axes of a FITS image.
 @available(iOS 16.0, macOS 13.0, *)
 public struct FITSCrossSectionView: View {
