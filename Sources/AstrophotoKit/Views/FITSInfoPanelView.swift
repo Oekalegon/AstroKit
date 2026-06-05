@@ -21,9 +21,8 @@ public enum FITSInfoPanelTab: String, CaseIterable {
 public struct FITSInfoPanelView: View {
     let fitsImage: FITSImage?
     let texture: MTLTexture?
-    let processedImage: ProcessedImage?
-    let processedTable: ProcessedTable?
-    let processedScalar: ProcessedScalar?
+    let frame: Frame?
+    let table: TableData?
     let textureWidth: Int
     let textureHeight: Int
     let textureMinValue: Float
@@ -44,9 +43,8 @@ public struct FITSInfoPanelView: View {
     public init(
         fitsImage: FITSImage? = nil,
         texture: MTLTexture? = nil,
-        processedImage: ProcessedImage? = nil,
-        processedTable: ProcessedTable? = nil,
-        processedScalar: ProcessedScalar? = nil,
+        frame: Frame? = nil,
+        table: TableData? = nil,
         textureWidth: Int = 0,
         textureHeight: Int = 0,
         textureMinValue: Float = 0.0,
@@ -65,9 +63,8 @@ public struct FITSInfoPanelView: View {
     ) {
         self.fitsImage = fitsImage
         self.texture = texture
-        self.processedImage = processedImage
-        self.processedTable = processedTable
-        self.processedScalar = processedScalar
+        self.frame = frame
+        self.table = table
         self.textureWidth = textureWidth
         self.textureHeight = textureHeight
         self.textureMinValue = textureMinValue
@@ -120,7 +117,7 @@ public struct FITSInfoPanelView: View {
                 )
                 .tag(FITSInfoPanelTab.image)
 
-                FITSPipelineView(processedImage: processedImage, processedTable: processedTable, processedScalar: processedScalar)
+                FITSPipelineView(frame: frame, table: table)
                     .tag(FITSInfoPanelTab.pipeline)
             }
             .tabViewStyle(.automatic)

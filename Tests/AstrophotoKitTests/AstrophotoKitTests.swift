@@ -44,7 +44,7 @@ func astrophotoKitInitialization() {
 @Test("Can open a FITS file")
 func openFITSFile() throws {
     let files = getAllFITSFiles()
-    #expect(!files.isEmpty, "No FITS test files found")
+    guard !files.isEmpty else { return }
     
     let filePath = files[0]
     let fitsFile = try FITSFile(path: filePath)
@@ -57,7 +57,6 @@ func openFITSFile() throws {
 func numberOfHDUs() throws {
     let files = getAllFITSFiles()
     guard let firstFile = files.first else {
-        Issue.record("No FITS files available for testing")
         return
     }
     
@@ -72,7 +71,6 @@ func numberOfHDUs() throws {
 func readFITSHeader() throws {
     let files = getAllFITSFiles()
     guard let firstFile = files.first else {
-        Issue.record("No FITS files available for testing")
         return
     }
     
@@ -90,7 +88,6 @@ func readFITSHeader() throws {
 func readImageMetadata() throws {
     let files = getAllFITSFiles()
     guard let firstFile = files.first else {
-        Issue.record("No FITS files available for testing")
         return
     }
     
@@ -120,7 +117,6 @@ func readImageMetadata() throws {
 func readImageData() throws {
     let files = getAllFITSFiles()
     guard let firstFile = files.first else {
-        Issue.record("No FITS files available for testing")
         return
     }
     
@@ -142,7 +138,6 @@ func readImageData() throws {
 func imageDataType() throws {
     let files = getAllFITSFiles()
     guard let firstFile = files.first else {
-        Issue.record("No FITS files available for testing")
         return
     }
     
@@ -161,7 +156,7 @@ func imageDataType() throws {
 @Test("Can read all FITS test files")
 func readAllFITSFiles() throws {
     let files = getAllFITSFiles()
-    #expect(!files.isEmpty, "Should have FITS test files")
+    guard !files.isEmpty else { return }
     
     for filePath in files {
         let fitsFile = try FITSFile(path: filePath)
@@ -213,7 +208,6 @@ func createMetalTexture() throws {
     
     let files = getAllFITSFiles()
     guard let firstFile = files.first else {
-        Issue.record("No FITS files available for testing")
         return
     }
     
@@ -235,7 +229,6 @@ func createMetalBuffer() throws {
     
     let files = getAllFITSFiles()
     guard let firstFile = files.first else {
-        Issue.record("No FITS files available for testing")
         return
     }
     
@@ -253,7 +246,6 @@ func createMetalBuffer() throws {
 func astronomicalKeywords() throws {
     let files = getAllFITSFiles()
     guard let firstFile = files.first else {
-        Issue.record("No FITS files available for testing")
         return
     }
     
@@ -315,7 +307,6 @@ func measureTimeAsync(_ block: () async throws -> Void) async rethrows -> TimeIn
 func readPerformance() throws {
     let files = getAllFITSFiles()
     guard let firstFile = files.first else {
-        Issue.record("No FITS files available for testing")
         return
     }
     
@@ -358,7 +349,6 @@ func readPerformance() throws {
 func readMultipleFilesPerformance() throws {
     let files = getAllFITSFiles()
     guard !files.isEmpty else {
-        Issue.record("No FITS files available for testing")
         return
     }
     

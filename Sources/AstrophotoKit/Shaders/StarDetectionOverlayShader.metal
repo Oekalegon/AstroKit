@@ -20,6 +20,8 @@ kernel void draw_ellipses(texture2d<float> inputTexture [[texture(0)]],
     float4 originalColor = outputTexture.read(gid);
     
     // Use pixel coordinates directly (gid matches pixel position)
+    // Centroids are calculated using integer pixel coordinates (corner-based),
+    // so we use the same coordinate system here
     float2 pixelPos = float2(gid.x, gid.y);
     
     // Background is already RGB (grayscale converted to RGB)
@@ -74,8 +76,12 @@ kernel void draw_ellipses(texture2d<float> inputTexture [[texture(0)]],
         float distToMajorAxis = abs(rotated.y);
         float distToMinorAxis = abs(rotated.x);
         
-        // Check if within 0.5 pixels of an axis and within ellipse bounds
-        if (ellipseValue <= 1.0) {
+        // Draw axes through the centroid, extending beyond the ellipse
+        // Check if within 0.5 pixels of an axis, and within a reasonable distance from centroid
+        float distFromCentroid = length(translated);
+        float maxAxisLength = max(majorAxis, minorAxis) * 2.0; // Extend axes 2x the ellipse size
+        
+        if (distFromCentroid <= maxAxisLength) {
             if (distToMajorAxis <= 0.5 || distToMinorAxis <= 0.5) {
                 isOnAxis = true;
             }
@@ -152,7 +158,7 @@ kernel void draw_quads(texture2d<float> inputTexture [[texture(0)]],
     // Get quad color
     float3 quadColor = float3(quadColorData[0], quadColorData[1], quadColorData[2]);
     
-    // Use pixel coordinates directly
+    // Use pixel coordinates directly (gid matches pixel position)
     float2 pixelPos = float2(gid.x, gid.y);
     
     // Check if this pixel is on any quad line
@@ -183,7 +189,69 @@ kernel void draw_quads(texture2d<float> inputTexture [[texture(0)]],
     if (isOnQuad) {
         outputRGB = quadColor;
     }
-    
+
     outputTexture.write(float4(outputRGB, 1.0), gid);
+}
+
+// ---------------------------------------------------------------------------
+// draw_circles
+//
+// Draws circle outlines (and optional crosshairs) onto an RGBA texture.
+// Each circle is described by a CircleDrawData struct (8 floats):
+//   cx, cy        — centre in pixel coordinates
+//   radius        — circle radius in pixels
+//   lineWidth     — ring stroke width in pixels
+//   colorR/G/B    — RGB colour (0–1)
+//   crosshairSize — half-length of crosshair arms; 0 = no crosshair
+//
+// The kernel operates in-place on outputTexture (read_write).
+// ---------------------------------------------------------------------------
+struct CircleDrawData {
+    float cx;
+    float cy;
+    float radius;
+    float lineWidth;
+    float colorR;
+    float colorG;
+    float colorB;
+    float crosshairSize;
+};
+
+kernel void draw_circles(
+    texture2d<float, access::read_write> outputTexture [[texture(0)]],
+    device const CircleDrawData*         circles       [[buffer(0)]],
+    constant int&                        numCircles    [[buffer(1)]],
+    uint2 gid [[thread_position_in_grid]]
+) {
+    if (int(gid.x) >= int(outputTexture.get_width()) ||
+        int(gid.y) >= int(outputTexture.get_height())) { return; }
+
+    float2 pos   = float2(gid);
+    float4 color = outputTexture.read(gid);
+
+    for (int i = 0; i < numCircles; i++) {
+        CircleDrawData c = circles[i];
+        float2 centre = float2(c.cx, c.cy);
+        float2 delta  = pos - centre;
+        float  dist   = length(delta);
+        float  halfW  = c.lineWidth * 0.5;
+        float3 col    = float3(c.colorR, c.colorG, c.colorB);
+
+        // Ring: pixels within lineWidth/2 of the circle perimeter
+        if (abs(dist - c.radius) <= halfW) {
+            color = float4(col, 1.0);
+            break;
+        }
+
+        // Crosshair: short horizontal + vertical lines through the centre
+        if (c.crosshairSize > 0.0 && dist <= c.crosshairSize) {
+            if (abs(delta.y) <= halfW || abs(delta.x) <= halfW) {
+                color = float4(col, 1.0);
+                break;
+            }
+        }
+    }
+
+    outputTexture.write(color, gid);
 }
 

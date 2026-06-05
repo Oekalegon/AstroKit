@@ -2,91 +2,118 @@
 
 # AstrophotoKit
 
-A Swift package for astronomical image processing, including FITS file support and Metal shader integration.
+A Swift package for astronomical image processing. Reads and writes FITS files via CFITSIO, runs GPU-accelerated processing pipelines using Metal, and exposes everything through a pipeline CLI, an archive CLI, and a Model Context Protocol server.
 
 ## Documentation
 
-Documentation can be found at: [AstrophotoKit Documentation](https://oekalegon.org/AstrophotoKit/)
+Full documentation: [oekalegon.org/AstrophotoKit](https://oekalegon.org/AstrophotoKit/)
 
-## Features
+| Topic | Link |
+|-------|-------|
+| Pipeline CLI (`ap`) | [docs/ap.md](docs/ap.md) |
+| Archive CLI (`ap-archive`) | [docs/ap-archive.md](docs/ap-archive.md) |
+| MCP server (`astrokit-mcp`) | [docs/mcp.md](docs/mcp.md) |
 
-- **FITS File Support**: Fast FITS file reading/writing using CFITSIO (the official C library)
-- **Metal Shaders**: Support for custom Metal shaders for GPU-accelerated image processing
-- **Swift API**: Clean, Swifty interface for astronomical data processing
+## What's included
+
+| Component | Description |
+|-----------|-------------|
+| `AstrophotoKit` | Swift library — FITS I/O, Metal pipelines, image processors |
+| `AstrophotoArchiveKit` | Swift library — FITS archive backed by SQLite + HEALPix |
+| `ap` | CLI for running processing pipelines on FITS files |
+| `ap-archive` | CLI for managing the FITS archive |
+| `astrokit-mcp` | MCP server exposing pipelines and archive to Claude |
 
 ## Prerequisites
 
-CFITSIO must be installed on your system before building AstrophotoKit.
-
-### macOS
-
-Install CFITSIO using Homebrew:
+CFITSIO must be installed before building.
 
 ```bash
+# macOS
 brew install cfitsio
-```
 
-### Linux
-
-Install CFITSIO development libraries:
-
-```bash
+# Linux
 sudo apt-get install libcfitsio-dev
 ```
 
-## Installation
+## Building
 
-Once CFITSIO is installed, add AstrophotoKit to your project using Swift Package Manager:
-
-```swift
-dependencies: [
-    .package(url: "https://github.com/yourusername/AstrophotoKit.git", from: "1.0.0")
-]
+```bash
+swift build -c release
 ```
 
-Then add it to your target:
+Binaries are placed in `.build/release/`. Copy whichever you need to your `PATH`:
 
-```swift
-.target(
-    name: "YourTarget",
-    dependencies: ["AstrophotoKit"]
-)
+```bash
+cp .build/release/ap          /usr/local/bin/
+cp .build/release/ap-archive  /usr/local/bin/
+cp .build/release/astrokit-mcp /usr/local/bin/
 ```
 
-## Usage
+## Versioning
 
-### Reading FITS Files
+The version string is `major.minor.patch+build` (e.g. `1.0.0+48`). Edit `version.txt` to set the semantic part; the build number increments automatically with each git commit.
 
-```swift
-import AstrophotoKit
+```bash
+ap --version          # 1.0.0+48
+ap-archive --version  # 1.0.0+48
+```
 
-do {
-    let fitsFile = try FITSFile(path: "/path/to/image.fits")
-    let numHDUs = try fitsFile.numberOfHDUs()
-    let imageData = try fitsFile.readImageData()
-    // Process your image data...
-} catch {
-    print("Error: \(error)")
+## Quick start
+
+### Run a pipeline
+
+```bash
+ap run star_detection --input M51.fits
+ap run frame_stacking --input input_frames:/path/to/lights/ --output stacked.fits
+```
+
+### Archive your FITS files
+
+```bash
+export ASTROARCHIVE_PATH=~/AstroArchive
+
+ap-archive add ~/lights/ --recursive --copy
+ap-archive find --object M51 --type light --filter Ha
+ap-archive stats
+```
+
+### Connect to Claude
+
+Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "astrokit": {
+      "command": "/usr/local/bin/astrokit-mcp"
+    }
+  }
 }
 ```
 
-### Metal Shaders
+Claude can then run pipelines and query the archive directly.
 
-```swift
-import AstrophotoKit
+## Built-in pipelines
 
-let device = AstrophotoKit.makeDefaultDevice()
-let library = AstrophotoKit.makeShaderLibrary(device: device)
-// Use your Metal shaders...
-```
+| ID | Description |
+|----|-------------|
+| `star_detection` | Detect stars, measure FWHM and eccentricity |
+| `optical_quality` | Optical quality metrics |
+| `collimation_reflector` | Mirror collimation analysis |
+| `collimation_reflector_wavelet` | Wavelet-based collimation |
+| `collimation_reflector_twophase` | Two-phase collimation |
+| `collimation_reflector_radial` | Radial collimation analysis |
+| `autofocus_focused` | Autofocus curve for focused images |
+| `autofocus_donut` | Autofocus curve for donut (defocused) images |
+| `dark_calibration` | Dark frame calibration |
+| `frame_registration` | Align multiple frames to a common reference (4-star quad patterns) |
+| `frame_registration_triangle` | Same as above using 3-star triangle patterns — better for sparse star fields |
+| `frame_stacking` | Register and stack frames into a master light |
 
 ## Requirements
 
-- macOS 14.0+ or Linux
+- macOS 26+
 - Swift 5.9+
-- Xcode 15.0+ (macOS only)
-- CFITSIO library (installed via Homebrew on macOS or apt on Linux)
-
-## License
-
-See LICENSE file for details.
+- CFITSIO (`brew install cfitsio`)
+- Metal-capable GPU (for image processing pipelines)

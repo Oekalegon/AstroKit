@@ -63,4 +63,9 @@ fastlane/test_output
 
 
 # FITS files should not be stored in git (too large)
-/Tests/AstrophotoKitTests/Resources/*.fits
+/Tests/AstrophotoKitTests/Resources/*
+/Tests/Test-FIT/
+Version.generated*
+
+# Claude Code local settings
+.claude/settings.json

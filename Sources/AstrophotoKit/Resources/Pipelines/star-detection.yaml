@@ -1,0 +1,348 @@
+id: star_detection
+name: Star Detection Pipeline
+description: Detects stars in astronomical images using Gaussian blur, background estimation,
+  thresholding, erosion, dilation, connected components analysis, quads, and draws
+  ellipses around detected stars. Accepted quality-threshold parameters (applied to
+  any frame sets the input belongs to) -- max_fwhm (pixels), max_eccentricity (0-1).
+
+
+steps:
+  - id: grayscale
+    type: grayscale
+    name: Grayscale
+    description: Converts the input frame to grayscale (if it is not already)
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+        description: The input frame to convert to grayscale
+    parameters: []
+    outputs:
+      - name: grayscale_frame
+        type: frame
+        description: Grayscale version of the input frame
+        metadata:
+          processing_stage: "color_conversion"
+          image_type: "grayscale"
+
+  - id: blur
+    type: gaussian_blur
+    name: Gaussian Blur
+    description: Applies Gaussian blur to reduce noise and smooth the image
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+        description: The input frame to blur (must be a light frame)
+    parameters:
+      - name: radius
+        from: blur_radius
+        default_value: 1.5
+        description: Blur radius in pixels
+    outputs:
+      - name: blurred_frame
+        type: frame
+        description: Gaussian-blurred version of the input frame
+        metadata:
+          processing_stage: "noise_reduction"
+          quality_metric: "smoothed"
+          image_type: "grayscale"
+
+  - id: background
+    type: background_estimation
+    name: Background Estimation
+    description: Estimates and subtracts the background from the image
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: blur.blurred_frame
+        description: The blurred frame to estimate background from
+    parameters:
+      - name: cell_size
+        from: cell_size
+        default_value: 64
+        description: Mesh cell size in pixels; increase for large galaxies or nebulae
+    outputs:
+      - name: background_frame
+        type: frame
+        description: Estimated background frame
+        metadata:
+          processing_stage: "background_estimation"
+          data_type: "background_model"
+          image_type: "grayscale"
+      - name: background_subtracted_frame
+        type: frame
+        description: Frame with background subtracted
+        metadata:
+          processing_stage: "background_subtraction"
+          quality_metric: "background_removed"
+          image_type: "grayscale"
+      - name: background_level
+        type: table
+        description: Background level (background_level normalised 0–1; background_level_adu in ADU when FITS scale available)
+        metadata:
+          processing_stage: "background_estimation"
+          data_type: "scalar"
+
+  - id: threshold
+    type: threshold
+    name: Threshold
+    description: Creates a binary mask of potential stars
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: background.background_subtracted_frame
+        description: The background-subtracted frame to threshold
+    parameters:
+      - name: threshold_value
+        from: threshold_value
+        default_value: 3.0
+        description: Threshold value (sigma multiplier)
+      - name: method
+        default_value: "sigma"
+        description: Threshold method
+    outputs:
+      - name: thresholded_frame
+        type: frame
+        description: Binary mask of potential stars
+        metadata:
+          processing_stage: "thresholding"
+          image_type: "binary"
+
+  - id: erosion
+    type: erosion
+    name: Binary Erosion
+    description: Applies binary erosion to remove noise
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: threshold.thresholded_frame
+        description: The thresholded frame to erode
+    parameters:
+      - name: kernel_size
+        from: erosion_kernel_size
+        default_value: 3
+        description: Erosion kernel size
+    outputs:
+      - name: eroded_frame
+        type: frame
+        description: Eroded binary mask
+        metadata:
+          processing_stage: "morphological_processing"
+          operation: "erosion"
+          image_type: "binary"
+
+  - id: dilation
+    type: dilation
+    name: Binary Dilation
+    description: Applies binary dilation to restore star shapes
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: erosion.eroded_frame
+        description: The eroded frame to dilate
+    parameters:
+      - name: kernel_size
+        from: dilation_kernel_size
+        default_value: 3
+        description: Dilation kernel size
+    outputs:
+      - name: dilated_frame
+        type: frame
+        description: Dilated binary mask
+        metadata:
+          processing_stage: "morphological_processing"
+          operation: "dilation"
+          image_type: "binary"
+
+  - id: local_maxima
+    type: local_maxima
+    name: Local Maxima Detection
+    description: Finds peak pixels in the background-subtracted frame within the binary mask — one peak per star, immune to large extended objects that would merge into a single connected blob
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: background.background_subtracted_frame
+        description: Background-subtracted continuous frame for intensity comparison
+      - name: mask_frame
+        type: frame
+        from: dilation.dilated_frame
+        description: Binary mask restricting the search to candidate star regions
+    parameters:
+      - name: min_distance
+        from: lm_min_distance
+        default_value: 5
+        description: Minimum pixel distance between accepted peaks (NMS radius)
+    outputs:
+      - name: pixel_coordinates
+        type: table
+        description: Pixel coordinates of detected stars
+        metadata:
+          processing_stage: "star_detection"
+          data_type: "table"
+          table_type: "star_catalog"
+          catalog_format: "pixel_coordinates"
+
+  - id: fwhm
+    type: fwhm
+    name: FWHM Calculation
+    description: Calculates Full Width at Half Maximum (FWHM) for each detected star using image moments on the original image
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: background.background_subtracted_frame
+        description: The background-subtracted frame (non-binary) for FWHM calculation
+      - name: pixel_coordinates
+        type: table
+        from: local_maxima.pixel_coordinates
+        description: Pixel coordinates of detected stars
+    parameters: []
+    outputs:
+      - name: pixel_coordinates
+        type: table
+        description: Star coordinates table updated with FWHM values (fwhm_major and fwhm_minor columns)
+        metadata:
+          processing_stage: "fwhm_calculation"
+          data_type: "table"
+          table_type: "star_catalog"
+          catalog_format: "pixel_coordinates"
+      - name: median_fwhm
+        type: table
+        description: Median FWHM values for all stars (median_fwhm_major and median_fwhm_minor columns)
+        metadata:
+          processing_stage: "fwhm_calculation"
+          data_type: "table"
+          table_type: "statistics"
+
+  - id: fits_catalog_writer
+    type: fits_star_catalog_writer
+    name: FITS Star Catalog Writer
+    description: Appends a STARCATALOG BINTABLE to the source FITS file and writes star quality statistics (NSTARS, MEDFWHM, MEANFWHM, MEANECC) to the primary HDU header
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+        description: The original source frame (provides the FITS file path to update)
+      - name: pixel_coordinates
+        type: table
+        from: fwhm.pixel_coordinates
+        description: Star catalog with FWHM and eccentricity measurements
+      - name: median_fwhm
+        type: table
+        from: fwhm.median_fwhm
+        description: Median and σ-clipped mean FWHM statistics
+    parameters: []
+    outputs: []
+
+  - id: quads
+    type: quads
+    name: Quads
+    description: Groups stars into quads for matching
+    dataInputs:
+      - name: pixel_coordinates
+        type: table
+        from: fwhm.pixel_coordinates
+        description: Pixel coordinates with FWHM measurements from FWHM calculation
+    parameters:
+      - name: max_stars
+        from: max_stars
+        description: Maximum number of stars to process
+      - name: min_distance_percent
+        from: min_distance_percent
+        description: Minimum distance between stars (as percentage)
+      - name: k_neighbors
+        from: k_neighbors
+        description: Number of neighbors for quad formation
+    outputs:
+      - name: quads
+        type: table
+        description: Quad groupings of stars for matching
+        metadata:
+          processing_stage: "quad_formation"
+          data_type: "table"
+          table_type: "quad_catalog"
+          matching_algorithm: "k_nearest_neighbors"
+
+  - id: overlay
+    type: star_detection_overlay
+    name: Star Detection Overlay
+    description: Draws ellipses and quads around detected stars
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+          filter:
+            - R
+            - G
+            - B
+            - L
+          exposure_time:
+            min: 60.0
+            max: 600.0
+        description: The original input frame to annotate (light frame with specific filter and exposure time range)
+      - name: pixel_coordinates
+        type: table
+        from: fwhm.pixel_coordinates
+        description: Pixel coordinates of detected stars with FWHM measurements
+      - name: quads
+        type: table
+        from: quads.quads
+        description: Quad groupings
+    parameters:
+      - name: draw_ellipses
+        from: draw_ellipses
+        default_value: 1
+        description: Whether to draw ellipses around detected stars (1 = true, 0 = false)
+      - name: ellipse_color_r
+        from: ellipse_color_r
+        description: Ellipse color red component
+      - name: ellipse_color_g
+        from: ellipse_color_g
+        description: Ellipse color green component
+      - name: ellipse_color_b
+        from: ellipse_color_b
+        description: Ellipse color blue component
+      - name: ellipse_width
+        from: ellipse_width
+        description: Ellipse line width
+      - name: draw_quads
+        from: draw_quads
+        default_value: 1
+        description: Whether to draw quads for pattern matching (1 = true, 0 = false)
+      - name: quad_color_r
+        from: quad_color_r
+        description: Quad color red component
+      - name: quad_color_g
+        from: quad_color_g
+        description: Quad color green component
+      - name: quad_color_b
+        from: quad_color_b
+        description: Quad color blue component
+      - name: quad_width
+        from: quad_width
+        description: Quad line width
+    outputs:
+      - name: annotated_frame
+        type: frame
+        description: Original frame annotated with detected stars and quads
+        metadata:
+          processing_stage: "visualization"
+          image_type: "rgb"
+          annotations:
+            - type: "ellipse"
+              purpose: "star_marker"
+            - type: "quad"
+              purpose: "matching_guide"
+          preserve_source_metadata: true

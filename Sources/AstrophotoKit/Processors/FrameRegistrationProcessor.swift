@@ -1,0 +1,459 @@
+import Foundation
+import Metal
+import TabularData
+import os
+
+// MARK: - Quad-specific types
+
+/// Normalized 4-star pattern descriptor.
+/// S1 is placed at (0,0), S2 at (1,0); dx3/dy3 and dx4/dy4 are the normalized
+/// coordinates of the two interior stars. This is identical to the hash code
+/// used by Astrometry.net.
+private struct QuadDescriptor {
+    let dx3: Double
+    let dy3: Double
+    let dx4: Double
+    let dy4: Double
+    let s1: StarPoint
+    let s2: StarPoint
+    let s3: StarPoint
+    let s4: StarPoint
+}
+
+private struct RegistrationRow {
+    let frameIndex:    Int
+    let transform:     SimilarityTransform
+    let matchCount:    Int
+    let rawMatchCount: Int
+    let rmse:          Double
+    let stats:         FrameStats
+    let success:       Bool
+}
+
+// MARK: - Processor
+
+/// Registers multiple astronomical frames relative to a common reference frame using
+/// 4-star quad pattern matching (the same hash-code approach as Astrometry.net).
+///
+/// For each frame the processor:
+/// 1. Runs the shared star-detection sub-pipeline (grayscale → blur → background
+///    subtraction → threshold → erosion → dilation → connected components → FWHM).
+/// 2. Applies an extended-source filter to discard nebula blobs and diffuse emission
+///    that the detector picks up as spurious stars (`max_fwhm_ratio`).
+/// 3. Builds a set of quad descriptors from the detected stars using k-nearest-neighbour
+///    grouping (`QuadsProcessor`).
+/// 4. Matches quads between the target frame and the reference frame using:
+///    - Lowe's ratio test: rejects ambiguous matches (best/second-best ≥ `ratio_threshold`)
+///    - Mutual cross-check: only keeps matches that are best in both directions
+/// 5. Estimates the similarity transform (translation, rotation, uniform scale) via
+///    scale-constrained RANSAC + least-squares over the inlier correspondences.
+///    Any candidate whose implied scale deviates from 1.0 by more than `max_scale_deviation`
+///    is rejected — encoding the physical constraint that same-equipment frames share the
+///    same plate scale.
+/// 6. Errors out with an informative message if fewer than `min_success_rate` of frames
+///    can be registered (distinguishes equipment mismatch from sparse-field failure).
+///
+/// **Recommended alternative for very sparse fields:** `frame_registration_triangle`
+/// pipeline, which uses 3-star triangle patterns (more patterns from the same star count).
+public struct FrameRegistrationProcessor: Processor {
+    public var id: String { "frame_registration_quad" }
+    public init() {}
+
+    public func execute(
+        inputs:     [String: ProcessData],
+        outputs:    inout [String: ProcessData],
+        parameters: [String: Parameter],
+        device:     MTLDevice,
+        commandQueue: MTLCommandQueue
+    ) throws {
+        guard let frameSet = inputs["input_frames"] as? FrameSet else {
+            throw ProcessorExecutionError.missingRequiredInput("input_frames")
+        }
+        guard !frameSet.frames.isEmpty else {
+            throw ProcessorExecutionError.executionFailed("input_frames FrameSet is empty")
+        }
+
+        // ── Parameters ──────────────────────────────────────────────────────────
+        let referenceFrameParam = parameters["reference_frame"]?.intValue    ?? -1
+        let matchThreshold      = parameters["match_threshold"]?.doubleValue ?? 0.05
+        let minMatches          = parameters["min_matches"]?.intValue         ?? 4
+        let ransacIterations    = parameters["ransac_iterations"]?.intValue   ?? 100
+        let inlierThreshold     = parameters["inlier_threshold"]?.doubleValue ?? 3.0
+        let blurRadius          = parameters["blur_radius"]?.doubleValue      ?? 3.0
+        let thresholdValue      = parameters["threshold_value"]?.doubleValue  ?? 3.0
+        let erosionKernel       = parameters["erosion_kernel_size"]?.intValue ?? 3
+        let dilationKernel      = parameters["dilation_kernel_size"]?.intValue ?? 3
+        let maxStars            = parameters["max_stars"]?.intValue           ?? 100
+        let minDistancePct      = parameters["min_distance_percent"]?.doubleValue ?? 1.0
+        let kNeighbors          = parameters["k_neighbors"]?.intValue         ?? 5
+        // Robustness parameters (added in sparse-field robustness pass)
+        let maxScaleDeviation   = parameters["max_scale_deviation"]?.doubleValue ?? 0.05
+        let ratioThreshold      = parameters["ratio_threshold"]?.doubleValue  ?? 0.8
+        let minSuccessRate      = parameters["min_success_rate"]?.doubleValue ?? 0.75
+        let maxFWHMRatio              = parameters["max_fwhm_ratio"]?.doubleValue              ?? 2.5
+        let maxEccentricity           = parameters["max_eccentricity"]?.doubleValue           ?? 0.0
+        let minCentroidSubpixelOffset = parameters["min_centroid_subpixel_offset"]?.doubleValue ?? 0.05
+
+        // ── Star detection ───────────────────────────────────────────────────────
+        var perFrame: [(quads: [QuadDescriptor], stars: [StarPoint], stats: FrameStats)] = []
+        for frame in frameSet.frames {
+            let (starsTable, skyBg, skyNoise) = try RegistrationCore.detectStars(
+                frame: frame, device: device, commandQueue: commandQueue,
+                blurRadius: blurRadius, thresholdValue: thresholdValue,
+                erosionKernel: erosionKernel, dilationKernel: dilationKernel,
+                maxFWHMRatio: maxFWHMRatio, maxEccentricity: maxEccentricity,
+                minCentroidSubpixelOffset: minCentroidSubpixelOffset
+            )
+            let (quads, stars) = buildQuadsAndStars(from: starsTable, maxStars: maxStars,
+                                                    minDistancePct: minDistancePct, kNeighbors: kNeighbors,
+                                                    device: device, commandQueue: commandQueue)
+            let stats = RegistrationCore.extractStats(from: starsTable,
+                                                      skyBackground: skyBg, skyNoise: skyNoise)
+            perFrame.append((quads: quads, stars: stars, stats: stats))
+        }
+
+        // ── Reference frame ──────────────────────────────────────────────────────
+        let refIdx: Int
+        if referenceFrameParam >= 0 && referenceFrameParam < perFrame.count {
+            refIdx = referenceFrameParam
+        } else {
+            refIdx = RegistrationCore.chooseBestFrame(perFrame.map { $0.stats })
+        }
+        Logger.processor.info("FrameRegistration: reference frame = \(refIdx)")
+
+        try RegistrationCore.checkEquipmentConsistency(frames: frameSet.frames, referenceIndex: refIdx)
+
+        // ── Per-frame registration ───────────────────────────────────────────────
+        var rows: [RegistrationRow] = []
+        let refQuads = perFrame[refIdx].quads
+        let refStars = perFrame[refIdx].stars
+
+        for (i, frameData) in perFrame.enumerated() {
+            if i == refIdx {
+                rows.append(RegistrationRow(frameIndex: i, transform: .identity,
+                                            matchCount: frameData.quads.count, rawMatchCount: frameData.stars.count,
+                                            rmse: 0, stats: frameData.stats, success: true))
+                continue
+            }
+            let rawMatchCount = RegistrationCore.countRawMatches(
+                refStars: refStars, tgtStars: frameData.stars, threshold: inlierThreshold)
+            Logger.processor.info("FrameRegistration: frame \(i) — raw overlap (no transform): \(rawMatchCount)/\(refStars.count) ref stars within \(inlierThreshold, format: .fixed(precision: 1)) px of a target star")
+            let (transform, matchCount, rmse, success) = computeTransform(
+                reference: refQuads, target: frameData.quads,
+                matchThreshold: matchThreshold, minMatches: minMatches,
+                ransacIterations: ransacIterations, inlierThreshold: inlierThreshold,
+                maxScaleDeviation: maxScaleDeviation, ratioThreshold: ratioThreshold,
+                device: device, commandQueue: commandQueue
+            )
+            rows.append(RegistrationRow(frameIndex: i, transform: transform,
+                                        matchCount: matchCount, rawMatchCount: rawMatchCount,
+                                        rmse: rmse, stats: frameData.stats, success: success))
+        }
+
+        // ── Success-rate gate ────────────────────────────────────────────────────
+        let successCount = rows.filter { $0.success }.count
+        let successRate  = Double(successCount) / Double(rows.count)
+        if successRate < minSuccessRate {
+            let failed             = rows.filter { !$0.success }
+            let tooFewMatchCount   = failed.filter { $0.matchCount < minMatches }.count
+            let badScaleCount      = failed.filter { $0.matchCount >= minMatches }.count
+            throw ProcessorExecutionError.executionFailed(
+                RegistrationCore.buildRegistrationFailureMessage(
+                    successCount: successCount, total: rows.count,
+                    successRate: successRate, minSuccessRate: minSuccessRate,
+                    tooFewMatchesCount: tooFewMatchCount, badScaleCount: badScaleCount
+                )
+            )
+        }
+
+        // ── Output DataFrame ─────────────────────────────────────────────────────
+        let sortedRows = rows.sorted { $0.frameIndex < $1.frameIndex }
+        outputs["registration_table"] = buildOutputTable(
+            sortedRows: sortedRows, frameSet: frameSet,
+            outputs: &outputs
+        )
+
+        // Reference star positions (optional output)
+        if var refStarsTable = outputs["reference_stars"] as? TableData {
+            let stars = uniqueStars(from: perFrame[refIdx].quads)
+            var refDF = DataFrame()
+            refDF.append(column: Column<Int>   (name: "star_index", contents: stars.indices.map { $0 }))
+            refDF.append(column: Column<Double>(name: "x", contents: stars.map { $0.x }))
+            refDF.append(column: Column<Double>(name: "y", contents: stars.map { $0.y }))
+            refStarsTable.dataFrame = refDF
+            outputs["reference_stars"] = refStarsTable
+        }
+    }
+
+    // MARK: - Output table builder
+
+    private func buildOutputTable(
+        sortedRows: [RegistrationRow],
+        frameSet: FrameSet,
+        outputs: inout [String: ProcessData]
+    ) -> TableData {
+        let iso8601Formatter: ISO8601DateFormatter = {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return f
+        }()
+
+        var df = DataFrame()
+        df.append(column: Column(name: "frame_index",
+            contents: sortedRows.map { Int32($0.frameIndex) }))
+        df.append(column: Column(name: "file_path",
+            contents: sortedRows.map { frameSet.frames[$0.frameIndex].filePath ?? "" }))
+        df.append(column: Column(name: "timestamp",
+            contents: sortedRows.map { row -> String in
+                guard let date = frameSet.frames[row.frameIndex].timestamp else { return "" }
+                return iso8601Formatter.string(from: date)
+            }))
+        df.append(column: Column(name: "exposure",
+            contents: sortedRows.map { frameSet.frames[$0.frameIndex].exposureTime } as [Double?]))
+        df.append(column: Column(name: "filter",
+            contents: sortedRows.map { row -> String in
+                let frame = frameSet.frames[row.frameIndex]
+                return frame.filterName ?? (frame.filter == .none ? "" : frame.filter.rawValue)
+            }))
+        df.append(column: Column(name: "gain",
+            contents: sortedRows.map { frameSet.frames[$0.frameIndex].gain } as [Double?]))
+        df.append(column: Column(name: "offset",
+            contents: sortedRows.map { frameSet.frames[$0.frameIndex].offset } as [Double?]))
+        df.append(column: Column(name: "frame_type",
+            contents: sortedRows.map { frameSet.frames[$0.frameIndex].type.rawValue }))
+        df.append(column: Column(name: "translation_x",
+            contents: sortedRows.map { $0.transform.tx }))
+        df.append(column: Column(name: "translation_y",
+            contents: sortedRows.map { $0.transform.ty }))
+        df.append(column: Column(name: "rotation_deg",
+            contents: sortedRows.map { $0.transform.rotationDeg }))
+        df.append(column: Column(name: "scale",
+            contents: sortedRows.map { $0.transform.scale }))
+        df.append(column: Column(name: "match_count",
+            contents: sortedRows.map { Int32($0.matchCount) }))
+        df.append(column: Column(name: "raw_match_count",
+            contents: sortedRows.map { Int32($0.rawMatchCount) }))
+        df.append(column: Column(name: "rmse",
+            contents: sortedRows.map { $0.rmse }))
+        df.append(column: Column(name: "registration_success",
+            contents: sortedRows.map { Int32($0.success ? 1 : 0) }))
+        df.append(column: Column(name: "star_count",
+            contents: sortedRows.map { Int32($0.stats.starCount) }))
+        df.append(column: Column(name: "mean_fwhm",
+            contents: sortedRows.map { $0.stats.meanFWHM }))
+        df.append(column: Column(name: "median_fwhm",
+            contents: sortedRows.map { $0.stats.medianFWHM }))
+        df.append(column: Column(name: "mean_eccentricity",
+            contents: sortedRows.map { $0.stats.meanEccentricity }))
+        df.append(column: Column(name: "mean_position_angle",
+            contents: sortedRows.map { $0.stats.meanPositionAngle }))
+        df.append(column: Column(name: "mean_flux",
+            contents: sortedRows.map { $0.stats.meanFlux }))
+        df.append(column: Column(name: "sky_background",
+            contents: sortedRows.map { $0.stats.skyBackground }))
+        df.append(column: Column(name: "sky_noise",
+            contents: sortedRows.map { $0.stats.skyNoise }))
+
+        guard var regTable = outputs["registration_table"] as? TableData else {
+            return TableData()
+        }
+        regTable.dataFrame = df
+        return regTable
+    }
+
+    // MARK: - Quad formation
+
+    /// Builds quads and also returns the raw star positions for raw-overlap diagnostics.
+    private func buildQuadsAndStars(
+        from starsTable: TableData,
+        maxStars: Int,
+        minDistancePct: Double,
+        kNeighbors: Int,
+        device: MTLDevice,
+        commandQueue: MTLCommandQueue
+    ) -> ([QuadDescriptor], [StarPoint]) {
+        let quads = buildQuads(from: starsTable, maxStars: maxStars,
+                               minDistancePct: minDistancePct, kNeighbors: kNeighbors,
+                               device: device, commandQueue: commandQueue)
+        var stars: [StarPoint] = []
+        if let df = starsTable.dataFrame {
+            for row in df.rows {
+                if let x = row["centroid_x"] as? Double, let y = row["centroid_y"] as? Double {
+                    stars.append(StarPoint(x: x, y: y))
+                }
+            }
+        }
+        return (quads, stars)
+    }
+
+    /// Builds the quad descriptor set for one frame by running QuadsProcessor on the
+    /// FWHM-measured star table.
+    private func buildQuads(
+        from starsTable: TableData,
+        maxStars: Int,
+        minDistancePct: Double,
+        kNeighbors: Int,
+        device: MTLDevice,
+        commandQueue: MTLCommandQueue
+    ) -> [QuadDescriptor] {
+        var quadsOutputs: [String: ProcessData] = ["quads": TableData()]
+        do {
+            try QuadsProcessor().execute(
+                inputs: ["pixel_coordinates": starsTable],
+                outputs: &quadsOutputs,
+                parameters: [
+                    "max_stars":            .int(maxStars),
+                    "min_distance_percent": .double(minDistancePct),
+                    "k_neighbors":          .int(kNeighbors)
+                ],
+                device: device, commandQueue: commandQueue
+            )
+        } catch {
+            Logger.processor.warning("FrameRegistration: QuadsProcessor failed — \(error.localizedDescription)")
+            return []
+        }
+        guard let quadsTable = quadsOutputs["quads"] as? TableData else { return [] }
+        return extractQuadDescriptors(from: quadsTable)
+    }
+
+    private func extractQuadDescriptors(from table: TableData) -> [QuadDescriptor] {
+        guard let df = table.dataFrame else { return [] }
+        var result: [QuadDescriptor] = []
+        for row in df.rows {
+            guard
+                let dx3 = row["descriptor_x3"] as? Double,
+                let dy3 = row["descriptor_y3"] as? Double,
+                let dx4 = row["descriptor_x4"] as? Double,
+                let dy4 = row["descriptor_y4"] as? Double,
+                let s1x = row["s1_x"] as? Double, let s1y = row["s1_y"] as? Double,
+                let s2x = row["s2_x"] as? Double, let s2y = row["s2_y"] as? Double,
+                let s3x = row["s3_x"] as? Double, let s3y = row["s3_y"] as? Double,
+                let s4x = row["s4_x"] as? Double, let s4y = row["s4_y"] as? Double
+            else { continue }
+            result.append(QuadDescriptor(
+                dx3: dx3, dy3: dy3, dx4: dx4, dy4: dy4,
+                s1: StarPoint(x: s1x, y: s1y), s2: StarPoint(x: s2x, y: s2y),
+                s3: StarPoint(x: s3x, y: s3y), s4: StarPoint(x: s4x, y: s4y)
+            ))
+        }
+        return result
+    }
+
+    private func uniqueStars(from quads: [QuadDescriptor], dedupeRadius: Double = 2.0) -> [(x: Double, y: Double)] {
+        var result: [(x: Double, y: Double)] = []
+        for quad in quads {
+            for s in [quad.s1, quad.s2, quad.s3, quad.s4] {
+                let dup = result.contains { ex, ey in
+                    let dx = ex-s.x, dy = ey-s.y; return dx*dx+dy*dy < dedupeRadius*dedupeRadius
+                }
+                if !dup { result.append((s.x, s.y)) }
+            }
+        }
+        return result
+    }
+
+    // MARK: - Transform computation
+
+    private func computeTransform(
+        reference: [QuadDescriptor],
+        target:    [QuadDescriptor],
+        matchThreshold:    Double,
+        minMatches:        Int,
+        ransacIterations:  Int,
+        inlierThreshold:   Double,
+        maxScaleDeviation: Double,
+        ratioThreshold:    Double,
+        device:            MTLDevice,
+        commandQueue:      MTLCommandQueue
+    ) -> (transform: SimilarityTransform, matchCount: Int, rmse: Double, success: Bool) {
+        let matches = matchQuads(reference: reference, target: target,
+                                 threshold: matchThreshold, ratioThreshold: ratioThreshold,
+                                 device: device, commandQueue: commandQueue)
+        guard matches.count >= minMatches else {
+            Logger.processor.warning("FrameRegistration: only \(matches.count) quad matches (need \(minMatches)) — using identity")
+            return (.identity, matches.count, 0, false)
+        }
+
+        var pairs: [(ref: StarPoint, tgt: StarPoint)] = []
+        for (refQ, tgtQ) in matches {
+            pairs.append((ref: refQ.s1, tgt: tgtQ.s1))
+            pairs.append((ref: refQ.s2, tgt: tgtQ.s2))
+            pairs.append((ref: refQ.s3, tgt: tgtQ.s3))
+            pairs.append((ref: refQ.s4, tgt: tgtQ.s4))
+        }
+
+        let (bestInliers, _) = RegistrationCore.ransac(pairs: pairs,
+                                                        iterations: ransacIterations,
+                                                        inlierThreshold: inlierThreshold,
+                                                        maxScaleDeviation: maxScaleDeviation)
+        let (transform, rmse) = RegistrationCore.leastSquaresSimilarity(
+            pairs: bestInliers.count >= 4 ? bestInliers : pairs
+        )
+
+        guard abs(transform.scale - 1.0) <= maxScaleDeviation else {
+            Logger.processor.warning("FrameRegistration: frame rejected — computed scale \(transform.scale, format: .fixed(precision: 4)) deviates from 1.0 by more than \(maxScaleDeviation); likely a false-match consensus")
+            return (.identity, matches.count, rmse, false)
+        }
+        return (transform, matches.count, rmse, true)
+    }
+
+    // MARK: - Quad matching (ratio test + mutual cross-check)
+
+    /// Matches quads using the GPU when available, falling back to CPU.
+    ///
+    /// Three filters suppress false positives:
+    /// 1. Distance threshold — raw L2 in 4D descriptor space must be < `threshold`.
+    /// 2. Lowe's ratio test — best / second-best distance must be < `ratioThreshold`.
+    /// 3. Mutual cross-check — match is only kept when both directions agree.
+    private func matchQuads(
+        reference: [QuadDescriptor],
+        target:    [QuadDescriptor],
+        threshold:      Double,
+        ratioThreshold: Double,
+        device:         MTLDevice,
+        commandQueue:   MTLCommandQueue
+    ) -> [(QuadDescriptor, QuadDescriptor)] {
+        guard !reference.isEmpty, !target.isEmpty else { return [] }
+
+        let fwdBestIdx:  [Int32]
+        let fwdBestDist: [Float]
+        let fwdSecDist:  [Float]
+        let bwdBestIdx:  [Int32]
+
+        let refDesc = reference.map { (Float($0.dx3), Float($0.dy3), Float($0.dx4), Float($0.dy4)) }
+        let tgtDesc = target.map    { (Float($0.dx3), Float($0.dy3), Float($0.dx4), Float($0.dy4)) }
+
+        if let gpu = RegistrationCore.metalMatch4D(refDesc: refDesc, tgtDesc: tgtDesc,
+                                                   device: device, commandQueue: commandQueue) {
+            (fwdBestIdx, fwdBestDist, fwdSecDist, bwdBestIdx) = gpu
+        } else {
+            // CPU fallback
+            var fi  = [Int32](repeating: -1,       count: target.count)
+            var fd  = [Float](repeating: .infinity, count: target.count)
+            var sd  = [Float](repeating: .infinity, count: target.count)
+            var bi  = [Int32](repeating: -1,       count: reference.count)
+            var bd  = [Float](repeating: .infinity, count: reference.count)
+            for (ti, tq) in tgtDesc.enumerated() {
+                for (ri, rq) in refDesc.enumerated() {
+                    let d3x = tq.0-rq.0, d3y = tq.1-rq.1, d4x = tq.2-rq.2, d4y = tq.3-rq.3
+                    let d   = (d3x*d3x + d3y*d3y + d4x*d4x + d4y*d4y).squareRoot()
+                    if d < fd[ti] { sd[ti] = fd[ti]; fd[ti] = d; fi[ti] = Int32(ri) }
+                    else if d < sd[ti] { sd[ti] = d }
+                    if d < bd[ri] { bd[ri] = d; bi[ri] = Int32(ti) }
+                }
+            }
+            fwdBestIdx = fi; fwdBestDist = fd; fwdSecDist = sd; bwdBestIdx = bi
+        }
+
+        let thresh = Float(threshold), ratio = Float(ratioThreshold)
+        var matches: [(QuadDescriptor, QuadDescriptor)] = []
+        for (ti, tq) in target.enumerated() {
+            let ri = Int(fwdBestIdx[ti])
+            guard ri >= 0, fwdBestDist[ti] < thresh else { continue }
+            if fwdSecDist[ti] < .infinity && fwdBestDist[ti] / fwdSecDist[ti] >= ratio { continue }
+            guard bwdBestIdx[ri] == Int32(ti) else { continue }
+            matches.append((reference[ri], tq))
+        }
+        return matches
+    }
+}

@@ -5,6 +5,7 @@ using namespace metal;
 /// This shader performs a separable Gaussian blur in two passes:
 /// 1. Horizontal pass: blurs along the X-axis
 /// 2. Vertical pass: blurs along the Y-axis
+/// Optimized for grayscale textures (r32Float) - works on R channel only
 /// 
 /// Parameters:
 /// - radius: Blur radius in pixels (sigma = radius / 2.0)
@@ -28,7 +29,8 @@ kernel void gaussian_blur_horizontal(texture2d<float> inputTexture [[texture(0)]
     float sigma = max(radius / 2.0, 0.5);
     int kernelRadius = int(ceil(radius * 2.0)); // Use 2*sigma for kernel size
     
-    float4 sum = float4(0.0);
+    // Optimized for grayscale textures (r32Float) - work with R channel only
+    float sum = 0.0;
     float weightSum = 0.0;
     
     // Sample pixels along horizontal line
@@ -41,17 +43,18 @@ kernel void gaussian_blur_horizontal(texture2d<float> inputTexture [[texture(0)]
         float offset = float(x);
         float weight = gaussianWeight(offset, sigma);
         
-        float4 sample = inputTexture.read(uint2(sampleX, gid.y));
+        // Read grayscale value (only R channel has data)
+        float sample = inputTexture.read(uint2(sampleX, gid.y)).r;
         sum += sample * weight;
         weightSum += weight;
     }
     
     // Normalize by total weight
-    if (weightSum > 0.0) {
-        sum /= weightSum;
-    }
+    float result = (weightSum > 0.0) ? (sum / weightSum) : 0.0;
     
-    outputTexture.write(sum, gid);
+    // Write output (grayscale - only R channel is used)
+    // Using float4(result) broadcasts the value, which is more efficient than explicit zeros
+    outputTexture.write(float4(result), gid);
 }
 
 // Vertical blur pass
@@ -67,7 +70,8 @@ kernel void gaussian_blur_vertical(texture2d<float> inputTexture [[texture(0)]],
     float sigma = max(radius / 2.0, 0.5);
     int kernelRadius = int(ceil(radius * 2.0)); // Use 2*sigma for kernel size
     
-    float4 sum = float4(0.0);
+    // Optimized for grayscale textures (r32Float) - work with R channel only
+    float sum = 0.0;
     float weightSum = 0.0;
     
     // Sample pixels along vertical line
@@ -80,16 +84,17 @@ kernel void gaussian_blur_vertical(texture2d<float> inputTexture [[texture(0)]],
         float offset = float(y);
         float weight = gaussianWeight(offset, sigma);
         
-        float4 sample = inputTexture.read(uint2(gid.x, sampleY));
+        // Read grayscale value (only R channel has data)
+        float sample = inputTexture.read(uint2(gid.x, sampleY)).r;
         sum += sample * weight;
         weightSum += weight;
     }
     
     // Normalize by total weight
-    if (weightSum > 0.0) {
-        sum /= weightSum;
-    }
+    float result = (weightSum > 0.0) ? (sum / weightSum) : 0.0;
     
-    outputTexture.write(sum, gid);
+    // Write output (grayscale - only R channel is used)
+    // Using float4(result) broadcasts the value, which is more efficient than explicit zeros
+    outputTexture.write(float4(result), gid);
 }
 

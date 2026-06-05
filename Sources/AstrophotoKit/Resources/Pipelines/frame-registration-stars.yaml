@@ -1,0 +1,84 @@
+id: frame_registration_stars
+name: Star-Matching Frame Registration Pipeline
+description: Registers multiple frames using direct star-position matching. For every possible reference→target star correspondence, treats the implied translation as a candidate and counts how many other stars agree. The consensus winner is refined to a full similarity transform. Robust to the false-match consensus that affects descriptor-based methods (quad, triangle) in sparse emission-line fields.
+
+steps:
+  - id: registration
+    type: frame_registration_star_matching
+    name: Star-Matching Frame Registration
+    description: Detects stars in each frame and finds the best-fitting similarity transform by exhaustive star-correspondence search.
+    dataInputs:
+      - name: input_frames
+        type: frameSet
+        from: input_frames
+        is_collection: true
+        collection_mode: together
+        description: Collection of light frames to register
+    parameters:
+      - name: reference_frame
+        from: reference_frame
+        default_value: -1
+        description: Index of reference frame (-1 = auto-select best quality frame)
+      - name: min_matches
+        from: min_matches
+        default_value: 4
+        description: Minimum number of matched star pairs required for valid registration
+      - name: inlier_threshold
+        from: inlier_threshold
+        default_value: 3.0
+        description: Maximum residual in pixels for a star pair to count as a match
+      - name: blur_radius
+        from: blur_radius
+        default_value: 1.5
+        description: Gaussian blur radius in pixels applied before star detection
+      - name: threshold_value
+        from: threshold_value
+        default_value: 3.0
+        description: Sigma multiplier for star detection threshold
+      - name: erosion_kernel_size
+        from: erosion_kernel_size
+        default_value: 3
+        description: Morphological erosion kernel size
+      - name: dilation_kernel_size
+        from: dilation_kernel_size
+        default_value: 3
+        description: Morphological dilation kernel size
+      - name: max_stars
+        from: max_stars
+        default_value: 100
+        description: Maximum number of stars to use per frame (keep low for speed — 30–50 is usually sufficient)
+      - name: min_distance_percent
+        from: min_distance_percent
+        default_value: 1.0
+        description: Minimum distance between stars as a percentage of the image diagonal
+      - name: max_scale_deviation
+        from: max_scale_deviation
+        default_value: 0.05
+        description: Maximum allowed deviation of the computed scale from 1.0
+      - name: min_success_rate
+        from: min_success_rate
+        default_value: 0.75
+        description: Minimum fraction of frames that must register successfully
+      - name: max_fwhm_ratio
+        from: max_fwhm_ratio
+        default_value: 2.5
+        description: Extended-source filter — removes detections with FWHM > ratio × median FWHM (0 = disabled)
+      - name: max_eccentricity
+        from: max_eccentricity
+        default_value: 0.0
+        description: Roundness filter — removes detections with eccentricity > threshold (0 = disabled; 0 = circle, 1 = line; try 0.5 for sparse emission-line fields)
+      - name: min_centroid_subpixel_offset
+        from: min_centroid_subpixel_offset
+        default_value: 0.05
+        description: Hot-pixel filter — rejects sources whose centroid is within this many pixels of an integer coordinate on both axes (hot pixels centre on exact pixel positions; real stars do not). Set to 0 to disable.
+    outputs:
+      - name: registration_table
+        type: table
+        description: Registration results — one row per frame with transform parameters and star quality metrics (same schema as frame_registration pipeline)
+        metadata:
+          processing_stage: "registration"
+          data_type: "table"
+          table_type: "registration"
+      - name: reference_stars
+        type: table
+        description: Pixel positions (x, y) of stars detected in the reference frame

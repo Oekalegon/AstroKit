@@ -1,0 +1,84 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:AstrophotoKit}",
+            "name": "Debug ap",
+            "target": "ap",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug ap"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:AstrophotoKit}",
+            "name": "Release ap",
+            "target": "ap",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release ap"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:AstrophotoKit}",
+            "name": "Debug astrokit-mcp",
+            "target": "astrokit-mcp",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug astrokit-mcp"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:AstrophotoKit}",
+            "name": "Release astrokit-mcp",
+            "target": "astrokit-mcp",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release astrokit-mcp"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:AstrophotoKit}",
+            "name": "Debug ap-archive",
+            "target": "ap-archive",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug ap-archive"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:AstrophotoKit}",
+            "name": "Release ap-archive",
+            "target": "ap-archive",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release ap-archive"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:AstrophotoKit}",
+            "name": "Debug version-tool",
+            "target": "version-tool",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug version-tool"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:AstrophotoKit}",
+            "name": "Release version-tool",
+            "target": "version-tool",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release version-tool"
+        }
+    ]
+}

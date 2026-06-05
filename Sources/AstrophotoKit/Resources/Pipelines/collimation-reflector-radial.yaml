@@ -1,0 +1,248 @@
+id: collimation_reflector_radial
+name: Reflector Collimation Analysis Pipeline (Radial Profile)
+description: Analyses an out-of-focus image from a reflector telescope to measure the
+  collimation error. Uses a binary-image connected-components scan to locate donut
+  candidates, then a radial profile analysis to find the outer ring (peak of the
+  intensity profile) and inner shadow (profile minimum), with the inner shadow centre
+  refined via intensity-weighted centroid for a precise collimation offset vector.
+  CPU-only alternative to the Hough pipeline — faster but less precise inner centre.
+
+steps:
+  - id: grayscale
+    type: grayscale
+    name: Grayscale
+    description: Converts the input frame to grayscale
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+        description: Out-of-focus light frame from the reflector
+    parameters: []
+    outputs:
+      - name: grayscale_frame
+        type: frame
+        description: Grayscale version of the input frame
+        metadata:
+          processing_stage: "color_conversion"
+          image_type: "grayscale"
+
+  - id: blur
+    type: gaussian_blur
+    name: Gaussian Blur
+    description: Smooths noise before thresholding
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Grayscale input frame
+    parameters:
+      - name: radius
+        from: blur_radius
+        default_value: 2.0
+        description: Blur radius in pixels — small, just for noise removal
+    outputs:
+      - name: blurred_frame
+        type: frame
+        description: Blurred grayscale frame
+        metadata:
+          processing_stage: "noise_reduction"
+          image_type: "grayscale"
+
+  - id: threshold
+    type: threshold
+    name: Threshold
+    description: Creates a binary mask of the donut blobs directly from the blurred grayscale
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: blur.blurred_frame
+        description: Blurred grayscale frame
+    parameters:
+      - name: threshold_value
+        from: threshold_value
+        default_value: 4.0
+        description: Sigma threshold — high enough to separate individual donut blobs,
+          low enough to catch faint rings. The radial processor searches ±outerR from
+          the CC centroid so precise centering is not required.
+      - name: method
+        default_value: "sigma"
+    outputs:
+      - name: thresholded_frame
+        type: frame
+        description: Binary donut mask
+        metadata:
+          processing_stage: "thresholding"
+          image_type: "binary"
+
+  - id: erosion
+    type: erosion
+    name: Binary Erosion
+    description: Removes noise from binary mask
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: threshold.thresholded_frame
+        description: Thresholded frame
+    parameters:
+      - name: kernel_size
+        from: erosion_kernel_size
+        default_value: 3
+    outputs:
+      - name: eroded_frame
+        type: frame
+        description: Eroded binary mask
+        metadata:
+          processing_stage: "morphological_processing"
+          image_type: "binary"
+
+  - id: dilation
+    type: dilation
+    name: Binary Dilation
+    description: Restores donut shapes after erosion
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: erosion.eroded_frame
+        description: Eroded frame
+    parameters:
+      - name: kernel_size
+        from: dilation_kernel_size
+        default_value: 3
+    outputs:
+      - name: dilated_frame
+        type: frame
+        description: Dilated binary mask
+        metadata:
+          processing_stage: "morphological_processing"
+          image_type: "binary"
+
+  - id: connected_components
+    type: connected_components
+    name: Connected Components
+    description: Finds donut blob centroids in the binary mask
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: dilation.dilated_frame
+        description: Dilated binary mask
+    parameters: []
+    outputs:
+      - name: pixel_coordinates
+        type: table
+        description: Per-blob table with centroid_x, centroid_y, area, axes
+        metadata:
+          processing_stage: "blob_detection"
+          table_type: "blob_catalog"
+
+  - id: radial_profile
+    type: radial_profile
+    name: Radial Profile Detection
+    description: Detects donut-shaped out-of-focus stars by computing the radial intensity
+      profile around each CC centroid, finding the ring peak (outer radius) and shadow
+      minimum (inner radius), then refining the inner centre via intensity-weighted centroid
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Greyscale out-of-focus image (unblurred, for accurate intensity profiles)
+      - name: star_positions
+        type: table
+        from: connected_components.pixel_coordinates
+        description: Blob centroids from connected components
+    parameters:
+      - name: r_min
+        from: radial_r_min
+        default_value: 20
+        description: Minimum outer ring radius to consider (pixels)
+      - name: r_max
+        from: radial_r_max
+        default_value: 150
+        description: Maximum outer ring radius to consider (pixels)
+      - name: min_peak_ratio
+        from: radial_min_peak_ratio
+        default_value: 1.5
+        description: Minimum ratio of ring peak to tail background minimum; increase to reject more false positives
+      - name: margin
+        from: radial_margin
+        default_value: 20
+        description: Extra pixels beyond r_max for boundary check
+      - name: inner_center_search_r
+        from: radial_inner_center_search_r
+        default_value: 0.5
+        description: Search radius for inner centre as fraction of inner_r
+    outputs:
+      - name: donuts
+        type: table
+        description: Per-donut table with outer/inner circle centres, radii, and offsets
+        metadata:
+          processing_stage: "circle_detection"
+          table_type: "donut_catalog"
+
+  - id: collimation
+    type: collimation_analysis
+    name: Collimation Analysis
+    description: Analyses donut offsets spatially to produce a collimation error vector and diagnosis
+    dataInputs:
+      - name: donuts
+        type: table
+        from: radial_profile.donuts
+        description: Detected donuts from radial profile detection
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Greyscale frame (used for image dimensions only)
+    parameters:
+      - name: grid_cols
+        from: col_grid_cols
+        default_value: 3
+        description: Number of spatial grid columns
+      - name: grid_rows
+        from: col_grid_rows
+        default_value: 3
+        description: Number of spatial grid rows
+    outputs:
+      - name: collimation_map
+        type: table
+        description: Per-cell mean offset vectors
+        metadata:
+          processing_stage: "collimation_analysis"
+          table_type: "spatial_map"
+      - name: collimation_summary
+        type: table
+        description: Global collimation error vector and diagnosis
+        metadata:
+          processing_stage: "collimation_analysis"
+          table_type: "statistics"
+
+  - id: overlay
+    type: hough_circle_overlay
+    name: Circle Overlay
+    description: Draws detected outer (green) and inner (red) circles onto the image
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Greyscale frame to annotate
+      - name: donuts
+        type: table
+        from: radial_profile.donuts
+        description: Detected donuts from radial profile detection
+    parameters:
+      - name: line_width
+        from: overlay_line_width
+        default_value: 2.0
+        description: Circle stroke width in pixels
+      - name: crosshair_ratio
+        from: overlay_crosshair_ratio
+        default_value: 0.3
+        description: Crosshair arm length as fraction of outer radius
+    outputs:
+      - name: annotated_frame
+        type: frame
+        description: RGBA image with detected circles drawn
+        metadata:
+          processing_stage: "overlay"
+          image_type: "rgba"
