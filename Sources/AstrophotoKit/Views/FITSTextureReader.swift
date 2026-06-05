@@ -66,7 +66,10 @@ struct FITSTextureReader {
     // MARK: - Private
 
     private var isRGBA: Bool {
-        texture.pixelFormat == .rgba32Float || texture.pixelFormat == .rgba16Float || texture.pixelFormat == .rgba8Unorm
+        // Only rgba32Float is safe to read via Float32 blit (16 bytes per pixel).
+        // rgba16Float (8 bytes) and rgba8Unorm (4 bytes) require different buffer sizes
+        // and can't be interpreted as Float32 directly. Neither is produced by FITSImageView.
+        texture.pixelFormat == .rgba32Float
     }
 
     private func denormalize(_ value: Float) -> Float {

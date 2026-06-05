@@ -160,6 +160,18 @@ struct FITSTextureReaderPixelRGBATests {
         let result = FITSTextureReader(texture: tex, minValue: 0, maxValue: 4).readPixel(x: 0, y: 0)
         #expect(approxEqual(result!, 1.0))
     }
+
+    @Test("rgba32Float R channel is in valid range after denormalization")
+    func rgba32FloatInRange() {
+        // Regression: rgba8Unorm and rgba16Float were incorrectly treated as rgba32Float,
+        // giving Float32-misinterpreted garbage values well outside [minValue, maxValue].
+        guard let tex = makeRGBATexture(width: 1, height: 1, values: [0.5, 0.0, 0.0, 1.0]) else {
+            Issue.record("Metal unavailable"); return
+        }
+        let result = FITSTextureReader(texture: tex, minValue: 0, maxValue: 1).readPixel(x: 0, y: 0)!
+        #expect(result >= 0.0 && result <= 1.0, "Expected value in [0, 1], got \(result)")
+        #expect(approxEqual(result, 0.5))
+    }
 }
 
 // MARK: - readSection: row shader
