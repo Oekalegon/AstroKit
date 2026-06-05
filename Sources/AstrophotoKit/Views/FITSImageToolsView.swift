@@ -40,6 +40,9 @@ public struct FITSImageToolsView: View {
         let panOffset: SIMD2<Float>
         let aspectRatio: SIMD2<Float>
         let textureID: ObjectIdentifier?
+        /// Identifies the active FITSImage when texture is nil. Nil means no automatic refresh
+        /// on image swap — same documented limitation as FITSCrossSectionView.sourceID.
+        let imageID: String?
     }
 
     private var sampleKey: SampleKey {
@@ -48,7 +51,8 @@ public struct FITSImageToolsView: View {
             zoom: zoom,
             panOffset: panOffset,
             aspectRatio: aspectRatio,
-            textureID: texture.map { ObjectIdentifier($0 as AnyObject) }
+            textureID: texture.map { ObjectIdentifier($0 as AnyObject) },
+            imageID: imageID
         )
     }
 
