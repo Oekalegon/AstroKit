@@ -97,7 +97,7 @@ public struct FITSCrossSectionView: View {
     /// used as the `.task` ID to trigger recomputation.
     private var sourceID: String {
         if let tex = texture {
-            return "tex-\(ObjectIdentifier(tex as AnyObject).hashValue)-\(textureMinValue)-\(textureMaxValue)"
+            return "tex-\(ObjectIdentifier(tex as AnyObject))-\(textureMinValue)-\(textureMaxValue)"
         }
         if let img = fitsImage {
             return "img-\(img.width)-\(img.height)-\(img.originalMinValue)-\(img.originalMaxValue)"

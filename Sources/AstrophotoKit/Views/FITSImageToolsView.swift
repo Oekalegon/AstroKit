@@ -39,7 +39,7 @@ public struct FITSImageToolsView: View {
         let zoom: Float
         let panOffset: SIMD2<Float>
         let aspectRatio: SIMD2<Float>
-        let textureHash: Int
+        let textureID: ObjectIdentifier?
     }
 
     private var sampleKey: SampleKey {
@@ -48,7 +48,7 @@ public struct FITSImageToolsView: View {
             zoom: zoom,
             panOffset: panOffset,
             aspectRatio: aspectRatio,
-            textureHash: texture.map { ObjectIdentifier($0 as AnyObject).hashValue } ?? 0
+            textureID: texture.map { ObjectIdentifier($0 as AnyObject) }
         )
     }
 
