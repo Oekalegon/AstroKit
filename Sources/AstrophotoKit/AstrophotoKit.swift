@@ -124,7 +124,6 @@ public struct AstrophotoKit {
             "Looking for \(shaderFiles.count) shader files: \(shaderFiles.joined(separator: ", "))"
         )
 
-
         // Try multiple methods to find the shader files
         var bundlesToTry: [Bundle?] = [
             findPackageBundle(),
