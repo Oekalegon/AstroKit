@@ -125,4 +125,37 @@ struct StretchSettingsCodableTests {
         let decoded = try JSONDecoder().decode(StretchSettings.self, from: data)
         #expect(decoded.isIdentity)
     }
+
+    @Test("corrupted JSON (inputBlack >= inputWhite) throws on decode")
+    func corruptedJSONThrows() throws {
+        // Simulates a manually-edited or corrupted archive row.
+        // The archive reads with `try? JSONDecoder().decode(...)` so this produces nil
+        // rather than crashing or returning inverted stretch settings.
+        let inverted = "{\"inputBlack\":0.9,\"inputWhite\":0.1}"
+        let data = Data(inverted.utf8)
+        #expect(throws: (any Error).self) {
+            _ = try JSONDecoder().decode(StretchSettings.self, from: data)
+        }
+
+        let equal = "{\"inputBlack\":0.5,\"inputWhite\":0.5}"
+        #expect(throws: (any Error).self) {
+            _ = try JSONDecoder().decode(StretchSettings.self, from: Data(equal.utf8))
+        }
+    }
+}
+
+@Suite("StretchSettings — invariant")
+struct StretchSettingsInvariantTests {
+
+    @Test("zero-width stretch: effective returns constant regardless of slider — documents degenerate behavior")
+    func zeroWidthStretchReturnsConstant() {
+        // inputBlack == inputWhite is forbidden by init's precondition, but this test
+        // documents what effective() produces with a zero-width range to justify
+        // why the invariant matters: every slider position maps to the same output.
+        let s = StretchSettings(inputBlack: 0.3, inputWhite: 0.3 + .ulpOfOne)
+        // With an infinitesimally narrow stretch, all slider positions converge on ~0.3
+        #expect(abs(s.effective(sliderNorm: 0.0) - 0.3) < 1e-6)
+        #expect(abs(s.effective(sliderNorm: 0.5) - 0.3) < 1e-6)
+        #expect(abs(s.effective(sliderNorm: 1.0) - 0.3) < 1e-6)
+    }
 }

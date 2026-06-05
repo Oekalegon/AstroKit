@@ -42,9 +42,33 @@ public struct StretchSettings: Codable, Hashable, Sendable {
     /// Normalized [0, 1] input value that maps to display white (1).
     public var inputWhite: Float
 
+    /// - Precondition: `inputBlack < inputWhite`. Equal values make the slider appear
+    ///   frozen (effective returns a constant); reversed values invert the display.
     public init(inputBlack: Float = 0.0, inputWhite: Float = 1.0) {
+        precondition(inputBlack < inputWhite,
+                     "StretchSettings: inputBlack (\(inputBlack)) must be less than inputWhite (\(inputWhite))")
         self.inputBlack = inputBlack
         self.inputWhite = inputWhite
+    }
+
+    // MARK: - Codable
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let b = try c.decode(Float.self, forKey: .inputBlack)
+        let w = try c.decode(Float.self, forKey: .inputWhite)
+        guard b < w else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: decoder.codingPath,
+                debugDescription: "StretchSettings: inputBlack (\(b)) must be < inputWhite (\(w))"
+            ))
+        }
+        self.inputBlack = b
+        self.inputWhite = w
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case inputBlack, inputWhite
     }
 
     /// Identity stretch — full image range maps to full display range.
