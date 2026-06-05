@@ -65,7 +65,7 @@ public struct AstrophotoKit {
     /// Combines both the normal and inverse shader files
     private static func loadShaderSource() -> String? {
         var shaderSources: [String] = []
-        let shaderFiles = ["ImageShader", "ImageInverseShader", "HistogramShader", "GaussianBlurShader", "BackgroundSubtractionShader", "ThresholdShader", "LocalMedianShader", "StatisticsShader", "ErosionShader", "DilationShader", "ConnectedComponentsShader", "StarDetectionOverlayShader"]
+        let shaderFiles = ["ImageShader", "ImageInverseShader", "HistogramShader", "GaussianBlurShader", "BackgroundSubtractionShader", "ThresholdShader", "LocalMedianShader", "StatisticsShader", "ErosionShader", "DilationShader", "ConnectedComponentsShader", "StarDetectionOverlayShader", "CrossSectionShader"]
         
         // Try multiple methods to find the shader files
         let bundlesToTry: [Bundle?] = [
