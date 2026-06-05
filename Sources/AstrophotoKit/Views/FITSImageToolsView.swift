@@ -273,7 +273,8 @@ public struct FITSImageToolsView: View {
                     )
                     .frame(height: 200)
                     .onAppear { extractedRegionZoom = 1.0; extractedRegionPanOffset = .zero }
-                    .onChange(of: fitsImage) { _, _ in extractedRegionZoom = 1.0; extractedRegionPanOffset = .zero }
+                    .onChange(of: fitsImage)           { _, _ in extractedRegionZoom = 1.0; extractedRegionPanOffset = .zero }
+                    .onChange(of: extractedRegionSize) { _, _ in extractedRegionZoom = 1.0; extractedRegionPanOffset = .zero }
                 }
             }
             .padding(.vertical, 4)
