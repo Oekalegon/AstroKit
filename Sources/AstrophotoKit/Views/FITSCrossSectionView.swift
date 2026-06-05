@@ -36,7 +36,6 @@ public struct FITSCrossSectionView: View {
                             .lineStyle(StrokeStyle(lineWidth: 1.5))
                             .interpolationMethod(.catmullRom)
                     }
-                    .foregroundStyle(by: .value("Series", "X-axis"))
 
                     ForEach(Array(yData.enumerated()), id: \.offset) { index, intensity in
                         LineMark(x: .value("Position", Float(index)), y: .value("Intensity", intensity))
@@ -44,7 +43,6 @@ public struct FITSCrossSectionView: View {
                             .lineStyle(StrokeStyle(lineWidth: 1.5))
                             .interpolationMethod(.catmullRom)
                     }
-                    .foregroundStyle(by: .value("Series", "Y-axis"))
                 }
                 .chartXAxis {
                     AxisMarks(values: .automatic) { value in
