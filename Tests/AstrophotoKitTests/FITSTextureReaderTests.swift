@@ -6,7 +6,7 @@ import Metal
 
 /// Create a 1-channel r32Float texture filled with `values` in row-major order.
 private func makeGrayscaleTexture(width: Int, height: Int, values: [Float]) -> MTLTexture? {
-    precondition(values.count == width * height)
+    guard values.count == width * height else { return nil }
     guard let device = MetalShared.device else { return nil }
     let desc = MTLTextureDescriptor.texture2DDescriptor(
         pixelFormat: .r32Float, width: width, height: height, mipmapped: false)
@@ -23,7 +23,7 @@ private func makeGrayscaleTexture(width: Int, height: Int, values: [Float]) -> M
 
 /// Create an rgba32Float texture; `values` is [r, g, b, a, r, g, b, a, ...] row-major.
 private func makeRGBATexture(width: Int, height: Int, values: [Float]) -> MTLTexture? {
-    precondition(values.count == width * height * 4)
+    guard values.count == width * height * 4 else { return nil }
     guard let device = MetalShared.device else { return nil }
     let desc = MTLTextureDescriptor.texture2DDescriptor(
         pixelFormat: .rgba32Float, width: width, height: height, mipmapped: false)
