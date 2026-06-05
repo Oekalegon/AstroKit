@@ -216,7 +216,7 @@ struct ArchiveTools {
             if let v = f.hotPixelCount      { lines.append(row("Hot pixels",   "≈\(v)")) }
         }
 
-        let hasStretch = (f.stretchSettings != nil && !f.stretchSettings!.isIdentity)
+        let hasStretch = f.stretchSettings.map { !$0.isIdentity } == true
             || f.sliderBlackNorm != nil || f.sliderWhiteNorm != nil
         if hasStretch {
             lines.append("")
