@@ -96,6 +96,76 @@ struct ArchiveStretchTests {
         #expect(!saved.isIdentity)
     }
 
+    @Test("slider positions persist independently of normalization bounds")
+    func sliderPositionsPersistIndependently() async throws {
+        let (db, url) = try makeTestDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let frame = makeFrame()
+        _ = try await db.insertFrame(frame)
+
+        // Scenario: normalize to [0, 0.1], then move white slider to 0.4 in stretch → 0.04 in data space
+        let settings = StretchSettings(inputBlack: 0.0, inputWhite: 0.1)
+        try await db.updateStretchSettings(id: frame.id, settings: settings, sliderBlackNorm: 0.0, sliderWhiteNorm: 0.04)
+
+        let fetched = try await db.frameByID(frame.id)
+        let saved = try #require(fetched?.stretchSettings)
+        #expect(abs(saved.inputBlack - 0.0) < 1e-6)
+        #expect(abs(saved.inputWhite - 0.1) < 1e-6)
+        // Slider positions are stored independently of the normalization bounds
+        #expect(abs((fetched?.sliderBlackNorm ?? -1) - 0.0)  < 1e-6)
+        #expect(abs((fetched?.sliderWhiteNorm ?? -1) - 0.04) < 1e-5)
+    }
+
+    @Test("slider positions can be updated without changing normalization")
+    func sliderUpdateWithoutNormChange() async throws {
+        let (db, url) = try makeTestDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let frame = makeFrame()
+        _ = try await db.insertFrame(frame)
+
+        let settings = StretchSettings(inputBlack: 0.0, inputWhite: 0.1)
+        try await db.updateStretchSettings(id: frame.id, settings: settings, sliderBlackNorm: 0.0, sliderWhiteNorm: 1.0)
+        // Update only slider, keep normalization the same
+        try await db.updateStretchSettings(id: frame.id, settings: settings, sliderBlackNorm: 0.0, sliderWhiteNorm: 0.04)
+
+        let fetched = try await db.frameByID(frame.id)
+        // Normalization bounds unchanged
+        #expect(abs((fetched?.stretchSettings?.inputWhite ?? -1) - 0.1) < 1e-6)
+        // Slider updated
+        #expect(abs((fetched?.sliderWhiteNorm ?? -1) - 0.04) < 1e-5)
+    }
+
+    @Test("clearing stretch also clears slider positions")
+    func clearingStretchClearsSliders() async throws {
+        let (db, url) = try makeTestDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let frame = makeFrame()
+        _ = try await db.insertFrame(frame)
+
+        try await db.updateStretchSettings(id: frame.id, settings: StretchSettings(inputBlack: 0.0, inputWhite: 0.1), sliderBlackNorm: 0.0, sliderWhiteNorm: 0.04)
+        try await db.updateStretchSettings(id: frame.id, settings: nil, sliderBlackNorm: nil, sliderWhiteNorm: nil)
+
+        let fetched = try await db.frameByID(frame.id)
+        #expect(fetched?.stretchSettings == nil)
+        #expect(fetched?.sliderBlackNorm == nil)
+        #expect(fetched?.sliderWhiteNorm == nil)
+    }
+
+    @Test("newly inserted frame has nil slider positions")
+    func newFrameHasNilSliders() async throws {
+        let (db, url) = try makeTestDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let frame = makeFrame()
+        _ = try await db.insertFrame(frame)
+        let fetched = try await db.frameByID(frame.id)
+        #expect(fetched?.sliderBlackNorm == nil)
+        #expect(fetched?.sliderWhiteNorm == nil)
+    }
+
     @Test("updating stretch on non-existent frame is a silent no-op")
     func updateNonExistentFrame() async throws {
         let (db, url) = try makeTestDatabase()

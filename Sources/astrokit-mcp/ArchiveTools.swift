@@ -216,12 +216,18 @@ struct ArchiveTools {
             if let v = f.hotPixelCount      { lines.append(row("Hot pixels",   "≈\(v)")) }
         }
 
-        if let s = f.stretchSettings, !s.isIdentity {
+        let hasStretch = (f.stretchSettings != nil && !f.stretchSettings!.isIdentity)
+            || f.sliderBlackNorm != nil || f.sliderWhiteNorm != nil
+        if hasStretch {
             lines.append("")
             lines.append("Display stretch")
             lines.append(String(repeating: "─", count: 60))
-            lines.append(row("Black", String(format: "%.4f", s.inputBlack)))
-            lines.append(row("White", String(format: "%.4f", s.inputWhite)))
+            if let s = f.stretchSettings, !s.isIdentity {
+                lines.append(row("Norm black", String(format: "%.4f", s.inputBlack)))
+                lines.append(row("Norm white", String(format: "%.4f", s.inputWhite)))
+            }
+            if let v = f.sliderBlackNorm { lines.append(row("Slider black", String(format: "%.4f", v))) }
+            if let v = f.sliderWhiteNorm { lines.append(row("Slider white", String(format: "%.4f", v))) }
         }
 
         lines.append(row("Added at",   iso.string(from: f.addedAt)))
@@ -785,29 +791,43 @@ struct ArchiveTools {
         let archive = try makeArchive()
 
         if args["reset"] as? Bool == true {
-            try await archive.updateStretchSettings(nil, id: uuid)
-            return "Cleared stretch settings for frame \(idStr) — reverted to identity (full range)."
+            try await archive.updateStretchSettings(nil, sliderBlackNorm: nil, sliderWhiteNorm: nil, id: uuid)
+            return "Cleared stretch and slider state for frame \(idStr) — reverted to identity (full range)."
         }
 
-        let inputBlack = args["input_black"] as? Double
-        let inputWhite = args["input_white"] as? Double
-        guard inputBlack != nil || inputWhite != nil else {
+        let inputBlack  = args["input_black"]  as? Double
+        let inputWhite  = args["input_white"]  as? Double
+        let sliderBlack = args["slider_black"] as? Double
+        let sliderWhite = args["slider_white"] as? Double
+
+        guard inputBlack != nil || inputWhite != nil || sliderBlack != nil || sliderWhite != nil else {
             throw ToolError(
-                "Provide input_black and input_white (both normalized [0, 1]), or pass reset: true to clear."
+                "Provide at least one of: input_black, input_white, slider_black, slider_white; or pass reset: true."
             )
         }
-        let black = Float(inputBlack ?? 0.0)
-        let white = Float(inputWhite ?? 1.0)
-        guard black < white else {
-            throw ToolError("input_black (\(black)) must be less than input_white (\(white)).")
-        }
-        guard black >= 0.0, white <= 1.0 else {
-            throw ToolError("input_black and input_white must both be in [0, 1].")
+
+        var settings: StretchSettings? = nil
+        if let ib = inputBlack, let iw = inputWhite {
+            let b = Float(ib), w = Float(iw)
+            guard b < w   else { throw ToolError("input_black (\(b)) must be less than input_white (\(w)).") }
+            guard b >= 0, w <= 1 else { throw ToolError("input_black and input_white must be in [0, 1].") }
+            settings = StretchSettings(inputBlack: b, inputWhite: w)
         }
 
-        let settings = StretchSettings(inputBlack: black, inputWhite: white)
-        try await archive.updateStretchSettings(settings, id: uuid)
-        return String(format: "Saved stretch for frame %@: black=%.4f  white=%.4f", idStr, black, white)
+        let sbNorm = sliderBlack.map { Float($0) }
+        let swNorm = sliderWhite.map { Float($0) }
+        if let sb = sbNorm, let sw = swNorm {
+            guard sb <= sw else { throw ToolError("slider_black (\(sb)) must be ≤ slider_white (\(sw)).") }
+            guard sb >= 0, sw <= 1 else { throw ToolError("slider_black and slider_white must be in [0, 1].") }
+        }
+
+        try await archive.updateStretchSettings(settings, sliderBlackNorm: sbNorm, sliderWhiteNorm: swNorm, id: uuid)
+
+        var parts: [String] = []
+        if let s = settings { parts.append(String(format: "norm=[%.4f, %.4f]", s.inputBlack, s.inputWhite)) }
+        if let v = sbNorm   { parts.append(String(format: "slider_black=%.4f", v)) }
+        if let v = swNorm   { parts.append(String(format: "slider_white=%.4f", v)) }
+        return "Saved stretch for frame \(idStr): \(parts.joined(separator: "  "))"
     }
 
     private func archiveRemove(_ args: [String: Any]) async throws -> String {

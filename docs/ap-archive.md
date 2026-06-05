@@ -520,19 +520,29 @@ ap-archive stretch <id> --black <value> --white <value>
 ap-archive stretch <id> --reset
 ```
 
+Two independent pieces of state are stored:
+
+- **Normalization bounds** (`--black` / `--white`): the sub-range of the data that was mapped to [0, 1] when **Normalize** was pressed in Navi.
+- **Slider positions** (`--slider-black` / `--slider-white`): where the black/white-point sliders currently sit within [0, 1] of the full data range. These are independent of the normalization — a white-point slider at 0.04 inside a [0, 0.1] normalization renders an effective white point of 0.004.
+
 | Option | Description |
 |--------|-------------|
-| `--black <value>` | Normalized [0, 1] black point (maps to display black). Must be < `--white`. |
-| `--white <value>` | Normalized [0, 1] white point (maps to display white). Must be > `--black`. |
-| `--reset` | Clear the saved stretch and revert to the full image range. |
+| `--black <value>` | Normalization black bound in [0, 1]. Must be < `--white`. |
+| `--white <value>` | Normalization white bound in [0, 1]. Must be > `--black`. |
+| `--slider-black <value>` | Black-point slider in [0, 1] of the full data range. |
+| `--slider-white <value>` | White-point slider in [0, 1] of the full data range. |
+| `--reset` | Clear all stretch and slider state, reverting to the full image range. |
 
 **Examples:**
 
 ```bash
-# Show only the bottom 10 % of the tonal range (classic narrowband stretch entry point)
-ap-archive stretch A3F2B1C0-... --black 0.0 --white 0.1
+# Set normalization to bottom 10 % and place the white slider at 0.04 (4 % of data, 40 % of the stretch)
+ap-archive stretch A3F2B1C0-... --black 0.0 --white 0.1 --slider-black 0.0 --slider-white 0.04
 
-# Clear a previously saved stretch
+# Update only the slider positions without changing the saved normalization
+ap-archive stretch A3F2B1C0-... --slider-white 0.07
+
+# Clear everything
 ap-archive stretch A3F2B1C0-... --reset
 ```
 

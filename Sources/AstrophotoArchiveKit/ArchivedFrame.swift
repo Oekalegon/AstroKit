@@ -87,6 +87,12 @@ public struct ArchivedFrame: Sendable, Identifiable {
     /// Stored as normalized [0, 1] values independent of bit depth and data range.
     /// Only the display is affected — the underlying FITS data is never modified.
     public var stretchSettings: StretchSettings?
+    /// Black-point slider position in [0, 1] of the full data range, independent of the
+    /// normalization bounds stored in `stretchSettings`. Nil means start at 0 (image minimum).
+    public var sliderBlackNorm: Float?
+    /// White-point slider position in [0, 1] of the full data range, independent of the
+    /// normalization bounds stored in `stretchSettings`. Nil means start at 1 (image maximum).
+    public var sliderWhiteNorm: Float?
 
     public init(
         id: UUID, filePath: String, objectName: String?, ra: Double?, dec: Double?,
@@ -113,7 +119,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
         hotPixelCount: Int? = nil,
         egain: Double? = nil,
         backgroundNoiseElectrons: Double? = nil,
-        stretchSettings: StretchSettings? = nil
+        stretchSettings: StretchSettings? = nil,
+        sliderBlackNorm: Float? = nil,
+        sliderWhiteNorm: Float? = nil
     ) {
         self.id = id
         self.filePath = filePath
@@ -158,5 +166,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.hotPixelCount = hotPixelCount
         self.backgroundNoiseElectrons = backgroundNoiseElectrons
         self.stretchSettings = stretchSettings
+        self.sliderBlackNorm = sliderBlackNorm
+        self.sliderWhiteNorm = sliderWhiteNorm
     }
 }

@@ -93,9 +93,10 @@ public struct FITSHistogramView: View {
         }
     }
     
-    private var xAxisRange: ClosedRange<Double>? {
-        // Always use the histogram's actual range for the X-axis
-        // This ensures the axis matches the computed histogram range
+    private var xAxisRange: ClosedRange<Double> {
+        if let bp = blackPoint, let wp = whitePoint, bp < wp {
+            return Double(bp)...Double(wp)
+        }
         return Double(histogram.minValue)...Double(histogram.maxValue)
     }
     
@@ -110,31 +111,17 @@ public struct FITSHistogramView: View {
             .interpolationMethod(.linear) // No smoothing, just connect points directly
         }
         .chartXAxis {
-            AxisMarks(values: .automatic) { value in
+            AxisMarks(values: .automatic) { _ in
                 AxisGridLine()
-                AxisTick()
-                if let doubleValue = value.as(Double.self) {
-                    // Format based on the value range - use more precision for smaller ranges
-                    let displayRange = xAxisRange ?? (Double(histogram.minValue)...Double(histogram.maxValue))
-                    let range = displayRange.upperBound - displayRange.lowerBound
-                    let format = range > 1000 ? "%.0f" : (range > 100 ? "%.1f" : "%.3f")
-                    AxisValueLabel(String(format: format, doubleValue))
-                } else {
-                    AxisValueLabel()
-                }
             }
         }
-        .chartXScale(domain: xAxisRange ?? (Double(histogram.minValue)...Double(histogram.maxValue)))
-        .chartYScale(domain: 0...yAxisMax) // Ensure Y-axis starts at 0 and shows all values including zeros
+        .chartXScale(domain: xAxisRange)
+        .chartYScale(domain: 0...yAxisMax)
         .chartYAxis {
             AxisMarks(values: .automatic) { _ in
                 AxisGridLine()
-                AxisTick()
-                AxisValueLabel()
             }
         }
-        .chartXAxisLabel("Pixel Intensity")
-        .chartYAxisLabel(showNormalized ? "Normalized Count" : (useLogScale ? "Pixel Count (log scale)" : "Pixel Count"))
         .frame(height: 200)
     }
 }
@@ -147,7 +134,6 @@ private struct TaskID: Equatable {
     let textureMinValue: Float
     let textureMaxValue: Float
     let numBins: Int
-    let showFullRange: Bool
     let blackPoint: Float?
     let whitePoint: Float?
 }
@@ -258,7 +244,6 @@ public struct FITSHistogramChart: View {
             textureMinValue: textureMinValue,
             textureMaxValue: textureMaxValue,
             numBins: calculatedNumBins,
-            showFullRange: showFullRange,
             blackPoint: blackPoint,
             whitePoint: whitePoint
         )) {
@@ -359,19 +344,12 @@ public struct FITSHistogramChart: View {
         let histogramMin: Float
         let histogramMax: Float
         
-        if !showFullRange, let blackPoint = blackPoint, let whitePoint = whitePoint {
-            // Use black/white point range for better resolution in the visible area
-            // Ensure valid range (whitePoint > blackPoint) with minimum range
-            if whitePoint > blackPoint && (whitePoint - blackPoint) > 0.001 {
-                histogramMin = blackPoint
-                histogramMax = whitePoint
-            } else {
-                // Invalid or too small range, use full image range
-                histogramMin = imageMinValue
-                histogramMax = imageMaxValue
-            }
+        if let blackPoint = blackPoint, let whitePoint = whitePoint,
+           whitePoint > blackPoint, (whitePoint - blackPoint) > 0.001 {
+            // Always compute over the visible [blackPoint, whitePoint] range for maximum resolution.
+            histogramMin = blackPoint
+            histogramMax = whitePoint
         } else {
-            // Use full image range
             histogramMin = imageMinValue
             histogramMax = imageMaxValue
         }

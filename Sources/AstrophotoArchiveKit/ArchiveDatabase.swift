@@ -231,6 +231,14 @@ actor ArchiveDatabase {
         // NULL means identity stretch (full range). Persisted here rather than in FITS
         // headers so the original file is never modified.
         "ALTER TABLE frames ADD COLUMN stretch_settings TEXT;",
+        // v22: slider positions within the saved stretch, stored independently of the
+        // normalization bounds. Both are normalized to [0,1] of the full data range so
+        // they can be restored regardless of bit depth or BZERO/BSCALE scaling.
+        // NULL means use defaults (0 for black, 1 for white).
+        """
+        ALTER TABLE frames ADD COLUMN slider_black_norm REAL;
+        ALTER TABLE frames ADD COLUMN slider_white_norm REAL;
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -622,7 +630,12 @@ actor ArchiveDatabase {
         }
     }
 
-    func updateStretchSettings(id: UUID, settings: StretchSettings?) throws {
+    func updateStretchSettings(
+        id: UUID,
+        settings: StretchSettings?,
+        sliderBlackNorm: Float? = nil,
+        sliderWhiteNorm: Float? = nil
+    ) throws {
         let json: String?
         if let settings {
             let data = try JSONEncoder().encode(settings)
@@ -630,10 +643,14 @@ actor ArchiveDatabase {
         } else {
             json = nil
         }
-        let stmt = try prepare("UPDATE frames SET stretch_settings = ? WHERE id = ?")
+        let stmt = try prepare(
+            "UPDATE frames SET stretch_settings = ?, slider_black_norm = ?, slider_white_norm = ? WHERE id = ?"
+        )
         defer { sqlite3_finalize(stmt) }
         bind(stmt, 1, json)
-        bind(stmt, 2, id.uuidString)
+        bind(stmt, 2, sliderBlackNorm.map { Double($0) })
+        bind(stmt, 3, sliderWhiteNorm.map { Double($0) })
+        bind(stmt, 4, id.uuidString)
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
         }
@@ -1270,7 +1287,9 @@ actor ArchiveDatabase {
             backgroundNoiseElectrons: columnDouble(stmt, 41),
             stretchSettings: columnText(stmt, 42)
                 .flatMap { Data($0.utf8) }
-                .flatMap { try? JSONDecoder().decode(StretchSettings.self, from: $0) }
+                .flatMap { try? JSONDecoder().decode(StretchSettings.self, from: $0) },
+            sliderBlackNorm: columnDouble(stmt, 43).map { Float($0) },
+            sliderWhiteNorm: columnDouble(stmt, 44).map { Float($0) }
         )
     }
 

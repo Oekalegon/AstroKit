@@ -431,25 +431,32 @@ The saved stretch is applied by Navi when the frame is opened, and is shown in `
 when non-identity. The typical workflow is to set the stretch interactively via the **Normalize**
 button in Navi; use this tool to override it programmatically.
 
+Two independent pieces of state are stored: **normalization bounds** (`input_black`/`input_white`) — the sub-range mapped to [0, 1] when the user pressed Normalize — and **slider positions** (`slider_black`/`slider_white`) — where the sliders sit within [0, 1] of the full data range. A white slider at 0.04 inside a [0, 0.1] normalization renders an effective white point of 0.004.
+
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
 | `id` | string (UUID) | Yes | Archive frame UUID. |
-| `input_black` | number | No | Normalized [0, 1] black point. Must be < `input_white`. |
-| `input_white` | number | No | Normalized [0, 1] white point. Must be > `input_black`. |
-| `reset` | boolean | No | When `true`, clears the saved stretch (reverts to full range). Overrides `input_black`/`input_white`. |
+| `input_black` | number | No | Normalization black bound in [0, 1]. Must be < `input_white`. |
+| `input_white` | number | No | Normalization white bound in [0, 1]. Must be > `input_black`. |
+| `slider_black` | number | No | Black-point slider in [0, 1] of the full data range. |
+| `slider_white` | number | No | White-point slider in [0, 1] of the full data range. |
+| `reset` | boolean | No | When `true`, clears all stretch and slider state. Overrides all other parameters. |
 
 **Examples:**
 ```python
-# Save the bottom 10 % of the tonal range as the display stretch
-archive_update_stretch(id="A3F2B1C0-...", input_black=0.0, input_white=0.1)
+# Save normalization [0, 0.1] and slider positions (white at 4 % of data = 40 % of stretch)
+archive_update_stretch(id="A3F2B1C0-...", input_black=0.0, input_white=0.1, slider_black=0.0, slider_white=0.04)
 
-# Clear a previously saved stretch
+# Update only the slider position without changing the normalization
+archive_update_stretch(id="A3F2B1C0-...", slider_white=0.07)
+
+# Clear everything
 archive_update_stretch(id="A3F2B1C0-...", reset=True)
 ```
 
 Response:
 ```
-Saved stretch for frame A3F2B1C0-...: black=0.0000  white=0.1000
+Saved stretch for frame A3F2B1C0-...: norm=[0.0000, 0.1000]  slider_white=0.0400
 ```
 
 ---

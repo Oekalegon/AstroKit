@@ -320,12 +320,27 @@ public actor Archive {
 
     // MARK: - Stretch settings
 
-    /// Persists the display stretch for a frame.
+    /// Persists the display stretch and current slider positions for a frame.
     ///
-    /// Pass `nil` to clear a previously saved stretch (equivalent to identity).
+    /// - Parameters:
+    ///   - settings: Normalization bounds. Pass `nil` to clear (reverts to identity).
+    ///   - sliderBlackNorm: Black-point slider in [0, 1] of the full data range. `nil` clears.
+    ///   - sliderWhiteNorm: White-point slider in [0, 1] of the full data range. `nil` clears.
+    ///   - id: Archive frame UUID.
+    ///
     /// The underlying FITS file is never modified — only the archive database is updated.
-    public func updateStretchSettings(_ settings: StretchSettings?, id: UUID) async throws {
-        try await database.updateStretchSettings(id: id, settings: settings)
+    public func updateStretchSettings(
+        _ settings: StretchSettings?,
+        sliderBlackNorm: Float? = nil,
+        sliderWhiteNorm: Float? = nil,
+        id: UUID
+    ) async throws {
+        try await database.updateStretchSettings(
+            id: id,
+            settings: settings,
+            sliderBlackNorm: sliderBlackNorm,
+            sliderWhiteNorm: sliderWhiteNorm
+        )
     }
 
     // MARK: - Rejection

@@ -16,6 +16,11 @@ public struct FITSImageToolsView: View {
     /// Saved display stretch. When non-identity the sliders operate within the saved
     /// sub-range; **Normalize** bakes the current slider positions into this binding.
     @Binding var stretchSettings: StretchSettings
+    /// Black-point slider in [0, 1] of the full data range. Updated on every slider move
+    /// so Navi can persist it (debounced) without needing to reach into `blackPoint` directly.
+    @Binding var sliderBlackNorm: Float
+    /// White-point slider in [0, 1] of the full data range. Updated on every slider move.
+    @Binding var sliderWhiteNorm: Float
     let cursorPosition: SIMD2<Float>?
     let aspectRatio: SIMD2<Float>
     let extractedRegion: FITSImage?
@@ -70,6 +75,8 @@ public struct FITSImageToolsView: View {
         blackPoint: Binding<Float>,
         whitePoint: Binding<Float>,
         stretchSettings: Binding<StretchSettings> = .constant(.identity),
+        sliderBlackNorm: Binding<Float> = .constant(0.0),
+        sliderWhiteNorm: Binding<Float> = .constant(1.0),
         cursorPosition: SIMD2<Float>? = nil,
         aspectRatio: SIMD2<Float> = SIMD2<Float>(1.0, 1.0),
         extractedRegion: FITSImage? = nil,
@@ -89,6 +96,8 @@ public struct FITSImageToolsView: View {
         self._blackPoint = blackPoint
         self._whitePoint = whitePoint
         self._stretchSettings = stretchSettings
+        self._sliderBlackNorm = sliderBlackNorm
+        self._sliderWhiteNorm = sliderWhiteNorm
         self.cursorPosition = cursorPosition
         self.aspectRatio = aspectRatio
         self.extractedRegion = extractedRegion
@@ -131,12 +140,16 @@ public struct FITSImageToolsView: View {
         )
         blackPoint = minValue
         whitePoint = maxValue
+        sliderBlackNorm = 0.0
+        sliderWhiteNorm = 1.0
     }
 
     private func resetStretch() {
         stretchSettings = .identity
         blackPoint = minValue
         whitePoint = maxValue
+        sliderBlackNorm = 0.0
+        sliderWhiteNorm = 1.0
     }
 
     // MARK: - Body
@@ -292,6 +305,8 @@ public struct FITSImageToolsView: View {
             }.value
             pixelSample = sample
         }
+        .onChange(of: blackPoint) { _, _ in sliderBlackNorm = sliderNorm(blackPoint) }
+        .onChange(of: whitePoint) { _, _ in sliderWhiteNorm = sliderNorm(whitePoint) }
     }
 
     @ViewBuilder
