@@ -92,35 +92,34 @@ public struct FITSInfoPanelView: View {
             .pickerStyle(.segmented)
             .padding()
 
-            TabView(selection: $selectedTab) {
-                FITSInformationView(fitsImage: fitsImage)
-                    .tag(FITSInfoPanelTab.information)
-
-                FITSImageToolsView(
-                    fitsImage: fitsImage,
-                    texture: texture,
-                    textureWidth: textureWidth,
-                    textureHeight: textureHeight,
-                    textureMinValue: textureMinValue,
-                    textureMaxValue: textureMaxValue,
-                    imageID: imageID,
-                    blackPoint: $blackPoint,
-                    whitePoint: $whitePoint,
-                    cursorPosition: cursorPosition,
-                    aspectRatio: aspectRatio,
-                    extractedRegion: extractedRegion,
-                    extractedRegionTexture: extractedRegionTexture,
-                    extractedRegionSize: $extractedRegionSize,
-                    zoom: $zoom,
-                    panOffset: $panOffset,
-                    onExtractedRegionSizeChanged: onExtractedRegionSizeChanged
-                )
-                .tag(FITSInfoPanelTab.image)
-
-                FITSPipelineView(frame: frame, table: table)
-                    .tag(FITSInfoPanelTab.pipeline)
+            Group {
+                switch selectedTab {
+                case .information:
+                    FITSInformationView(fitsImage: fitsImage)
+                case .image:
+                    FITSImageToolsView(
+                        fitsImage: fitsImage,
+                        texture: texture,
+                        textureWidth: textureWidth,
+                        textureHeight: textureHeight,
+                        textureMinValue: textureMinValue,
+                        textureMaxValue: textureMaxValue,
+                        imageID: imageID,
+                        blackPoint: $blackPoint,
+                        whitePoint: $whitePoint,
+                        cursorPosition: cursorPosition,
+                        aspectRatio: aspectRatio,
+                        extractedRegion: extractedRegion,
+                        extractedRegionTexture: extractedRegionTexture,
+                        extractedRegionSize: $extractedRegionSize,
+                        zoom: $zoom,
+                        panOffset: $panOffset,
+                        onExtractedRegionSizeChanged: onExtractedRegionSizeChanged
+                    )
+                case .pipeline:
+                    FITSPipelineView(frame: frame, table: table)
+                }
             }
-            .tabViewStyle(.automatic)
         }
         .frame(minWidth: 300, idealWidth: 350, maxWidth: 400)
     }
