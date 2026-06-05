@@ -322,6 +322,10 @@ public actor Archive {
 
     /// Persists the display stretch and current slider positions for a frame.
     ///
+    /// All three values are written together in a single UPDATE. Always pass the current
+    /// slider norms alongside any normalization change, or the slider positions will be
+    /// cleared to NULL (equivalent to resetting them to their defaults on next open).
+    ///
     /// - Parameters:
     ///   - settings: Normalization bounds. Pass `nil` to clear (reverts to identity).
     ///   - sliderBlackNorm: Black-point slider in [0, 1] of the full data range. `nil` clears.

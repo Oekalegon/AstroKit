@@ -630,6 +630,9 @@ actor ArchiveDatabase {
         }
     }
 
+    /// All three columns are always written together in a single UPDATE.
+    /// Pass the current slider norms alongside any normalization change, or they will be
+    /// cleared to NULL. `nil` for any parameter writes NULL (i.e. "not set / use default").
     func updateStretchSettings(
         id: UUID,
         settings: StretchSettings?,
