@@ -97,14 +97,32 @@ public struct FITSCrossSectionView: View {
 
     // MARK: - Data source identity
 
-    /// A string that changes whenever the underlying data source changes,
-    /// used as the `.task` ID to trigger recomputation.
     private var sourceID: String {
-        if let tex = texture {
-            return "tex-\(ObjectIdentifier(tex as AnyObject))-\(textureMinValue)-\(textureMaxValue)"
+        FITSCrossSectionView.makeSourceID(
+            textureObjectID: texture.map { ObjectIdentifier($0 as AnyObject) },
+            fitsImageSize: fitsImage.map { (width: $0.width, height: $0.height,
+                                           minValue: $0.originalMinValue, maxValue: $0.originalMaxValue) },
+            imageID: imageID,
+            textureMinValue: textureMinValue,
+            textureMaxValue: textureMaxValue
+        )
+    }
+
+    /// Builds the task-ID string used to detect data source changes.
+    /// Extracted as a static so unit tests can verify stability and sensitivity
+    /// without constructing a SwiftUI view or a Metal device.
+    static func makeSourceID(
+        textureObjectID: ObjectIdentifier?,
+        fitsImageSize: (width: Int, height: Int, minValue: Float, maxValue: Float)?,
+        imageID: String?,
+        textureMinValue: Float,
+        textureMaxValue: Float
+    ) -> String {
+        if let id = textureObjectID {
+            return "tex-\(id)-\(textureMinValue)-\(textureMaxValue)"
         }
-        if let img = fitsImage {
-            return "img-\(imageID ?? "")-\(img.width)-\(img.height)-\(img.originalMinValue)-\(img.originalMaxValue)"
+        if let s = fitsImageSize {
+            return "img-\(imageID ?? "")-\(s.width)-\(s.height)-\(s.minValue)-\(s.maxValue)"
         }
         return ""
     }

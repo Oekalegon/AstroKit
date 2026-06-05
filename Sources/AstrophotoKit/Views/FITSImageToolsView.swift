@@ -34,7 +34,7 @@ public struct FITSImageToolsView: View {
         let x: Int; let y: Int; let intensity: Float?
     }
 
-    private struct SampleKey: Hashable {
+    struct SampleKey: Hashable {
         let cursor: SIMD2<Float>?
         let zoom: Float
         let panOffset: SIMD2<Float>
