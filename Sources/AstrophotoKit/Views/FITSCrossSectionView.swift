@@ -57,8 +57,8 @@ public struct FITSCrossSectionView: View {
                 .chartYAxisLabel("Intensity")
                 .chartLegend {
                     HStack(spacing: 16) {
-                        HStack(spacing: 4) { Circle().fill(.blue).frame(width: 8, height: 8);  Text("X-axis").font(.caption) }
-                        HStack(spacing: 4) { Circle().fill(.green).frame(width: 8, height: 8); Text("Y-axis").font(.caption) }
+                        HStack(spacing: 4) { Rectangle().fill(.blue).frame(width: 16, height: 2);  Text("X-axis").font(.caption) }
+                        HStack(spacing: 4) { Rectangle().fill(.green).frame(width: 16, height: 2); Text("Y-axis").font(.caption) }
                     }
                 }
             }
