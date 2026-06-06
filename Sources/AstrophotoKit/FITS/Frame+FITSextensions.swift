@@ -97,6 +97,15 @@ extension Frame {
             offset = v
         }
 
+        let objectName = fitsImage.metadata["OBJECT"]?.stringValue
+            .flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.trimmingCharacters(in: .whitespaces) }
+        let camera = fitsImage.metadata["INSTRUME"]?.stringValue
+            .flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.trimmingCharacters(in: .whitespaces) }
+        let telescope = fitsImage.metadata["TELESCOP"]?.stringValue
+            .flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.trimmingCharacters(in: .whitespaces) }
+        let site = fitsImage.metadata["OBSERVAT"]?.stringValue
+            .flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.trimmingCharacters(in: .whitespaces) }
+
         // Initialize using the main initializer
         self.init(
             type: frameType,
@@ -115,7 +124,11 @@ extension Frame {
             fitsMinValue: Double(fitsImage.originalMinValue),
             fitsMaxValue: Double(fitsImage.originalMaxValue),
             egain: egain,
-            pixelScale: pixelScale
+            pixelScale: pixelScale,
+            objectName: objectName,
+            camera: camera,
+            telescope: telescope,
+            site: site
         )
     }
 

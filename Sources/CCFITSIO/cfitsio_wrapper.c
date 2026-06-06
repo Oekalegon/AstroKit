@@ -369,6 +369,8 @@ int write_result_frame_fits(
     double      temperature,    // NaN = skip (mean)
     const char *object_name,    // NULL or empty = skip
     const char *camera,         // NULL or empty = skip
+    const char *telescope,      // NULL or empty = skip
+    const char *site,           // NULL or empty = skip (OBSERVAT)
     double      ra,             // NaN = skip (degrees)
     double      dec,            // NaN = skip (degrees)
     double      pixel_scale,    // NaN = skip (arcsec/px)
@@ -395,6 +397,10 @@ int write_result_frame_fits(
         fits_update_key(fptr, TSTRING, "OBJECT",   (char *)object_name, "Target object", &status);
     if (camera && camera[0])
         fits_update_key(fptr, TSTRING, "INSTRUME", (char *)camera,      "Camera / instrument", &status);
+    if (telescope && telescope[0])
+        fits_update_key(fptr, TSTRING, "TELESCOP", (char *)telescope,   "Telescope", &status);
+    if (site && site[0])
+        fits_update_key(fptr, TSTRING, "OBSERVAT", (char *)site,        "Observatory / site name", &status);
     if (pipeline_id && pipeline_id[0])
         fits_update_key(fptr, TSTRING, "PIPELINE", (char *)pipeline_id, "AstrophotoKit pipeline ID", &status);
     if (imagetyp && imagetyp[0])

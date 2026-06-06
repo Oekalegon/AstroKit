@@ -112,6 +112,8 @@ public actor Archive {
             frameType: meta.frameType,
             filter: ArchiveDatabase.canonicalFilterName(meta.filter),
             camera: meta.camera,
+            telescope: meta.telescope,
+            site: meta.site,
             focalLength: meta.focalLength,
             pixelScale: meta.pixelScale,
             temperature: meta.temperature,

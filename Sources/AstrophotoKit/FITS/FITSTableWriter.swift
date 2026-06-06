@@ -67,6 +67,8 @@ private func writeResultFrameFITSC(
     _ temperature: Double,
     _ objectName: UnsafePointer<CChar>,
     _ camera: UnsafePointer<CChar>,
+    _ telescope: UnsafePointer<CChar>,
+    _ site: UnsafePointer<CChar>,
     _ ra: Double,
     _ dec: Double,
     _ pixelScale: Double,
@@ -375,6 +377,8 @@ public struct FITSTableWriter {
         temperature: Double? = nil,
         objectName: String? = nil,
         camera: String? = nil,
+        telescope: String? = nil,
+        site: String? = nil,
         ra: Double? = nil,
         dec: Double? = nil,
         pixelScale: Double? = nil,
@@ -394,6 +398,8 @@ public struct FITSTableWriter {
         (filterName ?? "").withCString { cFilter in
         (objectName ?? "").withCString { cObject in
         (camera ?? "").withCString { cCamera in
+        (telescope ?? "").withCString { cTelescope in
+        (site ?? "").withCString { cSite in
         (dateObs ?? "").withCString { cDateObs in
         (dateBeg ?? "").withCString { cDateBeg in
         (dateEnd ?? "").withCString { cDateEnd in
@@ -408,7 +414,7 @@ public struct FITSTableWriter {
                     gain ?? .nan,
                     offset ?? .nan,
                     temperature ?? .nan,
-                    cObject, cCamera,
+                    cObject, cCamera, cTelescope, cSite,
                     ra ?? .nan, dec ?? .nan,
                     pixelScale ?? .nan, focalLength ?? .nan,
                     tempMin ?? .nan, tempMax ?? .nan,
@@ -416,7 +422,7 @@ public struct FITSTableWriter {
                     &statusOut
                 )
             }
-        }}}}}}}}}
+        }}}}}}}}}}}
         if statusOut != 0 {
             var errText = [CChar](repeating: 0, count: 81)
             getFITSErrorStatus(statusOut, &errText)

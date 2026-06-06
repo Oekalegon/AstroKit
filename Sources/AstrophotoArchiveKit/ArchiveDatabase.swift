@@ -239,6 +239,12 @@ actor ArchiveDatabase {
         ALTER TABLE frames ADD COLUMN slider_black_norm REAL;
         ALTER TABLE frames ADD COLUMN slider_white_norm REAL;
         """,
+        // v23: telescope and site — propagated from input frames into stacked results.
+        // telescope = FITS TELESCOP keyword; site = FITS OBSERVAT keyword.
+        """
+        ALTER TABLE frames ADD COLUMN telescope TEXT;
+        ALTER TABLE frames ADD COLUMN site       TEXT;
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -358,8 +364,9 @@ actor ArchiveDatabase {
          frame_signature, rejected, rejected_reason, position_angle, processing_run_id,
          session_beg, session_end, temperature_min, temperature_max,
          star_count, median_fwhm, background_noise, median_eccentricity,
-         saturated_star_count, hot_pixel_count, egain, background_noise_electrons)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         saturated_star_count, hot_pixel_count, egain, background_noise_electrons,
+         telescope, site)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -412,6 +419,8 @@ actor ArchiveDatabase {
         bind(stmt, 40, frame.hotPixelCount.map { Int64($0) })
         bind(stmt, 41, frame.egain)
         bind(stmt, 42, frame.backgroundNoiseElectrons)
+        bind(stmt, 43, frame.telescope)
+        bind(stmt, 44, frame.site)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -1246,7 +1255,7 @@ actor ArchiveDatabase {
         else { return nil }
 
         let iso = ISO8601DateFormatter()
-        return ArchivedFrame(
+        var frame = ArchivedFrame(
             id: id,
             filePath: filePath,
             objectName: columnText(stmt, 2),
@@ -1294,6 +1303,10 @@ actor ArchiveDatabase {
             sliderBlackNorm: columnDouble(stmt, 43).map { Float($0) },
             sliderWhiteNorm: columnDouble(stmt, 44).map { Float($0) }
         )
+        // v23 columns: telescope (45) and site (46). Present only after migration v23.
+        frame.telescope = columnText(stmt, 45)
+        frame.site      = columnText(stmt, 46)
+        return frame
     }
 
     // MARK: - SQLite helpers

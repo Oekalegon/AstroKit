@@ -9,6 +9,8 @@ struct FrameArchiveMetadata {
     var frameType: String
     var filter: String?
     var camera: String?
+    var telescope: String?
+    var site: String?
     var focalLength: Double?
     var pixelScale: Double?
     var temperature: Double?
@@ -92,6 +94,12 @@ enum FITSHeaderReader {
         let camera = stringValue(headers, keys: ["INSTRUME"])?.trimmingCharacters(in: .whitespaces)
             .flatMap { $0.isEmpty ? nil : $0 }
 
+        let telescope = stringValue(headers, keys: ["TELESCOP"])?.trimmingCharacters(in: .whitespaces)
+            .flatMap { $0.isEmpty ? nil : $0 }
+
+        let site = stringValue(headers, keys: ["OBSERVAT"])?.trimmingCharacters(in: .whitespaces)
+            .flatMap { $0.isEmpty ? nil : $0 }
+
         let focalLength   = doubleValue(headers, keys: ["FOCALLEN"])
         let pixelScale    = doubleValue(headers, keys: ["PIXSCALE", "SCALE"])
         let temperature   = doubleValue(headers, keys: ["CCD-TEMP", "CCDTEMP"])
@@ -141,6 +149,8 @@ enum FITSHeaderReader {
             frameType: frameType,
             filter: filter,
             camera: camera,
+            telescope: telescope,
+            site: site,
             focalLength: focalLength,
             pixelScale: pixelScale,
             temperature: temperature,
