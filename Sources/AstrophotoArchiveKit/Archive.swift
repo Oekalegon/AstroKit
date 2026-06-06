@@ -716,8 +716,10 @@ public actor Archive {
     // MARK: - Shared property helpers
 
     private func sharedString(_ values: [String?]) -> String? {
+        // Nil frames don't vote: a frame that lacks the field does not prevent
+        // a unanimous result from being derived from the frames that have it.
         let nonNil = values.compactMap { $0 }
-        guard nonNil.count == values.count else { return nil }
+        guard !nonNil.isEmpty else { return nil }
         let unique = Set(nonNil)
         return unique.count == 1 ? unique.first : nil
     }

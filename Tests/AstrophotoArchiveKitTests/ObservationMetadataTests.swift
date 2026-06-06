@@ -396,6 +396,30 @@ struct ArchiveFrameSetAggregationTests {
         #expect(fs.site == "La Palma")
     }
 
+    @Test("createFrameSet propagates telescope when one frame lacks the header entirely")
+    func createFrameSetTelescopePropagatesWhenOneFrameLacksIt() async throws {
+        // "Nil does not vote" — a frame without a TELESCOP header does not block
+        // the unanimous result derived from frames that do carry the header.
+        let root = try makeTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let archive = try Archive(configuration: ArchiveConfiguration(rootURL: root))
+        let uniqueObject = "FS-Agg-\(UUID().uuidString)"
+
+        let src1 = root.appendingPathComponent("f1.fits")
+        let src2 = root.appendingPathComponent("f2.fits")
+        try writeFITS(to: src1, object: uniqueObject, telescope: "SkyWatcher Esprit 100ED", exposureTime: 300)
+        try writeFITS(to: src2, object: uniqueObject, telescope: nil, exposureTime: 600) // no TELESCOP
+        _ = try await archive.add(fitsFile: src1)
+        _ = try await archive.add(fitsFile: src2)
+
+        var query = FrameQuery()
+        query.objectName = uniqueObject
+        let (fs, _) = try await archive.createFrameSet(name: "Test", query: query)
+
+        #expect(fs.telescope == "SkyWatcher Esprit 100ED")
+    }
+
     @Test("createFrameSet propagates telescope even when one frame has no site")
     func createFrameSetTelescopeWithMissingSite() async throws {
         let root = try makeTempRoot()
