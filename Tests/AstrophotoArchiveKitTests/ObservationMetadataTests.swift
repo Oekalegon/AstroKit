@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import AstrophotoKit
 @testable import AstrophotoArchiveKit
 
 // MARK: - Helpers
@@ -239,5 +240,183 @@ struct ObservationMetadataTests {
 
         #expect(results.count == 1)
         #expect(results.first?.name == "LaPalma")
+    }
+}
+
+// MARK: - Archive.createFrameSet integration tests
+
+/// These tests go through the full archive.add → createFrameSet path so that
+/// the sharedString aggregation logic in Archive is covered end-to-end.
+@Suite("Archive.createFrameSet — telescope/site aggregation")
+struct ArchiveFrameSetAggregationTests {
+
+    private func makeTempRoot() throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("agg-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    /// Writes a tiny FITS file with TELESCOP, OBSERVAT, and a unique OBJECT name
+    /// so the archive query can target exactly these frames.
+    /// `exposureTime` must be unique per call within a test — archive deduplication
+    /// uses DATE + frame type + filter + exposure, so two files written in the same
+    /// second with the same exposure would silently collapse to one archived entry.
+    private func writeFITS(
+        to url: URL,
+        object: String,
+        telescope: String? = nil,
+        site: String? = nil,
+        exposureTime: Double = 300
+    ) throws {
+        let pixels: [Float] = Array(repeating: 0.5, count: 4)
+        try FITSTableWriter.writeResultFrame(
+            pixelData: pixels, width: 2, height: 2,
+            pipelineID: "test",
+            imageType: "Light Frame",
+            totalExposure: exposureTime,
+            objectName: object,
+            telescope: telescope,
+            site: site,
+            to: url.path
+        )
+    }
+
+    @Test("createFrameSet propagates telescope when all member frames agree")
+    func createFrameSetPropagatesUnanimousTelescope() async throws {
+        let root = try makeTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let archive = try Archive(configuration: ArchiveConfiguration(rootURL: root))
+        let uniqueObject = "FS-Agg-\(UUID().uuidString)"
+        let scope = "SkyWatcher Esprit 100ED"
+
+        let src1 = root.appendingPathComponent("f1.fits")
+        let src2 = root.appendingPathComponent("f2.fits")
+        try writeFITS(to: src1, object: uniqueObject, telescope: scope, exposureTime: 300)
+        try writeFITS(to: src2, object: uniqueObject, telescope: scope, exposureTime: 600)
+        _ = try await archive.add(fitsFile: src1)
+        _ = try await archive.add(fitsFile: src2)
+
+        var query = FrameQuery()
+        query.objectName = uniqueObject
+        let (fs, _) = try await archive.createFrameSet(name: "Test", query: query)
+
+        #expect(fs.telescope == scope)
+    }
+
+    @Test("createFrameSet sets telescope to nil when member frames disagree")
+    func createFrameSetNilsTelescopeWhenMixed() async throws {
+        let root = try makeTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let archive = try Archive(configuration: ArchiveConfiguration(rootURL: root))
+        let uniqueObject = "FS-Agg-\(UUID().uuidString)"
+
+        let src1 = root.appendingPathComponent("f1.fits")
+        let src2 = root.appendingPathComponent("f2.fits")
+        try writeFITS(to: src1, object: uniqueObject, telescope: "SkyWatcher Esprit 100ED", exposureTime: 300)
+        try writeFITS(to: src2, object: uniqueObject, telescope: "Celestron EdgeHD 11", exposureTime: 600)
+        _ = try await archive.add(fitsFile: src1)
+        _ = try await archive.add(fitsFile: src2)
+
+        var query = FrameQuery()
+        query.objectName = uniqueObject
+        let (fs, _) = try await archive.createFrameSet(name: "Test", query: query)
+
+        #expect(fs.telescope == nil)
+    }
+
+    @Test("createFrameSet propagates site when all member frames agree")
+    func createFrameSetPropagatesUnanimousSite() async throws {
+        let root = try makeTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let archive = try Archive(configuration: ArchiveConfiguration(rootURL: root))
+        let uniqueObject = "FS-Agg-\(UUID().uuidString)"
+
+        let src1 = root.appendingPathComponent("f1.fits")
+        let src2 = root.appendingPathComponent("f2.fits")
+        try writeFITS(to: src1, object: uniqueObject, site: "La Palma", exposureTime: 300)
+        try writeFITS(to: src2, object: uniqueObject, site: "La Palma", exposureTime: 600)
+        _ = try await archive.add(fitsFile: src1)
+        _ = try await archive.add(fitsFile: src2)
+
+        var query = FrameQuery()
+        query.objectName = uniqueObject
+        let (fs, _) = try await archive.createFrameSet(name: "Test", query: query)
+
+        #expect(fs.site == "La Palma")
+    }
+
+    @Test("createFrameSet sets site to nil when member frames disagree")
+    func createFrameSetNilsSiteWhenMixed() async throws {
+        let root = try makeTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let archive = try Archive(configuration: ArchiveConfiguration(rootURL: root))
+        let uniqueObject = "FS-Agg-\(UUID().uuidString)"
+
+        let src1 = root.appendingPathComponent("f1.fits")
+        let src2 = root.appendingPathComponent("f2.fits")
+        try writeFITS(to: src1, object: uniqueObject, site: "La Palma", exposureTime: 300)
+        try writeFITS(to: src2, object: uniqueObject, site: "Backyard", exposureTime: 600)
+        _ = try await archive.add(fitsFile: src1)
+        _ = try await archive.add(fitsFile: src2)
+
+        var query = FrameQuery()
+        query.objectName = uniqueObject
+        let (fs, _) = try await archive.createFrameSet(name: "Test", query: query)
+
+        #expect(fs.site == nil)
+    }
+
+    @Test("createFrameSet propagates telescope and site together")
+    func createFrameSetPropagatesTelescopeAndSiteTogether() async throws {
+        let root = try makeTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let archive = try Archive(configuration: ArchiveConfiguration(rootURL: root))
+        let uniqueObject = "FS-Agg-\(UUID().uuidString)"
+
+        let src1 = root.appendingPathComponent("f1.fits")
+        let src2 = root.appendingPathComponent("f2.fits")
+        try writeFITS(to: src1, object: uniqueObject,
+                      telescope: "SkyWatcher Esprit 100ED", site: "La Palma", exposureTime: 300)
+        try writeFITS(to: src2, object: uniqueObject,
+                      telescope: "SkyWatcher Esprit 100ED", site: "La Palma", exposureTime: 600)
+        _ = try await archive.add(fitsFile: src1)
+        _ = try await archive.add(fitsFile: src2)
+
+        var query = FrameQuery()
+        query.objectName = uniqueObject
+        let (fs, _) = try await archive.createFrameSet(name: "Test", query: query)
+
+        #expect(fs.telescope == "SkyWatcher Esprit 100ED")
+        #expect(fs.site == "La Palma")
+    }
+
+    @Test("createFrameSet propagates telescope even when one frame has no site")
+    func createFrameSetTelescopeWithMissingSite() async throws {
+        let root = try makeTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let archive = try Archive(configuration: ArchiveConfiguration(rootURL: root))
+        let uniqueObject = "FS-Agg-\(UUID().uuidString)"
+
+        let src1 = root.appendingPathComponent("f1.fits")
+        let src2 = root.appendingPathComponent("f2.fits")
+        // Both frames same telescope, but no OBSERVAT in either
+        try writeFITS(to: src1, object: uniqueObject, telescope: "SkyWatcher Esprit 100ED", exposureTime: 300)
+        try writeFITS(to: src2, object: uniqueObject, telescope: "SkyWatcher Esprit 100ED", exposureTime: 600)
+        _ = try await archive.add(fitsFile: src1)
+        _ = try await archive.add(fitsFile: src2)
+
+        var query = FrameQuery()
+        query.objectName = uniqueObject
+        let (fs, _) = try await archive.createFrameSet(name: "Test", query: query)
+
+        #expect(fs.telescope == "SkyWatcher Esprit 100ED")
+        #expect(fs.site == nil)
     }
 }
