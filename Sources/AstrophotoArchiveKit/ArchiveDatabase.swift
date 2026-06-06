@@ -1,3 +1,4 @@
+import AstrophotoKit
 import Foundation
 import SQLite3
 
@@ -224,6 +225,19 @@ actor ArchiveDatabase {
         WHERE LOWER(filter) = 'h';
         UPDATE frame_sets SET filter = 'Hɑ'
         WHERE LOWER(filter) = 'h';
+        """,
+        // v21: per-frame display stretch settings — JSON-encoded StretchSettings.
+        // Stores the normalized [0,1] black/white points the user last applied and saved.
+        // NULL means identity stretch (full range). Persisted here rather than in FITS
+        // headers so the original file is never modified.
+        "ALTER TABLE frames ADD COLUMN stretch_settings TEXT;",
+        // v22: slider positions within the saved stretch, stored independently of the
+        // normalization bounds. Both are normalized to [0,1] of the full data range so
+        // they can be restored regardless of bit depth or BZERO/BSCALE scaling.
+        // NULL means use defaults (0 for black, 1 for white).
+        """
+        ALTER TABLE frames ADD COLUMN slider_black_norm REAL;
+        ALTER TABLE frames ADD COLUMN slider_white_norm REAL;
         """,
     ]
 
@@ -611,6 +625,35 @@ actor ArchiveDatabase {
             }
         }
         bind(stmt, Int32(values.count + 1), id.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
+    /// All three columns are always written together in a single UPDATE.
+    /// Pass the current slider norms alongside any normalization change, or they will be
+    /// cleared to NULL. `nil` for any parameter writes NULL (i.e. "not set / use default").
+    func updateStretchSettings(
+        id: UUID,
+        settings: StretchSettings?,
+        sliderBlackNorm: Float? = nil,
+        sliderWhiteNorm: Float? = nil
+    ) throws {
+        let json: String?
+        if let settings {
+            let data = try JSONEncoder().encode(settings)
+            json = String(data: data, encoding: .utf8)
+        } else {
+            json = nil
+        }
+        let stmt = try prepare(
+            "UPDATE frames SET stretch_settings = ?, slider_black_norm = ?, slider_white_norm = ? WHERE id = ?"
+        )
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, json)
+        bind(stmt, 2, sliderBlackNorm.map { Double($0) })
+        bind(stmt, 3, sliderWhiteNorm.map { Double($0) })
+        bind(stmt, 4, id.uuidString)
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
         }
@@ -1244,7 +1287,12 @@ actor ArchiveDatabase {
             saturatedStarCount: sqlite3_column_type(stmt, 38) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 38)) : nil,
             hotPixelCount: sqlite3_column_type(stmt, 39) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 39)) : nil,
             egain: columnDouble(stmt, 40),
-            backgroundNoiseElectrons: columnDouble(stmt, 41)
+            backgroundNoiseElectrons: columnDouble(stmt, 41),
+            stretchSettings: columnText(stmt, 42)
+                .flatMap { Data($0.utf8) }
+                .flatMap { try? JSONDecoder().decode(StretchSettings.self, from: $0) },
+            sliderBlackNorm: columnDouble(stmt, 43).map { Float($0) },
+            sliderWhiteNorm: columnDouble(stmt, 44).map { Float($0) }
         )
     }
 

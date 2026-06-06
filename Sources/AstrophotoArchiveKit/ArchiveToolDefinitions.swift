@@ -232,6 +232,22 @@ public enum ArchiveToolDefinitions {
             ] as [String: Any],
         ],
         [
+            "name": "archive_update_stretch",
+            "description": "Save or clear the display stretch settings for an archived frame. The stretch is stored as two independent pieces: (1) normalization bounds (input_black / input_white) — the sub-range that was mapped to [0, 1] when the user pressed Normalize; and (2) slider positions (slider_black / slider_white) — where the black/white-point sliders currently sit within [0, 1] of the full data range. Both are independent of bit depth and sensor gain. Pass reset: true to clear everything. The underlying FITS file is never modified.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "id":           ["type": "string",  "description": "Archive frame UUID."],
+                    "input_black":  ["type": "number",  "description": "Normalized [0, 1] normalization black bound. Must be < input_white."],
+                    "input_white":  ["type": "number",  "description": "Normalized [0, 1] normalization white bound. Must be > input_black."],
+                    "slider_black": ["type": "number",  "description": "Black-point slider in [0, 1] of the full data range (independent of the normalization bounds)."],
+                    "slider_white": ["type": "number",  "description": "White-point slider in [0, 1] of the full data range (independent of the normalization bounds)."],
+                    "reset":        ["type": "boolean", "description": "When true, clears all stretch and slider state. Overrides all other parameters."],
+                ] as [String: Any],
+                "required": ["id"],
+            ] as [String: Any],
+        ],
+        [
             "name": "archive_update_quality",
             "description": "Update quality metrics for an archived frame. Metrics are normally populated automatically after running a quality pipeline (frame_quality for light frames, calibration_quality for dark/bias/flat) via run_pipeline. Use this tool to set or correct them manually. Only supplied fields are updated; omitted fields are unchanged.",
             "inputSchema": [

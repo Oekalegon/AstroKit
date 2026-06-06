@@ -1,3 +1,4 @@
+import AstrophotoKit
 import Foundation
 import HEALPixKit
 
@@ -314,6 +315,35 @@ public actor Archive {
             saturatedStarCount: saturatedStarCount,
             hotPixelCount: hotPixelCount,
             backgroundNoiseElectrons: backgroundNoiseElectrons
+        )
+    }
+
+    // MARK: - Stretch settings
+
+    /// Persists the display stretch and current slider positions for a frame.
+    ///
+    /// All three values are written together in a single UPDATE. Always pass the current
+    /// slider norms alongside any normalization change, or the slider positions will be
+    /// cleared to NULL (equivalent to resetting them to their defaults on next open).
+    ///
+    /// - Parameters:
+    ///   - settings: Normalization bounds. Pass `nil` to clear (reverts to identity).
+    ///   - sliderBlackNorm: Black-point slider in [0, 1] of the full data range. `nil` clears.
+    ///   - sliderWhiteNorm: White-point slider in [0, 1] of the full data range. `nil` clears.
+    ///   - id: Archive frame UUID.
+    ///
+    /// The underlying FITS file is never modified — only the archive database is updated.
+    public func updateStretchSettings(
+        _ settings: StretchSettings?,
+        sliderBlackNorm: Float? = nil,
+        sliderWhiteNorm: Float? = nil,
+        id: UUID
+    ) async throws {
+        try await database.updateStretchSettings(
+            id: id,
+            settings: settings,
+            sliderBlackNorm: sliderBlackNorm,
+            sliderWhiteNorm: sliderWhiteNorm
         )
     }
 

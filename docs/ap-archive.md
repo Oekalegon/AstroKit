@@ -442,6 +442,13 @@ Quality metrics
   Eccentricity:      0.312
   Bg. noise:         0.0028
 
+Display stretch
+────────────────────────────────────────────────────────────
+  Norm black:        0.0000
+  Norm white:        0.1000
+  Slider black:      0.0000
+  Slider white:      0.0400
+
 Provenance
 ────────────────────────────────────────────────────────────
   Run ID:            D1E2F3A4-5678-9ABC-DEF0-123456789ABC
@@ -500,6 +507,51 @@ Copied A3F2B1C0-1234-5678-ABCD-EF0123456789  →  /Users/don/Desktop/exports/M51
 
 ```
 Copied 18 frame(s) from 'M51 Hɑ 2024' to /Users/don/Desktop/M51_Ha_lights.
+```
+
+---
+
+### `ap-archive stretch`
+
+Saves or clears the display stretch for an archived frame. The stretch is stored as normalized
+[0, 1] black and white points relative to the frame's full tonal range, making it independent
+of bit depth and sensor gain. The underlying FITS file is **never modified** — only the archive
+database is updated.
+
+The typical workflow is to adjust the stretch interactively in Navi and press **Normalize**, which
+bakes the current slider positions into the archive automatically. Use this command to set or
+override the saved stretch from the command line.
+
+```
+ap-archive stretch <id> --black <value> --white <value> [--slider-black <value>] [--slider-white <value>]
+ap-archive stretch <id> [--slider-black <value>] [--slider-white <value>]
+ap-archive stretch <id> --reset
+```
+
+Two independent pieces of state are stored:
+
+- **Normalization bounds** (`--black` / `--white`): the sub-range of the data that was mapped to [0, 1] when **Normalize** was pressed in Navi.
+- **Slider positions** (`--slider-black` / `--slider-white`): where the black/white-point sliders currently sit within [0, 1] of the full data range. These are independent of the normalization — a white-point slider at 0.04 inside a [0, 0.1] normalization renders an effective white point of 0.004.
+
+| Option | Description |
+|--------|-------------|
+| `--black <value>` | Normalization black bound in [0, 1]. Must be < `--white`. |
+| `--white <value>` | Normalization white bound in [0, 1]. Must be > `--black`. |
+| `--slider-black <value>` | Black-point slider in [0, 1] of the full data range. |
+| `--slider-white <value>` | White-point slider in [0, 1] of the full data range. |
+| `--reset` | Clear all stretch and slider state, reverting to the full image range. |
+
+**Examples:**
+
+```bash
+# Set normalization to bottom 10 % and place the white slider at 0.04 (4 % of data, 40 % of the stretch)
+ap-archive stretch A3F2B1C0-... --black 0.0 --white 0.1 --slider-black 0.0 --slider-white 0.04
+
+# Update only the slider positions without changing the saved normalization
+ap-archive stretch A3F2B1C0-... --slider-white 0.07
+
+# Clear everything
+ap-archive stretch A3F2B1C0-... --reset
 ```
 
 ---

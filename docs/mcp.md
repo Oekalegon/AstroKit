@@ -247,6 +247,13 @@ Quality metrics
   Eccentricity:      0.312
   Bg. noise:         0.0028
 
+Display stretch
+────────────────────────────────────────────────────────────
+  Norm black:        0.0000
+  Norm white:        0.1000
+  Slider black:      0.0000
+  Slider white:      0.0400
+
 Provenance
 ────────────────────────────────────────────────────────────
   Run ID:            D1E2F3A4-5678-9ABC-DEF0-123456789ABC
@@ -417,6 +424,46 @@ archive_update_quality(id="A3F2B1C0-...", background_noise=0.0028)
 Response:
 ```
 Updated quality metrics for frame A3F2B1C0-...: star_count=312, median_fwhm=3.850px, median_eccentricity=0.312.
+```
+
+---
+
+### `archive_update_stretch`
+
+Saves or clears the display stretch for an archived frame. Stored as normalized [0, 1] black/white
+points relative to the frame's full tonal range — independent of bit depth and sensor gain.
+The underlying FITS file is never modified.
+
+The saved stretch is applied by Navi when the frame is opened, and is shown in `archive_get` output
+when non-identity. The typical workflow is to set the stretch interactively via the **Normalize**
+button in Navi; use this tool to override it programmatically.
+
+Two independent pieces of state are stored: **normalization bounds** (`input_black`/`input_white`) — the sub-range mapped to [0, 1] when the user pressed Normalize — and **slider positions** (`slider_black`/`slider_white`) — where the sliders sit within [0, 1] of the full data range. A white slider at 0.04 inside a [0, 0.1] normalization renders an effective white point of 0.004.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `id` | string (UUID) | Yes | Archive frame UUID. |
+| `input_black` | number | No | Normalization black bound in [0, 1]. Must be < `input_white`. |
+| `input_white` | number | No | Normalization white bound in [0, 1]. Must be > `input_black`. |
+| `slider_black` | number | No | Black-point slider in [0, 1] of the full data range. |
+| `slider_white` | number | No | White-point slider in [0, 1] of the full data range. |
+| `reset` | boolean | No | When `true`, clears all stretch and slider state. Overrides all other parameters. |
+
+**Examples:**
+```python
+# Save normalization [0, 0.1] and slider positions (white at 4 % of data = 40 % of stretch)
+archive_update_stretch(id="A3F2B1C0-...", input_black=0.0, input_white=0.1, slider_black=0.0, slider_white=0.04)
+
+# Update only the slider position without changing the normalization
+archive_update_stretch(id="A3F2B1C0-...", slider_white=0.07)
+
+# Clear everything
+archive_update_stretch(id="A3F2B1C0-...", reset=True)
+```
+
+Response:
+```
+Saved stretch for frame A3F2B1C0-...: norm=[0.0000, 0.1000]  slider_white=0.0400
 ```
 
 ---

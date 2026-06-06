@@ -119,6 +119,20 @@ struct Info: AsyncParsableCommand {
             if let v = f.hotPixelCount      { lines.append(row("Hot pixels",   "≈\(v)")) }
         }
 
+        let hasStretch = f.stretchSettings.map { !$0.isIdentity } == true
+            || f.sliderBlackNorm != nil || f.sliderWhiteNorm != nil
+        if hasStretch {
+            lines.append("")
+            lines.append("Display stretch")
+            lines.append(String(repeating: "─", count: 60))
+            if let s = f.stretchSettings, !s.isIdentity {
+                lines.append(row("Norm black", String(format: "%.4f", s.inputBlack)))
+                lines.append(row("Norm white", String(format: "%.4f", s.inputWhite)))
+            }
+            if let v = f.sliderBlackNorm { lines.append(row("Slider black", String(format: "%.4f", v))) }
+            if let v = f.sliderWhiteNorm { lines.append(row("Slider white", String(format: "%.4f", v))) }
+        }
+
         if let (run, inputs) = provenance {
             lines.append("")
             lines.append("Provenance")

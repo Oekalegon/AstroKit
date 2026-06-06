@@ -13,6 +13,14 @@ public struct FITSImageToolsView: View {
     let imageID: String?
     @Binding var blackPoint: Float
     @Binding var whitePoint: Float
+    /// Saved display stretch. When non-identity the sliders operate within the saved
+    /// sub-range; **Normalize** bakes the current slider positions into this binding.
+    @Binding var stretchSettings: StretchSettings
+    /// Black-point slider in [0, 1] of the full data range. Updated on every slider move
+    /// so Navi can persist it (debounced) without needing to reach into `blackPoint` directly.
+    @Binding var sliderBlackNorm: Float
+    /// White-point slider in [0, 1] of the full data range. Updated on every slider move.
+    @Binding var sliderWhiteNorm: Float
     let cursorPosition: SIMD2<Float>?
     let aspectRatio: SIMD2<Float>
     let extractedRegion: FITSImage?
@@ -22,7 +30,6 @@ public struct FITSImageToolsView: View {
     @Binding var panOffset: SIMD2<Float>
     let onExtractedRegionSizeChanged: ((Int) -> Void)?
 
-    @State private var showFullRange: Bool = true
     @State private var useLogScale: Bool = false
     @State private var extractedRegionZoom: Float = 1.0
     @State private var extractedRegionPanOffset: SIMD2<Float> = SIMD2<Float>(0, 0)
@@ -66,6 +73,9 @@ public struct FITSImageToolsView: View {
         imageID: String? = nil,
         blackPoint: Binding<Float>,
         whitePoint: Binding<Float>,
+        stretchSettings: Binding<StretchSettings> = .constant(.identity),
+        sliderBlackNorm: Binding<Float> = .constant(0.0),
+        sliderWhiteNorm: Binding<Float> = .constant(1.0),
         cursorPosition: SIMD2<Float>? = nil,
         aspectRatio: SIMD2<Float> = SIMD2<Float>(1.0, 1.0),
         extractedRegion: FITSImage? = nil,
@@ -84,6 +94,9 @@ public struct FITSImageToolsView: View {
         self.imageID = imageID
         self._blackPoint = blackPoint
         self._whitePoint = whitePoint
+        self._stretchSettings = stretchSettings
+        self._sliderBlackNorm = sliderBlackNorm
+        self._sliderWhiteNorm = sliderWhiteNorm
         self.cursorPosition = cursorPosition
         self.aspectRatio = aspectRatio
         self.extractedRegion = extractedRegion
@@ -93,6 +106,52 @@ public struct FITSImageToolsView: View {
         self._panOffset = panOffset
         self.onExtractedRegionSizeChanged = onExtractedRegionSizeChanged
     }
+
+    // MARK: - Stretch composition
+
+    /// Range of the active image in original pixel / texture space.
+    private var minValue: Float { texture != nil ? textureMinValue : (fitsImage?.originalMinValue ?? 0.0) }
+    private var maxValue: Float { texture != nil ? textureMaxValue : (fitsImage?.originalMaxValue ?? 1.0) }
+
+    /// Normalizes a pixel-space slider value to [0, 1] relative to the image range.
+    private func sliderNorm(_ value: Float) -> Float {
+        let range = maxValue - minValue
+        guard range > 0 else { return 0 }
+        return (value - minValue) / range
+    }
+
+    /// Effective black point in pixel space after composing the slider with the saved stretch.
+    var effectiveBlackPoint: Float {
+        minValue + stretchSettings.effective(sliderNorm: sliderNorm(blackPoint)) * (maxValue - minValue)
+    }
+
+    /// Effective white point in pixel space after composing the slider with the saved stretch.
+    var effectiveWhitePoint: Float {
+        minValue + stretchSettings.effective(sliderNorm: sliderNorm(whitePoint)) * (maxValue - minValue)
+    }
+
+    // MARK: - Actions
+
+    private func normalizeStretch() {
+        stretchSettings = stretchSettings.normalized(
+            sliderBlackNorm: sliderNorm(blackPoint),
+            sliderWhiteNorm: sliderNorm(whitePoint)
+        )
+        blackPoint = minValue
+        whitePoint = maxValue
+        sliderBlackNorm = 0.0
+        sliderWhiteNorm = 1.0
+    }
+
+    private func resetStretch() {
+        stretchSettings = .identity
+        blackPoint = minValue
+        whitePoint = maxValue
+        sliderBlackNorm = 0.0
+        sliderWhiteNorm = 1.0
+    }
+
+    // MARK: - Body
 
     public var body: some View {
         ScrollView {
@@ -115,8 +174,7 @@ public struct FITSImageToolsView: View {
                 if texture != nil || fitsImage != nil {
                     GroupBox("Histogram") {
                         VStack(alignment: .leading, spacing: 8) {
-                            Toggle("Show Full Range", isOn: $showFullRange).font(.caption)
-                            Toggle("Use Log Scale",   isOn: $useLogScale).font(.caption)
+                            Toggle("Use Log Scale", isOn: $useLogScale).font(.caption)
                             if let texture = texture {
                                 FITSHistogramChart(
                                     texture: texture,
@@ -125,9 +183,8 @@ public struct FITSImageToolsView: View {
                                     imageID: imageID,
                                     numBins: nil,
                                     showNormalized: false,
-                                    blackPoint: blackPoint,
-                                    whitePoint: whitePoint,
-                                    showFullRange: showFullRange,
+                                    blackPoint: effectiveBlackPoint,
+                                    whitePoint: effectiveWhitePoint,
                                     useLogScale: useLogScale
                                 )
                             } else if let fitsImage = fitsImage {
@@ -136,9 +193,8 @@ public struct FITSImageToolsView: View {
                                     imageID: imageID,
                                     numBins: nil,
                                     showNormalized: false,
-                                    blackPoint: blackPoint,
-                                    whitePoint: whitePoint,
-                                    showFullRange: showFullRange,
+                                    blackPoint: effectiveBlackPoint,
+                                    whitePoint: effectiveWhitePoint,
                                     useLogScale: useLogScale
                                 )
                             }
@@ -146,29 +202,45 @@ public struct FITSImageToolsView: View {
                         .padding(.vertical, 4)
                     }
 
-                    let minValue = texture != nil ? textureMinValue : (fitsImage?.originalMinValue ?? 0.0)
-                    let maxValue = texture != nil ? textureMaxValue : (fitsImage?.originalMaxValue ?? 1.0)
-
                     GroupBox("Image Adjustments") {
                         VStack(alignment: .leading, spacing: 12) {
+                            if !stretchSettings.isIdentity {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "arrow.left.and.right.square")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                    Text(String(format: "Stretch  %.3f – %.3f",
+                                                stretchSettings.inputBlack, stretchSettings.inputWhite))
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+                            }
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
                                     Text("Black Point").font(.caption).frame(width: 80, alignment: .leading)
-                                    Text(String(format: "%.3f", blackPoint)).font(.caption).monospacedDigit().frame(maxWidth: .infinity, alignment: .trailing)
+                                    Text(String(format: "%.3f", effectiveBlackPoint)).font(.caption).monospacedDigit().frame(maxWidth: .infinity, alignment: .trailing)
                                 }
                                 Slider(value: $blackPoint, in: minValue...whitePoint) { Text("Black Point") }
                             }
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack {
                                     Text("White Point").font(.caption).frame(width: 80, alignment: .leading)
-                                    Text(String(format: "%.3f", whitePoint)).font(.caption).monospacedDigit().frame(maxWidth: .infinity, alignment: .trailing)
+                                    Text(String(format: "%.3f", effectiveWhitePoint)).font(.caption).monospacedDigit().frame(maxWidth: .infinity, alignment: .trailing)
                                 }
                                 Slider(value: $whitePoint, in: blackPoint...maxValue) { Text("White Point") }
                             }
-                            Button { blackPoint = minValue; whitePoint = maxValue } label: {
-                                Text("Reset").font(.caption)
+                            HStack(spacing: 8) {
+                                Button { normalizeStretch() } label: {
+                                    Text("Normalize").font(.caption)
+                                }
+                                .buttonStyle(.bordered)
+                                .help("Bake the current stretch into the saved range so the sliders travel the full range again.")
+                                Button { resetStretch() } label: {
+                                    Text("Reset").font(.caption)
+                                }
+                                .buttonStyle(.bordered)
+                                .help("Reset stretch and sliders to the full image range.")
                             }
-                            .buttonStyle(.bordered)
                         }
                         .padding(.vertical, 4)
                     }
@@ -229,6 +301,8 @@ public struct FITSImageToolsView: View {
             }.value
             pixelSample = sample
         }
+        .onChange(of: blackPoint) { _, _ in sliderBlackNorm = sliderNorm(blackPoint) }
+        .onChange(of: whitePoint) { _, _ in sliderWhiteNorm = sliderNorm(whitePoint) }
     }
 
     @ViewBuilder
@@ -254,8 +328,8 @@ public struct FITSImageToolsView: View {
                         displayMode: .normal,
                         zoom: $extractedRegionZoom,
                         panOffset: $extractedRegionPanOffset,
-                        blackPoint: $blackPoint,
-                        whitePoint: $whitePoint,
+                        blackPoint: .init(get: { effectiveBlackPoint }, set: { _ in }),
+                        whitePoint: .init(get: { effectiveWhitePoint }, set: { _ in }),
                         isInteractive: false
                     )
                     .frame(height: 200)
@@ -267,8 +341,8 @@ public struct FITSImageToolsView: View {
                         displayMode: .normal,
                         zoom: $extractedRegionZoom,
                         panOffset: $extractedRegionPanOffset,
-                        blackPoint: $blackPoint,
-                        whitePoint: $whitePoint,
+                        blackPoint: .init(get: { effectiveBlackPoint }, set: { _ in }),
+                        whitePoint: .init(get: { effectiveWhitePoint }, set: { _ in }),
                         isInteractive: false
                     )
                     .frame(height: 200)
