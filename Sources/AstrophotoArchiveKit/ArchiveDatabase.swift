@@ -239,6 +239,18 @@ actor ArchiveDatabase {
         ALTER TABLE frames ADD COLUMN slider_black_norm REAL;
         ALTER TABLE frames ADD COLUMN slider_white_norm REAL;
         """,
+        // v23: telescope and site on frames — propagated from input frames into stacked results.
+        // telescope = FITS TELESCOP keyword; site = FITS OBSERVAT keyword.
+        """
+        ALTER TABLE frames ADD COLUMN telescope TEXT;
+        ALTER TABLE frames ADD COLUMN site       TEXT;
+        """,
+        // v24: telescope and site on frame_sets — mirrors v23 on frames so framesets can be
+        // searched and filtered by telescope/site.
+        """
+        ALTER TABLE frame_sets ADD COLUMN telescope TEXT;
+        ALTER TABLE frame_sets ADD COLUMN site       TEXT;
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -358,8 +370,9 @@ actor ArchiveDatabase {
          frame_signature, rejected, rejected_reason, position_angle, processing_run_id,
          session_beg, session_end, temperature_min, temperature_max,
          star_count, median_fwhm, background_noise, median_eccentricity,
-         saturated_star_count, hot_pixel_count, egain, background_noise_electrons)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         saturated_star_count, hot_pixel_count, egain, background_noise_electrons,
+         telescope, site)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -412,6 +425,8 @@ actor ArchiveDatabase {
         bind(stmt, 40, frame.hotPixelCount.map { Int64($0) })
         bind(stmt, 41, frame.egain)
         bind(stmt, 42, frame.backgroundNoiseElectrons)
+        bind(stmt, 43, frame.telescope)
+        bind(stmt, 44, frame.site)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -683,7 +698,8 @@ actor ArchiveDatabase {
 
     // Shared SELECT columns for both list and single-item queries.
     // Indices: 0–13 = v6 core, 14–21 = v7 extras,
-    //          22–26 = v19 quality aggregates, 27 = frame_count, 28 = excluded_count.
+    //          22–26 = v19 quality aggregates, 27 = frame_count, 28 = excluded_count,
+    //          29–30 = v24 telescope/site.
     private static let frameSetSelectSQL = """
         SELECT fs.id, fs.name, fs.frame_type, fs.processing_level,
                fs.object_name, fs.filter, fs.camera, fs.exposure_time, fs.temperature,
@@ -694,7 +710,8 @@ actor ArchiveDatabase {
                fs.median_star_count, fs.median_fwhm, fs.median_eccentricity,
                fs.median_background_noise, fs.median_background_noise_electrons,
                COUNT(fsm.frame_id) AS frame_count,
-               SUM(CASE WHEN fsm.excluded = 1 THEN 1 ELSE 0 END) AS excluded_count
+               SUM(CASE WHEN fsm.excluded = 1 THEN 1 ELSE 0 END) AS excluded_count,
+               fs.telescope, fs.site
         FROM frame_sets fs
         LEFT JOIN frame_set_members fsm ON fsm.frame_set_id = fs.id
         """
@@ -710,12 +727,13 @@ actor ArchiveDatabase {
         let sql = """
         INSERT INTO frame_sets
         (id, name, frame_type, processing_level, object_name, filter, camera,
+         telescope, site,
          exposure_time, temperature, gain, offset, width, height, created_at,
          date_from, date_to, temperature_mean, temperature_min, temperature_max,
          pixel_scale, focal_length, position_angle,
          median_star_count, median_fwhm, median_eccentricity,
          median_background_noise, median_background_noise_electrons)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -726,26 +744,28 @@ actor ArchiveDatabase {
         bind(stmt, 5,  fs.objectName)
         bind(stmt, 6,  fs.filter)
         bind(stmt, 7,  fs.camera)
-        bind(stmt, 8,  fs.exposureTime)
-        bind(stmt, 9,  fs.temperatureMean)   // legacy `temperature` column = mean
-        bind(stmt, 10, fs.gain)
-        bind(stmt, 11, fs.offset)
-        bind(stmt, 12, fs.width.map { Int64($0) })
-        bind(stmt, 13, fs.height.map { Int64($0) })
-        bind(stmt, 14, iso.string(from: fs.createdAt))
-        bind(stmt, 15, fs.dateFrom.map { iso.string(from: $0) })
-        bind(stmt, 16, fs.dateTo.map   { iso.string(from: $0) })
-        bind(stmt, 17, fs.temperatureMean)
-        bind(stmt, 18, fs.temperatureMin)
-        bind(stmt, 19, fs.temperatureMax)
-        bind(stmt, 20, fs.pixelScale)
-        bind(stmt, 21, fs.focalLength)
-        bind(stmt, 22, fs.positionAngle)
-        bind(stmt, 23, fs.medianStarCount)
-        bind(stmt, 24, fs.medianFWHM)
-        bind(stmt, 25, fs.medianEccentricity)
-        bind(stmt, 26, fs.medianBackgroundNoise)
-        bind(stmt, 27, fs.medianBackgroundNoiseElectrons)
+        bind(stmt, 8,  fs.telescope)
+        bind(stmt, 9,  fs.site)
+        bind(stmt, 10, fs.exposureTime)
+        bind(stmt, 11, fs.temperatureMean)   // legacy `temperature` column = mean
+        bind(stmt, 12, fs.gain)
+        bind(stmt, 13, fs.offset)
+        bind(stmt, 14, fs.width.map { Int64($0) })
+        bind(stmt, 15, fs.height.map { Int64($0) })
+        bind(stmt, 16, iso.string(from: fs.createdAt))
+        bind(stmt, 17, fs.dateFrom.map { iso.string(from: $0) })
+        bind(stmt, 18, fs.dateTo.map   { iso.string(from: $0) })
+        bind(stmt, 19, fs.temperatureMean)
+        bind(stmt, 20, fs.temperatureMin)
+        bind(stmt, 21, fs.temperatureMax)
+        bind(stmt, 22, fs.pixelScale)
+        bind(stmt, 23, fs.focalLength)
+        bind(stmt, 24, fs.positionAngle)
+        bind(stmt, 25, fs.medianStarCount)
+        bind(stmt, 26, fs.medianFWHM)
+        bind(stmt, 27, fs.medianEccentricity)
+        bind(stmt, 28, fs.medianBackgroundNoise)
+        bind(stmt, 29, fs.medianBackgroundNoiseElectrons)
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -813,6 +833,14 @@ actor ArchiveDatabase {
         if let cam = query.camera {
             conditions.append("fs.camera = ?")
             bindings.append(cam)
+        }
+        if let scope = query.telescope {
+            conditions.append("fs.telescope = ?")
+            bindings.append(scope)
+        }
+        if let s = query.site {
+            conditions.append("fs.site = ?")
+            bindings.append(s)
         }
         if let range = query.dateRange {
             let iso = ISO8601DateFormatter()
@@ -965,7 +993,9 @@ actor ArchiveDatabase {
 
     private func rowToFrameSet(_ stmt: OpaquePointer?) -> ArchivedFrameSet? {
         // Column map — see frameSetSelectSQL for ordering.
-        // 0–13: v6 core, 14–21: v7 extras, 22: frame_count, 23: excluded_count
+        // 0–13: v6 core, 14–21: v7 extras,
+        // 22–26: v19 quality aggregates, 27: frame_count, 28: excluded_count,
+        // 29–30: v24 telescope/site.
         guard let stmt,
               let idStr = columnText(stmt, 0), let id = UUID(uuidString: idStr),
               let name = columnText(stmt, 1),
@@ -980,7 +1010,7 @@ actor ArchiveDatabase {
         // temperature_mean (col 16) preferred; fall back to legacy temperature (col 8) for pre-v7 rows.
         let tempMean = columnDouble(stmt, 16) ?? columnDouble(stmt, 8)
 
-        return ArchivedFrameSet(
+        var fs = ArchivedFrameSet(
             id: id,
             name: name,
             frameType: frameType,
@@ -1010,6 +1040,10 @@ actor ArchiveDatabase {
             medianBackgroundNoise:         columnDouble(stmt, 25),
             medianBackgroundNoiseElectrons: columnDouble(stmt, 26)
         )
+        // telescope (col 29) and site (col 30) added in migration v24.
+        fs.telescope = columnText(stmt, 29)
+        fs.site      = columnText(stmt, 30)
+        return fs
     }
 
     // MARK: - Processing runs
@@ -1246,7 +1280,7 @@ actor ArchiveDatabase {
         else { return nil }
 
         let iso = ISO8601DateFormatter()
-        return ArchivedFrame(
+        var frame = ArchivedFrame(
             id: id,
             filePath: filePath,
             objectName: columnText(stmt, 2),
@@ -1294,6 +1328,10 @@ actor ArchiveDatabase {
             sliderBlackNorm: columnDouble(stmt, 43).map { Float($0) },
             sliderWhiteNorm: columnDouble(stmt, 44).map { Float($0) }
         )
+        // telescope (col 45) and site (col 46) added in migration v23.
+        frame.telescope = columnText(stmt, 45)
+        frame.site      = columnText(stmt, 46)
+        return frame
     }
 
     // MARK: - SQLite helpers

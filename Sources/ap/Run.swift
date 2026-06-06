@@ -333,6 +333,9 @@ extension AP {
                     let stackRej        = parameters["pixel_rejection"]?.stringValue  ?? "sigma_clip"
                     let stackRejLow     = parameters["rejection_low"]?.doubleValue    ?? 3.0
                     let stackRejHigh    = parameters["rejection_high"]?.doubleValue   ?? 3.0
+                    // Collect unanimous metadata from input frames for FITS headers.
+                    // Uses only live Frame properties — no archive lookup needed here.
+                    let inputMeta = unanimousFrameMetadata(from: pipelineInputs)
                     try FITSTableWriter.writeStackedOutput(
                         pixelData: pixels, width: w, height: h,
                         registrationTable: regDF,
@@ -341,6 +344,10 @@ extension AP {
                         rejection: stackRej,
                         rejectionLow: stackRejLow,
                         rejectionHigh: stackRejHigh,
+                        objectName: inputMeta.objectName,
+                        camera: inputMeta.camera,
+                        telescope: inputMeta.telescope,
+                        site: inputMeta.site,
                         to: outputPath
                     )
                     if !json {
@@ -368,6 +375,10 @@ extension AP {
                         imageType: imageType(for: firstFrame, in: pipeline),
                         filterName: firstFrame.filterName,
                         stacked: false,
+                        objectName: firstFrame.objectName,
+                        camera: firstFrame.camera,
+                        telescope: firstFrame.telescope,
+                        site: firstFrame.site,
                         to: outputPath
                     )
                     if !json { print("Saved frame to \(outputPath)") }
@@ -430,6 +441,37 @@ extension AP {
         /// - **Single-frame** (summary tables from star_detection / optical_quality / autofocus):
         ///   the aggregate result is applied to each archive frame found among `pipelineInputs`.
         /// Returns only the frames produced by the last step of the pipeline.
+        /// Collects unanimous string metadata from all input frames without an archive lookup.
+        /// Returns nil for a field if the values differ across frames (mixed sessions / equipment).
+        /// Iterates all input frames — does not apply the registration_success filter used in
+        /// autoArchiveResults. Acceptable because instrument fields (camera, telescope, etc.) are
+        /// session-invariant; frames that fail registration still share the same instrument metadata.
+        /// NOTE: identical copy in Sources/astrokit-mcp/Tools.swift — keep in sync or extract to
+        /// a shared target.
+        private func unanimousFrameMetadata(from inputs: [String: Any])
+            -> (objectName: String?, camera: String?, telescope: String?, site: String?)
+        {
+            var objNames = Set<String>(), cams = Set<String>(), scopes = Set<String>(), sites = Set<String>()
+            for value in inputs.values {
+                let inputFrames: [Frame]
+                if let fs = value as? FrameSet { inputFrames = fs.frames }
+                else if let f = value as? Frame { inputFrames = [f] }
+                else { continue }
+                for f in inputFrames {
+                    if let v = f.objectName { objNames.insert(v) }
+                    if let v = f.camera     { cams.insert(v) }
+                    if let v = f.telescope  { scopes.insert(v) }
+                    if let v = f.site       { sites.insert(v) }
+                }
+            }
+            return (
+                objectName: objNames.count == 1 ? objNames.first : nil,
+                camera:     cams.count    == 1 ? cams.first    : nil,
+                telescope:  scopes.count  == 1 ? scopes.first  : nil,
+                site:       sites.count   == 1 ? sites.first   : nil
+            )
+        }
+
         /// Intermediate processing frames (blurred, background-subtracted, eroded, etc.)
         /// are produced by earlier steps and should not be archived as result frames.
         private func terminalFrames(from frames: [Frame], pipeline: Pipeline) -> [Frame] {
@@ -804,6 +846,8 @@ extension AP {
                 var objectNamesSet: Set<String> = []
                 var filterNamesSet: Set<String> = []
                 var camerasSet: Set<String> = []
+                var telescopesSet: Set<String> = []
+                var sitesSet: Set<String> = []
                 var pixelScalesSet: Set<Double> = []
                 var focalLengthsSet: Set<Double> = []
                 var totalExposure = 0.0
@@ -836,7 +880,7 @@ extension AP {
                         if refRA == nil { refRA = af?.ra; refDec = af?.dec }
                         pos += 1
                         inputCount += 1
-                        if let v = af?.objectName { objectNamesSet.insert(v) }
+                        if let v = af?.objectName ?? inputFrame?.objectName { objectNamesSet.insert(v) }
                         let fn = af?.filter ?? inputFrame?.filterName
                         if let fn { filterNamesSet.insert(fn) }
                         let exp = af?.exposureTime ?? inputFrame?.exposureTime
@@ -845,7 +889,9 @@ extension AP {
                         if let o = af?.offset ?? inputFrame?.offset { offsetsSet.insert(o) }
                         if let t = af?.temperature { temperatures.append(t) }
                         if let ts = af?.timestamp ?? inputFrame?.timestamp { timestamps.append(ts) }
-                        if let c = af?.camera { camerasSet.insert(c) }
+                        if let c = af?.camera ?? inputFrame?.camera { camerasSet.insert(c) }
+                        if let tl = af?.telescope ?? inputFrame?.telescope { telescopesSet.insert(tl) }
+                        if let s = af?.site ?? inputFrame?.site { sitesSet.insert(s) }
                         if let ps = af?.pixelScale { pixelScalesSet.insert(ps) }
                         if let fl = af?.focalLength { focalLengthsSet.insert(fl) }
                     }
@@ -854,6 +900,8 @@ extension AP {
                 let stackObjectName  = objectNamesSet.count == 1 ? objectNamesSet.first : nil
                 let stackFilter      = filterNamesSet.count == 1 ? filterNamesSet.first : nil
                 let stackCamera      = camerasSet.count == 1 ? camerasSet.first : nil
+                let stackTelescope   = telescopesSet.count == 1 ? telescopesSet.first : nil
+                let stackSite        = sitesSet.count == 1 ? sitesSet.first : nil
                 let stackPixelScale  = pixelScalesSet.count == 1 ? pixelScalesSet.first : nil
                 let stackFocalLength = focalLengthsSet.count == 1 ? focalLengthsSet.first : nil
                 let stackExposure    = inputCount > 0 && totalExposure > 0 ? totalExposure : nil as Double?
@@ -910,6 +958,8 @@ extension AP {
                             temperature: stackTempMean,
                             objectName: stackObjectName,
                             camera: stackCamera,
+                            telescope: stackTelescope,
+                            site: stackSite,
                             ra: refRA,
                             dec: refDec,
                             pixelScale: stackPixelScale,

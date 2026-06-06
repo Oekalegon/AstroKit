@@ -112,6 +112,8 @@ public actor Archive {
             frameType: meta.frameType,
             filter: ArchiveDatabase.canonicalFilterName(meta.filter),
             camera: meta.camera,
+            telescope: meta.telescope,
+            site: meta.site,
             focalLength: meta.focalLength,
             pixelScale: meta.pixelScale,
             temperature: meta.temperature,
@@ -488,6 +490,8 @@ public actor Archive {
             objectName:   sharedString(matchedFrames.map { $0.objectName }),
             filter:       filterValue,
             camera:       sharedString(matchedFrames.map { $0.camera }),
+            telescope:    sharedString(matchedFrames.map { $0.telescope }),
+            site:         sharedString(matchedFrames.map { $0.site }),
             exposureTime: sharedDouble(matchedFrames.map { $0.exposureTime }),
             gain:         sharedDouble(matchedFrames.map { $0.gain }),
             offset:       sharedDouble(matchedFrames.map { $0.offset }),
@@ -712,8 +716,10 @@ public actor Archive {
     // MARK: - Shared property helpers
 
     private func sharedString(_ values: [String?]) -> String? {
+        // Nil frames don't vote: a frame that lacks the field does not prevent
+        // a unanimous result from being derived from the frames that have it.
         let nonNil = values.compactMap { $0 }
-        guard nonNil.count == values.count else { return nil }
+        guard !nonNil.isEmpty else { return nil }
         let unique = Set(nonNil)
         return unique.count == 1 ? unique.first : nil
     }

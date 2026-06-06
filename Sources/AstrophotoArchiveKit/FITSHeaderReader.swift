@@ -9,6 +9,8 @@ struct FrameArchiveMetadata {
     var frameType: String
     var filter: String?
     var camera: String?
+    var telescope: String?
+    var site: String?
     var focalLength: Double?
     var pixelScale: Double?
     var temperature: Double?
@@ -77,8 +79,7 @@ enum FITSHeaderReader {
         width: Int, height: Int, bitpix: Int
     ) -> FrameArchiveMetadata {
 
-        let objectName = stringValue(headers, keys: ["OBJECT"])
-            .flatMap { $0.isEmpty ? nil : $0 }
+        let objectName = stringValue(headers, keys: ["OBJECT"])?.nilIfBlank
 
         let ra  = resolveRA(headers)
         let dec = resolveDec(headers)
@@ -86,11 +87,10 @@ enum FITSHeaderReader {
         let imageType = stringValue(headers, keys: ["IMAGETYP", "FRAME"]) ?? ""
         let frameType = parseFrameType(imageType.lowercased())
 
-        let filter = stringValue(headers, keys: ["FILTER"])?.trimmingCharacters(in: .whitespaces)
-            .flatMap { $0.isEmpty ? nil : $0 }
-
-        let camera = stringValue(headers, keys: ["INSTRUME"])?.trimmingCharacters(in: .whitespaces)
-            .flatMap { $0.isEmpty ? nil : $0 }
+        let filter    = stringValue(headers, keys: ["FILTER"])?.nilIfBlank
+        let camera    = stringValue(headers, keys: ["INSTRUME"])?.nilIfBlank
+        let telescope = stringValue(headers, keys: ["TELESCOP"])?.nilIfBlank
+        let site      = stringValue(headers, keys: ["OBSERVAT"])?.nilIfBlank
 
         let focalLength   = doubleValue(headers, keys: ["FOCALLEN"])
         let pixelScale    = doubleValue(headers, keys: ["PIXSCALE", "SCALE"])
@@ -141,6 +141,8 @@ enum FITSHeaderReader {
             frameType: frameType,
             filter: filter,
             camera: camera,
+            telescope: telescope,
+            site: site,
             focalLength: focalLength,
             pixelScale: pixelScale,
             temperature: temperature,
@@ -248,9 +250,12 @@ enum FITSHeaderReader {
     }
 }
 
-// Convenience extension used internally.
 private extension String {
-    func flatMap(_ transform: (String) -> String?) -> String? {
-        transform(self)
+    /// Returns nil if the string is empty after trimming ASCII whitespace.
+    /// Identical copy exists in AstrophotoKit/FITS/Frame+FITSextensions.swift.
+    /// Cannot be shared across module boundary without making it public.
+    var nilIfBlank: String? {
+        let t = trimmingCharacters(in: .whitespaces)
+        return t.isEmpty ? nil : t
     }
 }

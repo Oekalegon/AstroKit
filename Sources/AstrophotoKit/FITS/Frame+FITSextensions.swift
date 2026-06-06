@@ -1,6 +1,16 @@
 import Foundation
 import Metal
 
+private extension String {
+    /// Returns nil if the string is empty after trimming ASCII whitespace.
+    /// Identical copy exists in AstrophotoArchiveKit/FITSHeaderReader.swift.
+    /// Cannot be shared across module boundary without making it public.
+    var nilIfBlank: String? {
+        let t = trimmingCharacters(in: .whitespaces)
+        return t.isEmpty ? nil : t
+    }
+}
+
 extension Frame {
     /// Create a Frame from a FITSImage.
     ///
@@ -97,6 +107,11 @@ extension Frame {
             offset = v
         }
 
+        let objectName = fitsImage.metadata["OBJECT"]?.stringValue?.nilIfBlank
+        let camera     = fitsImage.metadata["INSTRUME"]?.stringValue?.nilIfBlank
+        let telescope  = fitsImage.metadata["TELESCOP"]?.stringValue?.nilIfBlank
+        let site       = fitsImage.metadata["OBSERVAT"]?.stringValue?.nilIfBlank
+
         // Initialize using the main initializer
         self.init(
             type: frameType,
@@ -115,7 +130,11 @@ extension Frame {
             fitsMinValue: Double(fitsImage.originalMinValue),
             fitsMaxValue: Double(fitsImage.originalMaxValue),
             egain: egain,
-            pixelScale: pixelScale
+            pixelScale: pixelScale,
+            objectName: objectName,
+            camera: camera,
+            telescope: telescope,
+            site: site
         )
     }
 

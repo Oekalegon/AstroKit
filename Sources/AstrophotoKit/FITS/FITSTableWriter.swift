@@ -47,6 +47,10 @@ private func writeStackedFITSC(
     _ rejHigh: Double,
     _ stackedSkyBkg: Double,
     _ stackedSkyNoise: Double,
+    _ objectName: UnsafePointer<CChar>,
+    _ camera: UnsafePointer<CChar>,
+    _ telescope: UnsafePointer<CChar>,
+    _ site: UnsafePointer<CChar>,
     _ statusOut: UnsafeMutablePointer<Int32>
 ) -> Int32
 
@@ -67,6 +71,8 @@ private func writeResultFrameFITSC(
     _ temperature: Double,
     _ objectName: UnsafePointer<CChar>,
     _ camera: UnsafePointer<CChar>,
+    _ telescope: UnsafePointer<CChar>,
+    _ site: UnsafePointer<CChar>,
     _ ra: Double,
     _ dec: Double,
     _ pixelScale: Double,
@@ -183,6 +189,10 @@ public struct FITSTableWriter {
         rejection: String = "sigma_clip",
         rejectionLow: Double = 3.0,
         rejectionHigh: Double = 3.0,
+        objectName: String? = nil,
+        camera: String? = nil,
+        telescope: String? = nil,
+        site: String? = nil,
         to path: String
     ) throws {
         let nrows = Int32(df.rows.count)
@@ -296,55 +306,41 @@ public struct FITSTableWriter {
             stackedSkyNoise = 1.4826 * devs[devs.count / 2]
         }
 
-        var statusOut: Int32 = 0
+        // Allocate all string parameters with strdup so the C call is a flat
+        // statement rather than 10 levels of withCString closure nesting.
+        // strdup is already used for the per-frame string arrays above.
+        let cPath    = strdup(path)!;           let cMethod  = strdup(method)!
+        let cNorm    = strdup(normalisation)!;  let cRej     = strdup(rejection)!
+        let cFilter  = strdup(refFilter)!;      let cDateObs = strdup(dateObs)!
+        let cObj     = strdup(objectName ?? "")!; let cCam   = strdup(camera     ?? "")!
+        let cScope   = strdup(telescope  ?? "")!; let cSit   = strdup(site       ?? "")!
+        defer {
+            free(cPath);   free(cMethod); free(cNorm); free(cRej)
+            free(cFilter); free(cDateObs)
+            free(cObj);    free(cCam);   free(cScope); free(cSit)
+        }
 
-        _ = path.withCString { cPath in
-        method.withCString { cMethod in
-        normalisation.withCString { cNorm in
-        rejection.withCString { cRej in
-        refFilter.withCString { cFilter in
-        dateObs.withCString { cDateObs in
-            pixels.withUnsafeMutableBufferPointer { imgBuf in
-            frameIndex.withUnsafeMutableBufferPointer { fi in
-            translationX.withUnsafeMutableBufferPointer { tx in
-            translationY.withUnsafeMutableBufferPointer { ty in
-            rotationDeg.withUnsafeMutableBufferPointer { rd in
-            scale.withUnsafeMutableBufferPointer { sc in
-            matchCount.withUnsafeMutableBufferPointer { mc in
-            rmse.withUnsafeMutableBufferPointer { rm in
-            starCount.withUnsafeMutableBufferPointer { stc in
-            meanFWHM.withUnsafeMutableBufferPointer { mf in
-            medianFWHM.withUnsafeMutableBufferPointer { mdf in
-            meanEccentricity.withUnsafeMutableBufferPointer { me in
-            meanPositionAngle.withUnsafeMutableBufferPointer { mp in
-            meanFlux.withUnsafeMutableBufferPointer { mfl in
-            skyBackground.withUnsafeMutableBufferPointer { sbg in
-            skyNoise.withUnsafeMutableBufferPointer { sn in
-            exposures.withUnsafeMutableBufferPointer { exp in
-            gains.withUnsafeMutableBufferPointer { gn in
-            offsetVals.withUnsafeMutableBufferPointer { ov in
-            cFilePaths.withUnsafeMutableBufferPointer { fp in
-            cTimestamps.withUnsafeMutableBufferPointer { ts in
-            cFilterNames.withUnsafeMutableBufferPointer { fn in
-            cFrameTypes.withUnsafeMutableBufferPointer { ft in
-                writeStackedFITSC(
-                    cPath,
-                    imgBuf.baseAddress!, Int32(width), Int32(height),
-                    nrows,
-                    fi.baseAddress!, fp.baseAddress!, ts.baseAddress!, exp.baseAddress!,
-                    fn.baseAddress!, gn.baseAddress!, ov.baseAddress!, ft.baseAddress!,
-                    tx.baseAddress!, ty.baseAddress!, rd.baseAddress!, sc.baseAddress!,
-                    mc.baseAddress!, rm.baseAddress!, stc.baseAddress!,
-                    mf.baseAddress!, mdf.baseAddress!, me.baseAddress!,
-                    mp.baseAddress!, mfl.baseAddress!,
-                    sbg.baseAddress!, sn.baseAddress!,
-                    refFrameIdx,
-                    totalExposure, cFilter, refGain, refOffset_val, cDateObs,
-                    cMethod, cNorm, cRej, rejectionLow, rejectionHigh,
-                    stackedSkyBkg, stackedSkyNoise,
-                    &statusOut
-                )
-            }}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+        var statusOut: Int32 = 0
+        // Swift bridges &[T] to UnsafeMutablePointer<T> (pointer to first element)
+        // for all numeric and pointer-array parameters below.
+        _ = writeStackedFITSC(
+            cPath,
+            &pixels, Int32(width), Int32(height),
+            nrows,
+            &frameIndex, &cFilePaths, &cTimestamps, &exposures,
+            &cFilterNames, &gains, &offsetVals, &cFrameTypes,
+            &translationX, &translationY, &rotationDeg, &scale,
+            &matchCount, &rmse, &starCount,
+            &meanFWHM, &medianFWHM, &meanEccentricity,
+            &meanPositionAngle, &meanFlux,
+            &skyBackground, &skyNoise,
+            refFrameIdx,
+            totalExposure, cFilter, refGain, refOffset_val, cDateObs,
+            cMethod, cNorm, cRej, rejectionLow, rejectionHigh,
+            stackedSkyBkg, stackedSkyNoise,
+            cObj, cCam, cScope, cSit,
+            &statusOut
+        )
 
         if statusOut != 0 {
             var errText = [CChar](repeating: 0, count: 81)
@@ -375,6 +371,8 @@ public struct FITSTableWriter {
         temperature: Double? = nil,
         objectName: String? = nil,
         camera: String? = nil,
+        telescope: String? = nil,
+        site: String? = nil,
         ra: Double? = nil,
         dec: Double? = nil,
         pixelScale: Double? = nil,
@@ -394,6 +392,8 @@ public struct FITSTableWriter {
         (filterName ?? "").withCString { cFilter in
         (objectName ?? "").withCString { cObject in
         (camera ?? "").withCString { cCamera in
+        (telescope ?? "").withCString { cTelescope in
+        (site ?? "").withCString { cSite in
         (dateObs ?? "").withCString { cDateObs in
         (dateBeg ?? "").withCString { cDateBeg in
         (dateEnd ?? "").withCString { cDateEnd in
@@ -408,7 +408,7 @@ public struct FITSTableWriter {
                     gain ?? .nan,
                     offset ?? .nan,
                     temperature ?? .nan,
-                    cObject, cCamera,
+                    cObject, cCamera, cTelescope, cSite,
                     ra ?? .nan, dec ?? .nan,
                     pixelScale ?? .nan, focalLength ?? .nan,
                     tempMin ?? .nan, tempMax ?? .nan,
@@ -416,7 +416,7 @@ public struct FITSTableWriter {
                     &statusOut
                 )
             }
-        }}}}}}}}}
+        }}}}}}}}}}}
         if statusOut != 0 {
             var errText = [CChar](repeating: 0, count: 81)
             getFITSErrorStatus(statusOut, &errText)

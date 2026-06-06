@@ -12,6 +12,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var frameType: String
     public var filter: String?
     public var camera: String?
+    public var telescope: String?
+    public var site: String?
     public var focalLength: Double?     // mm
     public var pixelScale: Double?      // arcsec/pixel
     public var temperature: Double?     // sensor °C
@@ -97,6 +99,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public init(
         id: UUID, filePath: String, objectName: String?, ra: Double?, dec: Double?,
         healpixPixel: Int64?, frameType: String, filter: String?, camera: String?,
+        telescope: String? = nil, site: String? = nil,
         focalLength: Double?, pixelScale: Double?, temperature: Double?, timestamp: Date?,
         exposureTime: Double?, gain: Double?, offset: Double?,
         width: Int?, height: Int?, bitpix: Int?,
@@ -132,6 +135,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.frameType = frameType
         self.filter = filter
         self.camera = camera
+        self.telescope = telescope
+        self.site = site
         self.focalLength = focalLength
         self.pixelScale = pixelScale
         self.temperature = temperature

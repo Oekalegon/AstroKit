@@ -144,6 +144,26 @@ public struct Frame: ProcessData {
         return metadata(for: FrameMetadataKey.pixelScale) as? Double
     }
 
+    /// The target object name from the FITS `OBJECT` keyword, if available.
+    public var objectName: String? {
+        return metadata(for: FrameMetadataKey.objectName) as? String
+    }
+
+    /// The camera / instrument name from the FITS `INSTRUME` keyword, if available.
+    public var camera: String? {
+        return metadata(for: FrameMetadataKey.camera) as? String
+    }
+
+    /// The telescope name from the FITS `TELESCOP` keyword, if available.
+    public var telescope: String? {
+        return metadata(for: FrameMetadataKey.telescope) as? String
+    }
+
+    /// The observatory / site name from the FITS `OBSERVAT` keyword, if available.
+    public var site: String? {
+        return metadata(for: FrameMetadataKey.site) as? String
+    }
+
     /// Injects an EGAIN value from an external source (e.g. the archive camera_profiles table)
     /// when the FITS header did not carry an `EGAIN` keyword. Has no effect if egain is already set.
     public mutating func injectEgainIfMissing(_ egain: Double) {
@@ -214,6 +234,10 @@ public struct Frame: ProcessData {
     /// - Parameter filterName: The canonical display name of the filter, if available.
     /// - Parameter egain: The electron conversion factor in e⁻/ADU (FITS `EGAIN`), if available.
     /// - Parameter pixelScale: The plate scale in arcseconds per pixel (FITS `PIXSCALE`), if available.
+    /// - Parameter objectName: The target object name (FITS `OBJECT`), if available.
+    /// - Parameter camera: The camera / instrument name (FITS `INSTRUME`), if available.
+    /// - Parameter telescope: The telescope name (FITS `TELESCOP`), if available.
+    /// - Parameter site: The observatory / site name (FITS `OBSERVAT`), if available.
     public init(
         type: FrameType,
         filter: Filter = .none,
@@ -231,7 +255,11 @@ public struct Frame: ProcessData {
         fitsMinValue: Double? = nil,
         fitsMaxValue: Double? = nil,
         egain: Double? = nil,
-        pixelScale: Double? = nil
+        pixelScale: Double? = nil,
+        objectName: String? = nil,
+        camera: String? = nil,
+        telescope: String? = nil,
+        site: String? = nil
     ) {
         self.instantiatedAt = texture != nil ? Date() : nil
         self.texture = texture
@@ -250,6 +278,10 @@ public struct Frame: ProcessData {
         if let fitsMaxValue = fitsMaxValue { metadata[FrameMetadataKey.fitsMaxValue] = fitsMaxValue }
         if let egain        = egain        { metadata[FrameMetadataKey.egain]        = egain }
         if let pixelScale   = pixelScale   { metadata[FrameMetadataKey.pixelScale]   = pixelScale }
+        if let objectName   = objectName   { metadata[FrameMetadataKey.objectName]   = objectName }
+        if let camera       = camera       { metadata[FrameMetadataKey.camera]       = camera }
+        if let telescope    = telescope    { metadata[FrameMetadataKey.telescope]    = telescope }
+        if let site         = site         { metadata[FrameMetadataKey.site]         = site }
         self.metadata = metadata
         self.outputLink = outputProcess
         self.inputLinks = inputProcesses
@@ -360,6 +392,18 @@ public enum FrameMetadataKey: String, MetadataKey {
     /// The plate scale in arcseconds per pixel (FITS `PIXSCALE`), if available.
     case pixelScale
 
+    /// The target object name (FITS `OBJECT`), if available.
+    case objectName
+
+    /// The camera / instrument name (FITS `INSTRUME`), if available.
+    case camera
+
+    /// The telescope name (FITS `TELESCOP`), if available.
+    case telescope
+
+    /// The observatory / site name (FITS `OBSERVAT`), if available.
+    case site
+
     /// The identifier for the metadata key.
     public var id: String {
         return "\(String(describing: Self.self)).\(rawValue)"
@@ -394,6 +438,8 @@ public enum FrameMetadataKey: String, MetadataKey {
             return Double.self
         case .pixelScale:
             return Double.self
+        case .objectName, .camera, .telescope, .site:
+            return String.self
         }
     }
 }

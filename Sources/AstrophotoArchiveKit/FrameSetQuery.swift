@@ -9,6 +9,8 @@ public struct FrameSetQuery: Sendable {
     public var filters: [String]?
     public var processingLevel: ProcessingLevel?
     public var camera: String?
+    public var telescope: String?
+    public var site: String?
     /// Matches framesets whose date span overlaps this interval.
     public var dateRange: DateInterval?
 
