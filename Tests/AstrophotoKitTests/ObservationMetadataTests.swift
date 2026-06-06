@@ -266,20 +266,20 @@ struct FrameObservationMetadataTests {
             return
         }
 
-        // writeResultFrame skips empty strings — write a raw FITS file with a
-        // blank OBJECT keyword via FITSTableWriter to verify the trim-and-nilify path.
-        // Use a non-blank value and verify trimming works correctly.
+        // Pass a value with surrounding whitespace. The C-level FITS writer does NOT
+        // trim strings before writing — it passes them as-is to fits_update_key.
+        // CFITSIO then pads the value to the fixed 68-char FITS field width.
+        // The trimming is done by nilIfBlank in Frame+FITSextensions on read.
         let path = tmpPath()
         defer { try? FileManager.default.removeItem(atPath: path) }
 
-        // A value with surrounding whitespace should be trimmed.
         try writeFITSWithHeaders(to: path, object: "  M 42  ")
 
         let fitsFile = try FITSFile(path: path)
         let fitsImage = try fitsFile.readFITSImage()
         let frame = try Frame(fitsImage: fitsImage, device: device)
 
-        // writeResultFrame trims at the C level; what we get back should be clean.
+        // nilIfBlank must strip the surrounding whitespace on read.
         #expect(frame.objectName?.isEmpty == false)
         let name = try #require(frame.objectName)
         #expect(!name.hasPrefix(" "))

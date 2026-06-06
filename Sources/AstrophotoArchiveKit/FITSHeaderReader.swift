@@ -252,6 +252,8 @@ enum FITSHeaderReader {
 
 private extension String {
     /// Returns nil if the string is empty after trimming ASCII whitespace.
+    /// Identical copy exists in AstrophotoKit/FITS/Frame+FITSextensions.swift.
+    /// Cannot be shared across module boundary without making it public.
     var nilIfBlank: String? {
         let t = trimmingCharacters(in: .whitespaces)
         return t.isEmpty ? nil : t

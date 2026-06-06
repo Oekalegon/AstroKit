@@ -443,6 +443,11 @@ extension AP {
         /// Returns only the frames produced by the last step of the pipeline.
         /// Collects unanimous string metadata from all input frames without an archive lookup.
         /// Returns nil for a field if the values differ across frames (mixed sessions / equipment).
+        /// Iterates all input frames — does not apply the registration_success filter used in
+        /// autoArchiveResults. Acceptable because instrument fields (camera, telescope, etc.) are
+        /// session-invariant; frames that fail registration still share the same instrument metadata.
+        /// NOTE: identical copy in Sources/astrokit-mcp/Tools.swift — keep in sync or extract to
+        /// a shared target.
         private func unanimousFrameMetadata(from inputs: [String: Any])
             -> (objectName: String?, camera: String?, telescope: String?, site: String?)
         {
