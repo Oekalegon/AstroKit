@@ -490,6 +490,8 @@ public actor Archive {
             objectName:   sharedString(matchedFrames.map { $0.objectName }),
             filter:       filterValue,
             camera:       sharedString(matchedFrames.map { $0.camera }),
+            telescope:    sharedString(matchedFrames.map { $0.telescope }),
+            site:         sharedString(matchedFrames.map { $0.site }),
             exposureTime: sharedDouble(matchedFrames.map { $0.exposureTime }),
             gain:         sharedDouble(matchedFrames.map { $0.gain }),
             offset:       sharedDouble(matchedFrames.map { $0.offset }),

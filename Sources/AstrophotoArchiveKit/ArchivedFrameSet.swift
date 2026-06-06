@@ -23,6 +23,8 @@ public struct ArchivedFrameSet: Sendable, Identifiable {
     /// Single filter name, or comma-separated list when created with --force.
     public var filter: String?
     public var camera: String?
+    public var telescope: String?
+    public var site: String?
     public var exposureTime: Double?
     public var gain: Double?
     public var offset: Double?
@@ -55,6 +57,7 @@ public struct ArchivedFrameSet: Sendable, Identifiable {
         id: UUID, name: String, frameType: String, processingLevel: ProcessingLevel,
         createdAt: Date, frameCount: Int, excludedFrameCount: Int = 0,
         objectName: String?, filter: String?, camera: String?,
+        telescope: String? = nil, site: String? = nil,
         exposureTime: Double?, gain: Double?, offset: Double?,
         width: Int?, height: Int?,
         pixelScale: Double?, focalLength: Double?, positionAngle: Double?,
@@ -74,6 +77,8 @@ public struct ArchivedFrameSet: Sendable, Identifiable {
         self.objectName = objectName
         self.filter = filter
         self.camera = camera
+        self.telescope = telescope
+        self.site = site
         self.exposureTime = exposureTime
         self.gain = gain
         self.offset = offset
