@@ -1,6 +1,14 @@
 import Foundation
 import Metal
 
+private extension String {
+    /// Returns nil if the string is empty after trimming ASCII whitespace.
+    var nilIfBlank: String? {
+        let t = trimmingCharacters(in: .whitespaces)
+        return t.isEmpty ? nil : t
+    }
+}
+
 extension Frame {
     /// Create a Frame from a FITSImage.
     ///
@@ -97,14 +105,10 @@ extension Frame {
             offset = v
         }
 
-        let objectName = fitsImage.metadata["OBJECT"]?.stringValue
-            .flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.trimmingCharacters(in: .whitespaces) }
-        let camera = fitsImage.metadata["INSTRUME"]?.stringValue
-            .flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.trimmingCharacters(in: .whitespaces) }
-        let telescope = fitsImage.metadata["TELESCOP"]?.stringValue
-            .flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.trimmingCharacters(in: .whitespaces) }
-        let site = fitsImage.metadata["OBSERVAT"]?.stringValue
-            .flatMap { $0.trimmingCharacters(in: .whitespaces).isEmpty ? nil : $0.trimmingCharacters(in: .whitespaces) }
+        let objectName = fitsImage.metadata["OBJECT"]?.stringValue?.nilIfBlank
+        let camera     = fitsImage.metadata["INSTRUME"]?.stringValue?.nilIfBlank
+        let telescope  = fitsImage.metadata["TELESCOP"]?.stringValue?.nilIfBlank
+        let site       = fitsImage.metadata["OBSERVAT"]?.stringValue?.nilIfBlank
 
         // Initialize using the main initializer
         self.init(

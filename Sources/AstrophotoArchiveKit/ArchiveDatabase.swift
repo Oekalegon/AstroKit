@@ -1040,7 +1040,7 @@ actor ArchiveDatabase {
             medianBackgroundNoise:         columnDouble(stmt, 25),
             medianBackgroundNoiseElectrons: columnDouble(stmt, 26)
         )
-        // v24 columns: telescope (29) and site (30). Present only after migration v24.
+        // telescope (col 29) and site (col 30) added in migration v24.
         fs.telescope = columnText(stmt, 29)
         fs.site      = columnText(stmt, 30)
         return fs
@@ -1328,7 +1328,7 @@ actor ArchiveDatabase {
             sliderBlackNorm: columnDouble(stmt, 43).map { Float($0) },
             sliderWhiteNorm: columnDouble(stmt, 44).map { Float($0) }
         )
-        // v23 columns: telescope (45) and site (46). Present only after migration v23.
+        // telescope (col 45) and site (col 46) added in migration v23.
         frame.telescope = columnText(stmt, 45)
         frame.site      = columnText(stmt, 46)
         return frame
