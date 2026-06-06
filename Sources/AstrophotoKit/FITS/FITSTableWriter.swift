@@ -47,6 +47,10 @@ private func writeStackedFITSC(
     _ rejHigh: Double,
     _ stackedSkyBkg: Double,
     _ stackedSkyNoise: Double,
+    _ objectName: UnsafePointer<CChar>,
+    _ camera: UnsafePointer<CChar>,
+    _ telescope: UnsafePointer<CChar>,
+    _ site: UnsafePointer<CChar>,
     _ statusOut: UnsafeMutablePointer<Int32>
 ) -> Int32
 
@@ -185,6 +189,10 @@ public struct FITSTableWriter {
         rejection: String = "sigma_clip",
         rejectionLow: Double = 3.0,
         rejectionHigh: Double = 3.0,
+        objectName: String? = nil,
+        camera: String? = nil,
+        telescope: String? = nil,
+        site: String? = nil,
         to path: String
     ) throws {
         let nrows = Int32(df.rows.count)
@@ -300,7 +308,11 @@ public struct FITSTableWriter {
 
         var statusOut: Int32 = 0
 
-        _ = path.withCString { cPath in
+        (objectName ?? "").withCString { cObject in
+        (camera ?? "").withCString { cCamera in
+        (telescope ?? "").withCString { cTelescope in
+        (site ?? "").withCString { cSite in
+        path.withCString { cPath in
         method.withCString { cMethod in
         normalisation.withCString { cNorm in
         rejection.withCString { cRej in
@@ -329,7 +341,7 @@ public struct FITSTableWriter {
             cTimestamps.withUnsafeMutableBufferPointer { ts in
             cFilterNames.withUnsafeMutableBufferPointer { fn in
             cFrameTypes.withUnsafeMutableBufferPointer { ft in
-                writeStackedFITSC(
+                _ = writeStackedFITSC(
                     cPath,
                     imgBuf.baseAddress!, Int32(width), Int32(height),
                     nrows,
@@ -344,9 +356,10 @@ public struct FITSTableWriter {
                     totalExposure, cFilter, refGain, refOffset_val, cDateObs,
                     cMethod, cNorm, cRej, rejectionLow, rejectionHigh,
                     stackedSkyBkg, stackedSkyNoise,
+                    cObject, cCamera, cTelescope, cSite,
                     &statusOut
                 )
-            }}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+            }}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
 
         if statusOut != 0 {
             var errText = [CChar](repeating: 0, count: 81)

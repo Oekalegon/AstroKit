@@ -203,6 +203,10 @@ int write_registration_fits_table(
 // Extra metadata written to the primary HDU header:
 //   IMAGETYP  = "STACKED LIGHT"
 //   NFRAMES   = number of frames integrated
+//   OBJECT    = target object name (if unanimous across input frames)
+//   INSTRUME  = camera / instrument (if unanimous)
+//   TELESCOP  = telescope name (if unanimous)
+//   OBSERVAT  = observatory / site name (if unanimous)
 //   EXPTIME   = total integration time (seconds)
 //   FILTER    = filter name from the reference frame
 //   GAIN      = camera gain from the reference frame (or -1 if unknown)
@@ -259,6 +263,11 @@ int write_stacked_fits(
     // stacked image noise
     double      stacked_sky_bkg,
     double      stacked_sky_noise,
+    // observation metadata (NULL or empty = skip)
+    const char *object_name,
+    const char *camera,
+    const char *telescope,
+    const char *site,
     int        *status_out
 ) {
     *status_out = 0;
@@ -281,6 +290,15 @@ int write_stacked_fits(
     fits_update_key(fptr, TSTRING, "IMAGETYP", imagetype, "Stacked master light frame", &status);
 
     fits_update_key(fptr, TINT,    "NFRAMES",  &nrows, "Number of frames integrated", &status);
+
+    if (object_name && object_name[0])
+        fits_update_key(fptr, TSTRING, "OBJECT",   (char *)object_name, "Target object", &status);
+    if (camera && camera[0])
+        fits_update_key(fptr, TSTRING, "INSTRUME", (char *)camera,      "Camera / instrument", &status);
+    if (telescope && telescope[0])
+        fits_update_key(fptr, TSTRING, "TELESCOP", (char *)telescope,   "Telescope", &status);
+    if (site && site[0])
+        fits_update_key(fptr, TSTRING, "OBSERVAT", (char *)site,        "Observatory / site name", &status);
 
     if (total_exposure > 0.0)
         fits_update_key(fptr, TDOUBLE, "EXPTIME", &total_exposure, "[s] Total integration time", &status);

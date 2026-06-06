@@ -333,6 +333,9 @@ extension AP {
                     let stackRej        = parameters["pixel_rejection"]?.stringValue  ?? "sigma_clip"
                     let stackRejLow     = parameters["rejection_low"]?.doubleValue    ?? 3.0
                     let stackRejHigh    = parameters["rejection_high"]?.doubleValue   ?? 3.0
+                    // Collect unanimous metadata from input frames for FITS headers.
+                    // Uses only live Frame properties — no archive lookup needed here.
+                    let inputMeta = unanimousFrameMetadata(from: pipelineInputs)
                     try FITSTableWriter.writeStackedOutput(
                         pixelData: pixels, width: w, height: h,
                         registrationTable: regDF,
@@ -341,6 +344,10 @@ extension AP {
                         rejection: stackRej,
                         rejectionLow: stackRejLow,
                         rejectionHigh: stackRejHigh,
+                        objectName: inputMeta.objectName,
+                        camera: inputMeta.camera,
+                        telescope: inputMeta.telescope,
+                        site: inputMeta.site,
                         to: outputPath
                     )
                     if !json {
@@ -434,6 +441,32 @@ extension AP {
         /// - **Single-frame** (summary tables from star_detection / optical_quality / autofocus):
         ///   the aggregate result is applied to each archive frame found among `pipelineInputs`.
         /// Returns only the frames produced by the last step of the pipeline.
+        /// Collects unanimous string metadata from all input frames without an archive lookup.
+        /// Returns nil for a field if the values differ across frames (mixed sessions / equipment).
+        private func unanimousFrameMetadata(from inputs: [String: Any])
+            -> (objectName: String?, camera: String?, telescope: String?, site: String?)
+        {
+            var objNames = Set<String>(), cams = Set<String>(), scopes = Set<String>(), sites = Set<String>()
+            for value in inputs.values {
+                let inputFrames: [Frame]
+                if let fs = value as? FrameSet { inputFrames = fs.frames }
+                else if let f = value as? Frame { inputFrames = [f] }
+                else { continue }
+                for f in inputFrames {
+                    if let v = f.objectName { objNames.insert(v) }
+                    if let v = f.camera     { cams.insert(v) }
+                    if let v = f.telescope  { scopes.insert(v) }
+                    if let v = f.site       { sites.insert(v) }
+                }
+            }
+            return (
+                objectName: objNames.count == 1 ? objNames.first : nil,
+                camera:     cams.count    == 1 ? cams.first    : nil,
+                telescope:  scopes.count  == 1 ? scopes.first  : nil,
+                site:       sites.count   == 1 ? sites.first   : nil
+            )
+        }
+
         /// Intermediate processing frames (blurred, background-subtracted, eroded, etc.)
         /// are produced by earlier steps and should not be archived as result frames.
         private func terminalFrames(from frames: [Frame], pipeline: Pipeline) -> [Frame] {
