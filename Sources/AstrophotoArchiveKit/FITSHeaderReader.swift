@@ -222,7 +222,10 @@ enum FITSHeaderReader {
 
     private static func parseTimestamp(_ headers: [String: FITSHeaderValue]) -> Date? {
         guard let raw = stringValue(headers, keys: ["DATE-OBS", "DATE-BEG"]) else { return nil }
+        // Capture software (NINA, SGPro, INDI) often writes microseconds (6+ digits).
+        // Truncate to 3 fractional digits so our DateFormatter patterns match.
         let s = raw.trimmingCharacters(in: .whitespaces)
+            .replacingOccurrences(of: #"(\.\d{3})\d+"#, with: "$1", options: .regularExpression)
         let formats = ["yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd"]
         let df = DateFormatter()
         df.timeZone = TimeZone(identifier: "UTC")
