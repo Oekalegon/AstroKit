@@ -603,8 +603,6 @@ actor ArchiveDatabase {
         return columnText(stmt, 0)
     }
 
-    /// Updates quality metrics on a frame. Only non-nil values are written;
-    /// passing `nil` for a metric leaves the existing DB value unchanged.
     /// Updates the timestamp (DATE-OBS) for a single frame.
     func updateTimestamp(id: UUID, timestamp: Date) throws {
         let iso = ISO8601DateFormatter()
@@ -645,6 +643,8 @@ actor ArchiveDatabase {
         }
     }
 
+    /// Updates quality metrics on a frame. Only non-nil values are written;
+    /// passing `nil` for a metric leaves the existing DB value unchanged.
     func updateFrameQuality(
         id: UUID,
         starCount: Int?,
