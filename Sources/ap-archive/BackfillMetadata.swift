@@ -46,7 +46,7 @@ struct BackfillMetadata: AsyncParsableCommand {
         if json {
             let obj: [String: Any] = [
                 "updated":          result.updated,
-                "already_complete": result.alreadyComplete,
+                "skipped": result.skipped,
                 "failed":           result.failed
             ]
             if let data = try? JSONSerialization.data(withJSONObject: obj, options: .prettyPrinted),
@@ -55,7 +55,7 @@ struct BackfillMetadata: AsyncParsableCommand {
             }
         } else {
             print("  Updated:          \(result.updated)")
-            print("  Already complete: \(result.alreadyComplete)")
+            print("  Skipped:          \(result.skipped)")
             if result.failed > 0 {
                 print("  Failed (file unreadable): \(result.failed)")
             }

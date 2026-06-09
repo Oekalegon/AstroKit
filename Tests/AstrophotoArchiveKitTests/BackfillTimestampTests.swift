@@ -197,7 +197,7 @@ struct BackfillTimestampTests {
         #expect(comps.second == 36)
     }
 
-    @Test("second call returns alreadyComplete instead of updated (idempotent)")
+    @Test("second call returns skipped instead of updated (idempotent)")
     func idempotent() async throws {
         let root = try makeTempRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -212,7 +212,7 @@ struct BackfillTimestampTests {
 
         #expect(first.updated == 1)
         #expect(second.updated == 0)
-        #expect(second.alreadyComplete >= 1)
+        #expect(second.skipped >= 1)
         #expect(second.failed == 0)
     }
 }

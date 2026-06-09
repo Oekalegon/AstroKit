@@ -440,7 +440,7 @@ struct ArchiveTools {
         return [
             "Backfilled observation metadata:",
             "  Updated:          \(result.updated)",
-            "  Already complete: \(result.alreadyComplete)",
+            "  Skipped:          \(result.skipped)",
             result.failed > 0 ? "  Failed (unreadable): \(result.failed)" : nil,
         ].compactMap { $0 }.joined(separator: "\n")
     }

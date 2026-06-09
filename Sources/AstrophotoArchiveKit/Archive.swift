@@ -284,8 +284,9 @@ public actor Archive {
     public struct BackfillResult {
         /// Frames whose FITS file was read and at least one field updated.
         public let updated: Int
-        /// Frames that already had all observation metadata and timestamp populated — no write needed.
-        public let alreadyComplete: Int
+        /// Frames for which no write was performed — either all fields were already populated,
+        /// or the FITS file had nothing new to contribute for the fields that were missing.
+        public let skipped: Int
         /// Frames whose FITS file could not be read (missing or corrupt).
         public let failed: Int
     }
@@ -311,14 +312,14 @@ public actor Archive {
             q.processingLevel = level
             allFrames += try await frames(matching: q)
         }
-        var updated = 0, alreadyComplete = 0, failed = 0
+        var updated = 0, skipped = 0, failed = 0
 
         for frame in allFrames {
             let needsMeta = frame.objectName == nil || frame.camera == nil
                             || frame.telescope == nil || frame.site == nil
             let needsDate = frame.timestamp == nil
 
-            guard needsMeta || needsDate else { alreadyComplete += 1; continue }
+            guard needsMeta || needsDate else { skipped += 1; continue }
 
             do {
                 let meta = try FITSHeaderReader.read(from: toAbsolutePath(frame.filePath))
@@ -346,12 +347,12 @@ public actor Archive {
                     wroteAnything = true
                 }
 
-                if wroteAnything { updated += 1 } else { alreadyComplete += 1 }
+                if wroteAnything { updated += 1 } else { skipped += 1 }
             } catch {
                 failed += 1
             }
         }
-        return BackfillResult(updated: updated, alreadyComplete: alreadyComplete, failed: failed)
+        return BackfillResult(updated: updated, skipped: skipped, failed: failed)
     }
 
     /// Updates quality metrics on an archived frame.
