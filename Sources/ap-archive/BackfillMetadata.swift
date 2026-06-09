@@ -33,6 +33,8 @@ struct BackfillMetadata: AsyncParsableCommand {
         let config  = try archiveOptions.makeConfiguration()
         let archive = try Archive(configuration: config)
 
+        // .stretched is omitted: no code path currently writes the STRETCHD FITS keyword,
+        // so stretched frames cannot exist in archives produced by this toolchain.
         let levels: [ProcessingLevel] = includeStacked
             ? [.raw, .calibrated, .stacked]
             : [.raw]

@@ -431,6 +431,8 @@ struct ArchiveTools {
     private func archiveBackfillMetadata(_ args: [String: Any]) async throws -> String {
         let includeStacked = args["include_stacked"] as? Bool ?? false
         let archive = try makeArchive()
+        // .stretched is omitted: no code path currently writes the STRETCHD FITS keyword,
+        // so stretched frames cannot exist in archives produced by this toolchain.
         let levels: [ProcessingLevel] = includeStacked
             ? [.raw, .calibrated, .stacked]
             : [.raw]
