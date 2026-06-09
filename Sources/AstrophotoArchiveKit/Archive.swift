@@ -284,7 +284,7 @@ public actor Archive {
     public struct BackfillResult {
         /// Frames whose FITS file was read and at least one field updated.
         public let updated: Int
-        /// Frames that already had all four fields populated — no write needed.
+        /// Frames that already had all observation metadata and timestamp populated — no write needed.
         public let alreadyComplete: Int
         /// Frames whose FITS file could not be read (missing or corrupt).
         public let failed: Int
