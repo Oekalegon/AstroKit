@@ -437,12 +437,16 @@ struct ArchiveTools {
             ? [.raw, .calibrated, .stacked]
             : [.raw]
         let result = try await archive.backfillObservationMetadata(processingLevels: levels)
-        return [
+        var lines = [
             "Backfilled observation metadata:",
             "  Updated:          \(result.updated)",
             "  Skipped:          \(result.skipped)",
-            result.failed > 0 ? "  Failed (unreadable): \(result.failed)" : nil,
-        ].compactMap { $0 }.joined(separator: "\n")
+        ]
+        if result.failed > 0 {
+            lines.append("  Failed (unreadable): \(result.failed)")
+            lines += result.failedPaths.map { "    \($0)" }
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func archiveReject(_ args: [String: Any]) async throws -> String {

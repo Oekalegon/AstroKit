@@ -185,6 +185,7 @@ struct BackfillTimestampTests {
 
         #expect(result.updated == 1)
         #expect(result.failed == 0)
+        #expect(result.failedPaths.isEmpty)
 
         let retrieved = try await db.frameByID(frame.id)
         let ts = try #require(retrieved?.timestamp)
@@ -214,5 +215,40 @@ struct BackfillTimestampTests {
         #expect(second.updated == 0)
         #expect(second.skipped >= 1)
         #expect(second.failed == 0)
+        #expect(second.failedPaths.isEmpty)
+    }
+
+    @Test("failed frame path is reported in failedPaths")
+    func failedPathReported() async throws {
+        let root = try makeTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let config = ArchiveConfiguration(rootURL: root)
+        let db = try ArchiveDatabase(url: config.databaseURL, archiveRootPath: root.path)
+
+        // Insert a frame whose FITS file does not exist on disk.
+        let missingURL = root.appendingPathComponent("ghost.fits")
+        let frame = ArchivedFrame(
+            id: UUID(),
+            filePath: missingURL.path,
+            objectName: nil,    // needsMeta = true → backfill will attempt to read the file
+            ra: nil, dec: nil, healpixPixel: nil,
+            frameType: "light", filter: nil, camera: nil,
+            focalLength: nil, pixelScale: nil, temperature: nil,
+            timestamp: nil,
+            exposureTime: nil, gain: nil, offset: nil,
+            width: 2, height: 2, bitpix: 32,
+            calibrated: false, stacked: false, stretched: false,
+            processingLevel: .raw, addedAt: Date()
+        )
+        try await db.insertFrame(frame)
+
+        let archive = try Archive(configuration: config)
+        let result = try await archive.backfillObservationMetadata()
+
+        #expect(result.failed == 1)
+        #expect(result.failedPaths.count == 1)
+        #expect(result.failedPaths.first?.hasSuffix("ghost.fits") == true)
+        #expect(result.updated == 0)
     }
 }

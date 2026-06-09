@@ -289,6 +289,8 @@ public actor Archive {
         public let skipped: Int
         /// Frames whose FITS file could not be read (missing or corrupt).
         public let failed: Int
+        /// Absolute paths of the FITS files that could not be read.
+        public let failedPaths: [String]
     }
 
     /// Re-reads FITS headers for existing archived frames and fills in missing
@@ -313,6 +315,7 @@ public actor Archive {
             allFrames += try await frames(matching: q)
         }
         var updated = 0, skipped = 0, failed = 0
+        var failedPaths: [String] = []
 
         for frame in allFrames {
             let needsMeta = frame.objectName == nil || frame.camera == nil
@@ -350,9 +353,10 @@ public actor Archive {
                 if wroteAnything { updated += 1 } else { skipped += 1 }
             } catch {
                 failed += 1
+                failedPaths.append(toAbsolutePath(frame.filePath))
             }
         }
-        return BackfillResult(updated: updated, skipped: skipped, failed: failed)
+        return BackfillResult(updated: updated, skipped: skipped, failed: failed, failedPaths: failedPaths)
     }
 
     /// Updates quality metrics on an archived frame.
