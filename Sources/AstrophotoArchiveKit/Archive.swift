@@ -304,13 +304,16 @@ public actor Archive {
     public func backfillObservationMetadata(
         processingLevels: [ProcessingLevel] = [.raw]
     ) async throws -> BackfillResult {
-        var query = FrameQuery()
-        query.rejectionFilter = .includeAll
-
-        let allFrames = try await frames(matching: query)
+        var allFrames: [ArchivedFrame] = []
+        for level in processingLevels {
+            var q = FrameQuery()
+            q.rejectionFilter = .includeAll
+            q.processingLevel = level
+            allFrames += try await frames(matching: q)
+        }
         var updated = 0, alreadyComplete = 0, failed = 0
 
-        for frame in allFrames where processingLevels.contains(frame.processingLevel) {
+        for frame in allFrames {
             let needsMeta = frame.objectName == nil || frame.camera == nil
                             || frame.telescope == nil || frame.site == nil
             let needsDate = frame.timestamp == nil
