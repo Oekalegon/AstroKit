@@ -605,6 +605,33 @@ actor ArchiveDatabase {
 
     /// Updates quality metrics on a frame. Only non-nil values are written;
     /// passing `nil` for a metric leaves the existing DB value unchanged.
+    /// Updates observation metadata fields for a single frame.
+    /// Only non-nil arguments are written; existing values are never overwritten with NULL.
+    func updateObservationMetadata(
+        id: UUID,
+        objectName: String?,
+        camera: String?,
+        telescope: String?,
+        site: String?
+    ) throws {
+        var setClauses: [String] = []
+        var values: [String] = []
+        if let v = objectName { setClauses.append("object_name = ?"); values.append(v) }
+        if let v = camera     { setClauses.append("camera = ?");      values.append(v) }
+        if let v = telescope  { setClauses.append("telescope = ?");   values.append(v) }
+        if let v = site       { setClauses.append("site = ?");        values.append(v) }
+        guard !setClauses.isEmpty else { return }
+
+        let sql = "UPDATE frames SET \(setClauses.joined(separator: ", ")) WHERE id = ?"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        for (i, v) in values.enumerated() { bind(stmt, Int32(i + 1), v) }
+        bind(stmt, Int32(values.count + 1), id.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
     func updateFrameQuality(
         id: UUID,
         starCount: Int?,

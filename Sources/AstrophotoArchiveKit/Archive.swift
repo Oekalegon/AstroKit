@@ -280,6 +280,66 @@ public actor Archive {
 
     // MARK: - Quality metrics
 
+    /// Result type for `backfillObservationMetadata`.
+    public struct BackfillResult {
+        /// Frames whose FITS file was read and at least one field updated.
+        public let updated: Int
+        /// Frames that already had all four fields populated — no write needed.
+        public let alreadyComplete: Int
+        /// Frames whose FITS file could not be read (missing or corrupt).
+        public let failed: Int
+    }
+
+    /// Re-reads FITS headers for existing archived frames and fills in missing
+    /// `objectName`, `camera`, `telescope`, and `site` fields.
+    ///
+    /// Only frames that are missing at least one of the four fields are processed.
+    /// Existing non-nil values are never overwritten.
+    /// By default only `raw` frames are processed — stacked frames derive their
+    /// instrument metadata from their inputs and are not expected to carry these
+    /// headers directly.
+    ///
+    /// - Parameter processingLevels: Levels to include. Defaults to `[.raw]`.
+    /// - Returns: A `BackfillResult` with counts of updated, already-complete, and failed frames.
+    public func backfillObservationMetadata(
+        processingLevels: [ProcessingLevel] = [.raw]
+    ) async throws -> BackfillResult {
+        var query = FrameQuery()
+        query.rejectionFilter = .includeAll
+
+        let allFrames = try await frames(matching: query)
+        var updated = 0, alreadyComplete = 0, failed = 0
+
+        for frame in allFrames where processingLevels.contains(frame.processingLevel) {
+            guard frame.objectName == nil || frame.camera == nil
+                    || frame.telescope == nil || frame.site == nil
+            else { alreadyComplete += 1; continue }
+
+            do {
+                let meta = try FITSHeaderReader.read(from: toAbsolutePath(frame.filePath))
+                let newObj   = frame.objectName == nil ? meta.objectName : nil
+                let newCam   = frame.camera     == nil ? meta.camera     : nil
+                let newScope = frame.telescope  == nil ? meta.telescope  : nil
+                let newSite  = frame.site       == nil ? meta.site       : nil
+                if newObj != nil || newCam != nil || newScope != nil || newSite != nil {
+                    try await database.updateObservationMetadata(
+                        id: frame.id,
+                        objectName: newObj,
+                        camera: newCam,
+                        telescope: newScope,
+                        site: newSite
+                    )
+                    updated += 1
+                } else {
+                    alreadyComplete += 1
+                }
+            } catch {
+                failed += 1
+            }
+        }
+        return BackfillResult(updated: updated, alreadyComplete: alreadyComplete, failed: failed)
+    }
+
     /// Updates quality metrics on an archived frame.
     ///
     /// Call this after running an analysis pipeline on the frame to persist the results.

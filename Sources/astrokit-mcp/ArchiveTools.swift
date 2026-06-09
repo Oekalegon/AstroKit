@@ -80,6 +80,7 @@ struct ArchiveTools {
         case "archive_frameset_quality":  return try await archiveFrameSetQuality(arguments)
         case "archive_frameset_exclude":  return try await archiveFrameSetExclude(arguments)
         case "archive_frameset_delete":   return try await archiveFrameSetDelete(arguments)
+        case "archive_backfill_metadata": return try await archiveBackfillMetadata(arguments)
         default: throw ToolError("Unknown archive tool: \(name)")
         }
     }
@@ -425,6 +426,21 @@ struct ArchiveTools {
         lines.append("  Used:      \(stats.usedBytesFormatted)")
         lines.append("  Available: \(stats.availableBytesFormatted)")
         return lines.joined(separator: "\n")
+    }
+
+    private func archiveBackfillMetadata(_ args: [String: Any]) async throws -> String {
+        let includeStacked = args["include_stacked"] as? Bool ?? false
+        let archive = try makeArchive()
+        let levels: [ProcessingLevel] = includeStacked
+            ? [.raw, .calibrated, .stacked]
+            : [.raw]
+        let result = try await archive.backfillObservationMetadata(processingLevels: levels)
+        return [
+            "Backfilled observation metadata:",
+            "  Updated:          \(result.updated)",
+            "  Already complete: \(result.alreadyComplete)",
+            result.failed > 0 ? "  Failed (unreadable): \(result.failed)" : nil,
+        ].compactMap { $0 }.joined(separator: "\n")
     }
 
     private func archiveReject(_ args: [String: Any]) async throws -> String {
