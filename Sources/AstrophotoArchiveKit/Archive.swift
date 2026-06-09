@@ -311,12 +311,23 @@ public actor Archive {
         var updated = 0, alreadyComplete = 0, failed = 0
 
         for frame in allFrames where processingLevels.contains(frame.processingLevel) {
-            guard frame.objectName == nil || frame.camera == nil
-                    || frame.telescope == nil || frame.site == nil
-            else { alreadyComplete += 1; continue }
+            let needsMeta = frame.objectName == nil || frame.camera == nil
+                            || frame.telescope == nil || frame.site == nil
+            let needsDate = frame.timestamp == nil
+
+            guard needsMeta || needsDate else { alreadyComplete += 1; continue }
 
             do {
                 let meta = try FITSHeaderReader.read(from: toAbsolutePath(frame.filePath))
+                var wroteAnything = false
+
+                // Repair timestamp: write_result_frame_fits appends "Z" which the old
+                // parseTimestamp didn't handle — frames ended up in unknown-date/.
+                if needsDate, let ts = meta.timestamp {
+                    try await database.updateTimestamp(id: frame.id, timestamp: ts)
+                    wroteAnything = true
+                }
+
                 let newObj   = frame.objectName == nil ? meta.objectName : nil
                 let newCam   = frame.camera     == nil ? meta.camera     : nil
                 let newScope = frame.telescope  == nil ? meta.telescope  : nil
@@ -329,10 +340,10 @@ public actor Archive {
                         telescope: newScope,
                         site: newSite
                     )
-                    updated += 1
-                } else {
-                    alreadyComplete += 1
+                    wroteAnything = true
                 }
+
+                if wroteAnything { updated += 1 } else { alreadyComplete += 1 }
             } catch {
                 failed += 1
             }

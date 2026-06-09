@@ -605,6 +605,19 @@ actor ArchiveDatabase {
 
     /// Updates quality metrics on a frame. Only non-nil values are written;
     /// passing `nil` for a metric leaves the existing DB value unchanged.
+    /// Updates the timestamp (DATE-OBS) for a single frame.
+    func updateTimestamp(id: UUID, timestamp: Date) throws {
+        let iso = ISO8601DateFormatter()
+        let sql = "UPDATE frames SET timestamp = ? WHERE id = ?"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, iso.string(from: timestamp))
+        bind(stmt, 2, id.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
     /// Updates observation metadata fields for a single frame.
     /// Only non-nil arguments are written; existing values are never overwritten with NULL.
     func updateObservationMetadata(
