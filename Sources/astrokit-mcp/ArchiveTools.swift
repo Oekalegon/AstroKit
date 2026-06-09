@@ -80,6 +80,7 @@ struct ArchiveTools {
         case "archive_frameset_quality":  return try await archiveFrameSetQuality(arguments)
         case "archive_frameset_exclude":  return try await archiveFrameSetExclude(arguments)
         case "archive_frameset_delete":   return try await archiveFrameSetDelete(arguments)
+        case "archive_backfill_metadata": return try await archiveBackfillMetadata(arguments)
         default: throw ToolError("Unknown archive tool: \(name)")
         }
     }
@@ -424,6 +425,27 @@ struct ArchiveTools {
         }
         lines.append("  Used:      \(stats.usedBytesFormatted)")
         lines.append("  Available: \(stats.availableBytesFormatted)")
+        return lines.joined(separator: "\n")
+    }
+
+    private func archiveBackfillMetadata(_ args: [String: Any]) async throws -> String {
+        let includeStacked = args["include_stacked"] as? Bool ?? false
+        let archive = try makeArchive()
+        // .stretched is omitted: no code path currently writes the STRETCHD FITS keyword,
+        // so stretched frames cannot exist in archives produced by this toolchain.
+        let levels: [ProcessingLevel] = includeStacked
+            ? [.raw, .calibrated, .stacked]
+            : [.raw]
+        let result = try await archive.backfillObservationMetadata(processingLevels: levels)
+        var lines = [
+            "Backfilled observation metadata:",
+            "  Updated:          \(result.updated)",
+            "  Skipped:          \(result.skipped)",
+        ]
+        if result.failed > 0 {
+            lines.append("  Failed (unreadable): \(result.failed)")
+            lines += result.failedPaths.map { "    \($0)" }
+        }
         return lines.joined(separator: "\n")
     }
 

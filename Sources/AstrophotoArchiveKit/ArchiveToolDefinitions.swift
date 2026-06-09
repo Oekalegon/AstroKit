@@ -264,5 +264,16 @@ public enum ArchiveToolDefinitions {
                 "required": ["id"],
             ] as [String: Any],
         ],
+        [
+            "name": "archive_backfill_metadata",
+            "description": "Re-read FITS headers for existing archived frames and fill in missing observation metadata (OBJECT → objectName, INSTRUME → camera, TELESCOP → telescope, OBSERVAT → site). Only fills fields that are currently nil — existing values are never overwritten. By default only raw frames are processed; pass include_stacked: true to also include calibrated and stacked frames.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "include_stacked": ["type": "boolean", "description": "Also process calibrated and stacked frames (default: false, raw only)."],
+                ] as [String: Any],
+                "required": [],
+            ] as [String: Any],
+        ],
     ]
 }

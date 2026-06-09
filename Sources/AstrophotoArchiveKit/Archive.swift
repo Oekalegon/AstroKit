@@ -280,6 +280,85 @@ public actor Archive {
 
     // MARK: - Quality metrics
 
+    /// Result type for `backfillObservationMetadata`.
+    public struct BackfillResult {
+        /// Frames whose FITS file was read and at least one field updated.
+        public let updated: Int
+        /// Frames for which no write was performed — either all fields were already populated,
+        /// or the FITS file had nothing new to contribute for the fields that were missing.
+        public let skipped: Int
+        /// Frames whose FITS file could not be read (missing or corrupt).
+        public let failed: Int
+        /// Absolute paths of the FITS files that could not be read.
+        public let failedPaths: [String]
+    }
+
+    /// Re-reads FITS headers for existing archived frames and fills in missing
+    /// `objectName`, `camera`, `telescope`, and `site` fields.
+    ///
+    /// Only frames that are missing at least one of the four fields are processed.
+    /// Existing non-nil values are never overwritten.
+    /// By default only `raw` frames are processed — stacked frames derive their
+    /// instrument metadata from their inputs and are not expected to carry these
+    /// headers directly.
+    ///
+    /// - Parameter processingLevels: Levels to include. Defaults to `[.raw]`.
+    /// - Returns: A `BackfillResult` with counts of updated, already-complete, and failed frames.
+    public func backfillObservationMetadata(
+        processingLevels: [ProcessingLevel] = [.raw]
+    ) async throws -> BackfillResult {
+        var allFrames: [ArchivedFrame] = []
+        for level in processingLevels {
+            var q = FrameQuery()
+            q.rejectionFilter = .includeAll
+            q.processingLevel = level
+            allFrames += try await frames(matching: q)
+        }
+        var updated = 0, skipped = 0, failed = 0
+        var failedPaths: [String] = []
+
+        for frame in allFrames {
+            let needsMeta = frame.objectName == nil || frame.camera == nil
+                            || frame.telescope == nil || frame.site == nil
+            let needsDate = frame.timestamp == nil
+
+            guard needsMeta || needsDate else { skipped += 1; continue }
+
+            do {
+                let meta = try FITSHeaderReader.read(from: toAbsolutePath(frame.filePath))
+                var wroteAnything = false
+
+                // Repair timestamp: write_result_frame_fits appends "Z" which the old
+                // parseTimestamp didn't handle — frames ended up in unknown-date/.
+                if needsDate, let ts = meta.timestamp {
+                    try await database.updateTimestamp(id: frame.id, timestamp: ts)
+                    wroteAnything = true
+                }
+
+                let newObj   = frame.objectName == nil ? meta.objectName : nil
+                let newCam   = frame.camera     == nil ? meta.camera     : nil
+                let newScope = frame.telescope  == nil ? meta.telescope  : nil
+                let newSite  = frame.site       == nil ? meta.site       : nil
+                if newObj != nil || newCam != nil || newScope != nil || newSite != nil {
+                    try await database.updateObservationMetadata(
+                        id: frame.id,
+                        objectName: newObj,
+                        camera: newCam,
+                        telescope: newScope,
+                        site: newSite
+                    )
+                    wroteAnything = true
+                }
+
+                if wroteAnything { updated += 1 } else { skipped += 1 }
+            } catch {
+                failed += 1
+                failedPaths.append(toAbsolutePath(frame.filePath))
+            }
+        }
+        return BackfillResult(updated: updated, skipped: skipped, failed: failed, failedPaths: failedPaths)
+    }
+
     /// Updates quality metrics on an archived frame.
     ///
     /// Call this after running an analysis pipeline on the frame to persist the results.

@@ -223,10 +223,24 @@ enum FITSHeaderReader {
     private static func parseTimestamp(_ headers: [String: FITSHeaderValue]) -> Date? {
         guard let raw = stringValue(headers, keys: ["DATE-OBS", "DATE-BEG"]) else { return nil }
         let s = raw.trimmingCharacters(in: .whitespaces)
-        let formats = ["yyyy-MM-dd'T'HH:mm:ss.SSS", "yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd"]
+
+        // Try ISO 8601 with timezone first (handles "Z" and "+HH:MM" suffixes).
+        // write_result_frame_fits appends "Z", so this path covers pipeline result frames.
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = iso.date(from: s) { return d }
+        iso.formatOptions = [.withInternetDateTime]
+        if let d = iso.date(from: s) { return d }
+
+        // Fall back to bare datetime strings without timezone (treated as UTC).
         let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
         df.timeZone = TimeZone(identifier: "UTC")
-        for fmt in formats {
+        for fmt in ["yyyy-MM-dd'T'HH:mm:ss.SSS",
+                    "yyyy-MM-dd'T'HH:mm:ss.SS",
+                    "yyyy-MM-dd'T'HH:mm:ss.S",
+                    "yyyy-MM-dd'T'HH:mm:ss",
+                    "yyyy-MM-dd"] {
             df.dateFormat = fmt
             if let date = df.date(from: s) { return date }
         }
