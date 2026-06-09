@@ -11,6 +11,11 @@ struct BackfillMetadata: AsyncParsableCommand {
         each archived frame that is missing one or more of these fields, and updates the \
         archive database. Existing values are never overwritten.
 
+        Also repairs missing observation timestamps: frames archived when DATE-OBS \
+        carried a timezone designator (e.g. "Z") were previously stored without a \
+        timestamp and filed under unknown-date/. This command reads DATE-OBS from the \
+        FITS file and corrects the stored timestamp.
+
         By default only raw frames are processed. Pass --include-stacked to also process \
         stacked and calibrated frames.
         """
