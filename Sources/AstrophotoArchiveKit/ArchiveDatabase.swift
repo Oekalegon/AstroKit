@@ -1255,9 +1255,15 @@ actor ArchiveDatabase {
         )
     }
 
-    func recentFrames(limit: Int) throws -> [ArchivedFrame] {
+    func recentFrames(limit: Int, rejectionFilter: RejectionFilter = .excludeRejected) throws -> [ArchivedFrame] {
+        let condition: String
+        switch rejectionFilter {
+        case .excludeRejected: condition = "WHERE rejected = 0 "
+        case .onlyRejected:    condition = "WHERE rejected = 1 "
+        case .includeAll:      condition = ""
+        }
         let stmt = try prepare(
-            "SELECT * FROM frames WHERE rejected = 0 ORDER BY added_at DESC LIMIT \(limit)"
+            "SELECT * FROM frames \(condition)ORDER BY added_at DESC LIMIT \(limit)"
         )
         defer { sqlite3_finalize(stmt) }
         var results: [ArchivedFrame] = []

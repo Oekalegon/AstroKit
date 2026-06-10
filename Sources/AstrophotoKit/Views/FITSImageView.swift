@@ -44,18 +44,15 @@ class FITSMTKView: MTKView {
             let cursorPos = SIMD2<Float>(normalizedX, normalizedY)
             renderer?.cursorPosition = cursorPos
             renderer?.onCursorPositionChanged?(cursorPos)
-            needsDisplay = true
         } else {
             renderer?.cursorPosition = nil
             renderer?.onCursorPositionChanged?(nil)
-            needsDisplay = true
         }
     }
     
     override func mouseExited(with event: NSEvent) {
         renderer?.cursorPosition = nil
         renderer?.onCursorPositionChanged?(nil)
-        needsDisplay = true
     }
     
     override func mouseDown(with event: NSEvent) {
@@ -235,15 +232,18 @@ public class FITSImageRenderer: NSObject, MTKViewDelegate {
         let pointer = uniformBuffer.contents().bindMemory(to: Uniforms.self, capacity: 1)
         pointer[0] = uniforms
         
-        // Store aspect ratio for use by rulers
-        self.aspectRatio = aspectRatio
-        onAspectRatioChanged?(aspectRatio)
+        // Store aspect ratio for use by rulers; only notify when it actually changes
+        if aspectRatio != self.aspectRatio {
+            self.aspectRatio = aspectRatio
+            onAspectRatioChanged?(aspectRatio)
+        }
     }
     
     func setZoom(_ newZoom: Float, zoomCenter: SIMD2<Float>? = nil) {
+        let clampedZoom = max(0.1, min(10.0, newZoom))
+        guard clampedZoom != zoom else { return }
         let oldZoom = zoom
-        let clampedZoom = max(0.1, min(10.0, newZoom)) // Clamp between 0.1x and 10x
-        
+
         if let center = zoomCenter, oldZoom > 0 {
             // Zoom around a specific point (e.g., cursor position)
             // The transform is: screenPos = worldPos * zoom + panOffset
@@ -298,8 +298,9 @@ public class FITSImageRenderer: NSObject, MTKViewDelegate {
         onZoomChanged?(zoom)
         mtkView?.needsDisplay = true
     }
-    
+
     func setPanOffset(_ offset: SIMD2<Float>) {
+        guard offset != panOffset else { return }
         panOffset = offset
         updateUniforms()
         onPanChanged?(panOffset)
@@ -307,8 +308,11 @@ public class FITSImageRenderer: NSObject, MTKViewDelegate {
     }
     
     func updateAspectRatio() {
+        let old = aspectRatio
         updateUniforms()
-        mtkView?.needsDisplay = true
+        if aspectRatio != old {
+            mtkView?.needsDisplay = true
+        }
     }
     
     func resetZoomAndPan() {
@@ -462,6 +466,7 @@ public class FITSImageRenderer: NSObject, MTKViewDelegate {
     /// Accepts both grayscale (r32Float) and RGBA (rgba32Float) textures
     /// The shader handles both formats automatically
     func loadTexture(_ texture: MTLTexture, originalMinValue: Float = 0.0, originalMaxValue: Float = 1.0) {
+        if texture === self.texture && originalMinValue == self.originalMinValue && originalMaxValue == self.originalMaxValue { return }
         // Use texture directly - shader handles both grayscale and RGBA formats
         self.texture = texture
         self.imageWidth = texture.width
@@ -479,23 +484,27 @@ public class FITSImageRenderer: NSObject, MTKViewDelegate {
     }
     
     func setBlackPoint(_ value: Float) {
-        blackPoint = max(originalMinValue, min(value, whitePoint))
+        let newValue = max(originalMinValue, min(value, whitePoint))
+        guard newValue != blackPoint else { return }
+        blackPoint = newValue
         updateUniforms()
         mtkView?.needsDisplay = true
     }
-    
+
     func setWhitePoint(_ value: Float) {
-        whitePoint = max(blackPoint, min(value, originalMaxValue))
+        let newValue = max(blackPoint, min(value, originalMaxValue))
+        guard newValue != whitePoint else { return }
+        whitePoint = newValue
         updateUniforms()
         mtkView?.needsDisplay = true
     }
 
     public func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
-        // Update uniforms when view size changes to recalculate aspect ratio
         updateUniforms()
     }
 
     public func setDisplayMode(_ mode: FITSImageDisplayMode) {
+        guard mode != displayMode else { return }
         displayMode = mode
         mtkView?.needsDisplay = true
     }
@@ -583,9 +592,8 @@ public struct FITSImageView: NSViewRepresentable {
         mtkView.renderer = context.coordinator
         context.coordinator.mtkView = mtkView
         mtkView.delegate = context.coordinator
-        mtkView.preferredFramesPerSecond = 60
         mtkView.enableSetNeedsDisplay = true
-        mtkView.isPaused = false
+        mtkView.isPaused = true
         mtkView.framebufferOnly = false
         // Set background to match system background (lighter dark grey)
         // Use a lighter grey that matches content areas in dark mode
@@ -648,8 +656,8 @@ public struct FITSImageView: NSViewRepresentable {
         context.coordinator.setDisplayMode(displayMode)
         // Update aspect ratio when view size changes
         context.coordinator.updateAspectRatio()
-        // Update tracking area if view size changed and interactive
-        if isInteractive {
+        // Update tracking area only when bounds changed and interactive
+        if isInteractive && nsView.bounds != context.coordinator.trackingArea?.rect {
             updateTrackingArea(for: nsView, coordinator: context.coordinator)
         }
         // setZoom may update panOffset internally (for center zoom), so call it first
@@ -661,8 +669,9 @@ public struct FITSImageView: NSViewRepresentable {
         if context.coordinator.panOffset == oldPanOffset {
             context.coordinator.setPanOffset(panOffset)
         } else {
-            // setZoom updated panOffset, so sync it back to the binding
-            panOffset = context.coordinator.panOffset
+            // setZoom updated panOffset; defer write to avoid modifying state during view update
+            let syncedPan = context.coordinator.panOffset
+            DispatchQueue.main.async { panOffset = syncedPan }
         }
         context.coordinator.setBlackPoint(blackPoint)
         context.coordinator.setWhitePoint(whitePoint)
