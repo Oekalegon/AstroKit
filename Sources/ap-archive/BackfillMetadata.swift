@@ -5,11 +5,16 @@ import Foundation
 struct BackfillMetadata: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "backfill-metadata",
-        abstract: "Re-read FITS headers to fill in missing observation metadata.",
+        abstract: "Re-read FITS headers to fill in missing observation and acquisition metadata.",
         discussion: """
-        Reads OBJECT, INSTRUME, TELESCOP, and OBSERVAT from the FITS file on disk for \
-        each archived frame that is missing one or more of these fields, and updates the \
-        archive database. Existing values are never overwritten.
+        Reads the following FITS keywords for each archived frame that is missing one or \
+        more of them, and updates the archive database. Existing values are never overwritten.
+
+        Observation strings: OBJECT, INSTRUME, TELESCOP, OBSERVAT
+        Numeric acquisition data: EXPTIME, GAIN, OFFSET, CCD-TEMP, EGAIN, FOCALLEN, PIXSCALE, POSANGLE
+
+        When EXPTIME is recovered, the frame's deduplication signature is recomputed so \
+        that re-importing the same file later does not create a duplicate entry.
 
         Also repairs missing observation timestamps: frames archived when DATE-OBS \
         carried a timezone designator (e.g. "Z") were previously stored without a \
