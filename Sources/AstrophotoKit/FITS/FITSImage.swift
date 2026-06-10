@@ -205,8 +205,11 @@ public enum FITSHeaderValue: Equatable {
     }
     
     public var doubleValue: Double? {
-        if case .floatingPoint(let d) = self { return d }
-        return nil
+        switch self {
+        case .floatingPoint(let d): return d
+        case .integer(let i):       return Double(i)
+        default:                    return nil
+        }
     }
     
     public var boolValue: Bool? {

@@ -295,11 +295,15 @@ public actor Archive {
         public let failedPaths: [String]
     }
 
-    /// Re-reads FITS headers for existing archived frames and fills in missing
-    /// `objectName`, `camera`, `telescope`, and `site` fields.
+    /// Re-reads FITS headers for existing archived frames and fills in missing fields:
+    /// - Observation strings: `objectName`, `camera`, `telescope`, `site`
+    /// - Numeric acquisition data: `exposureTime`, `gain`, `offset`, `temperature`,
+    ///   `egain`, `focalLength`, `pixelScale`, `positionAngle`
+    /// - `timestamp` (repairs frames archived before the DATE-OBS "Z" suffix was handled)
     ///
-    /// Only frames that are missing at least one of the four fields are processed.
-    /// Existing non-nil values are never overwritten.
+    /// Only frames missing at least one field are processed. Existing non-nil values are
+    /// never overwritten. When `exposureTime` is recovered the frame signature is recomputed
+    /// to keep the deduplication index consistent.
     /// By default only `raw` frames are processed — stacked frames derive their
     /// instrument metadata from their inputs and are not expected to carry these
     /// headers directly.
@@ -323,8 +327,12 @@ public actor Archive {
             let needsMeta = frame.objectName == nil || frame.camera == nil
                             || frame.telescope == nil || frame.site == nil
             let needsDate = frame.timestamp == nil
+            let needsNumeric = frame.exposureTime == nil || frame.gain == nil
+                            || frame.offset == nil || frame.temperature == nil
+                            || frame.egain == nil || frame.focalLength == nil
+                            || frame.pixelScale == nil || frame.positionAngle == nil
 
-            guard needsMeta || needsDate else { skipped += 1; continue }
+            guard needsMeta || needsDate || needsNumeric else { skipped += 1; continue }
 
             do {
                 let meta = try FITSHeaderReader.read(from: toAbsolutePath(frame.filePath))
@@ -348,6 +356,41 @@ public actor Archive {
                         camera: newCam,
                         telescope: newScope,
                         site: newSite
+                    )
+                    wroteAnything = true
+                }
+
+                let newExp   = frame.exposureTime  == nil ? meta.exposureTime  : nil
+                let newGain  = frame.gain          == nil ? meta.gain          : nil
+                let newOff   = frame.offset        == nil ? meta.offset        : nil
+                let newTemp  = frame.temperature   == nil ? meta.temperature   : nil
+                let newEgain = frame.egain         == nil ? meta.egain         : nil
+                let newFL    = frame.focalLength   == nil ? meta.focalLength   : nil
+                let newPS    = frame.pixelScale    == nil ? meta.pixelScale    : nil
+                let newPA    = frame.positionAngle == nil ? meta.positionAngle : nil
+                if newExp != nil || newGain != nil || newOff != nil || newTemp != nil
+                    || newEgain != nil || newFL != nil || newPS != nil || newPA != nil {
+                    // If exposureTime is being written, recompute frame_signature so the
+                    // deduplication index stays consistent with the corrected value.
+                    let newSig: String? = newExp.map { exp in
+                        ArchiveDatabase.frameSignature(
+                            fileDate: frame.fileDate ?? frame.timestamp,
+                            frameType: frame.frameType,
+                            filter: frame.filter,
+                            exposureTime: exp
+                        )
+                    }
+                    try await database.updateAcquisitionMetadata(
+                        id: frame.id,
+                        exposureTime: newExp,
+                        gain: newGain,
+                        offset: newOff,
+                        temperature: newTemp,
+                        egain: newEgain,
+                        focalLength: newFL,
+                        pixelScale: newPS,
+                        positionAngle: newPA,
+                        newFrameSignature: newSig
                     )
                     wroteAnything = true
                 }

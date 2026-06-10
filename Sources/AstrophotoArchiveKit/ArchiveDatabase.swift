@@ -643,6 +643,49 @@ actor ArchiveDatabase {
         }
     }
 
+    /// Updates numeric acquisition fields for a single frame.
+    /// Only non-nil arguments are written; existing values are never overwritten with NULL.
+    /// When `exposureTime` is updated, `newFrameSignature` must be provided so the
+    /// deduplication index stays consistent. Uses OR IGNORE to silently skip if the new
+    /// signature already exists (which would mean a true duplicate is already in the archive).
+    func updateAcquisitionMetadata(
+        id: UUID,
+        exposureTime: Double?,
+        gain: Double?,
+        offset: Double?,
+        temperature: Double?,
+        egain: Double?,
+        focalLength: Double?,
+        pixelScale: Double?,
+        positionAngle: Double?,
+        newFrameSignature: String? = nil
+    ) throws {
+        var setClauses: [String] = []
+        var doubles: [(String, Double)] = []
+        var strings: [(String, String)] = []
+        if let v = exposureTime  { setClauses.append("exposure_time = ?");  doubles.append(("exposure_time",  v)) }
+        if let v = gain          { setClauses.append("gain = ?");            doubles.append(("gain",           v)) }
+        if let v = offset        { setClauses.append("offset = ?");          doubles.append(("offset",         v)) }
+        if let v = temperature   { setClauses.append("temperature = ?");     doubles.append(("temperature",    v)) }
+        if let v = egain         { setClauses.append("egain = ?");           doubles.append(("egain",          v)) }
+        if let v = focalLength   { setClauses.append("focal_length = ?");    doubles.append(("focal_length",   v)) }
+        if let v = pixelScale    { setClauses.append("pixel_scale = ?");     doubles.append(("pixel_scale",    v)) }
+        if let v = positionAngle { setClauses.append("position_angle = ?");  doubles.append(("position_angle", v)) }
+        if let v = newFrameSignature { setClauses.append("frame_signature = ?"); strings.append(("frame_signature", v)) }
+        guard !setClauses.isEmpty else { return }
+
+        let sql = "UPDATE OR IGNORE frames SET \(setClauses.joined(separator: ", ")) WHERE id = ?"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        var pos: Int32 = 1
+        for (_, v) in doubles { sqlite3_bind_double(stmt, pos, v); pos += 1 }
+        for (_, v) in strings { bind(stmt, pos, v); pos += 1 }
+        bind(stmt, pos, id.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
     /// Updates quality metrics on a frame. Only non-nil values are written;
     /// passing `nil` for a metric leaves the existing DB value unchanged.
     func updateFrameQuality(

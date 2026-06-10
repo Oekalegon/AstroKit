@@ -266,7 +266,7 @@ public enum ArchiveToolDefinitions {
         ],
         [
             "name": "archive_backfill_metadata",
-            "description": "Re-read FITS headers for existing archived frames and fill in missing observation metadata (OBJECT → objectName, INSTRUME → camera, TELESCOP → telescope, OBSERVAT → site). Only fills fields that are currently nil — existing values are never overwritten. By default only raw frames are processed; pass include_stacked: true to also include calibrated and stacked frames.",
+            "description": "Re-read FITS headers for existing archived frames and fill in missing metadata. Fills observation strings (OBJECT → objectName, INSTRUME → camera, TELESCOP → telescope, OBSERVAT → site) and numeric acquisition data (EXPTIME → exposureTime, GAIN → gain, OFFSET → offset, CCD-TEMP → temperature, EGAIN → egain, FOCALLEN → focalLength, PIXSCALE → pixelScale, POSANGLE → positionAngle). Only fills fields that are currently nil — existing values are never overwritten. When exposureTime is recovered the frame's deduplication signature is recomputed. By default only raw frames are processed; pass include_stacked: true to also include calibrated and stacked frames.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
