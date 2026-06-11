@@ -24,11 +24,24 @@ struct PixelScaleDerivationTests {
         #expect(abs(scale - 206.2648 * 3.76 / 530) < 1e-4)
     }
 
-    @Test("XBINNING multiplies the derived scale")
-    func binningMultiplies() throws {
+    @Test("XPIXSZ is the binned size — XBINNING is not applied twice")
+    func binnedKeywordNotDoubled() throws {
+        // INDI/MaxIm write XPIXSZ already multiplied by the binning factor.
         let meta = parse([
             "IMAGETYP": .string("Light Frame"),
-            "XPIXSZ":   .floatingPoint(3.76),
+            "XPIXSZ":   .floatingPoint(7.52),
+            "XBINNING": .integer(2),
+            "FOCALLEN": .floatingPoint(530),
+        ])
+        let scale = try #require(meta.pixelScale)
+        #expect(abs(scale - 206.2648 * 7.52 / 530) < 1e-4)
+    }
+
+    @Test("PIXSIZE1 is the physical size — XBINNING is applied")
+    func physicalKeywordUsesBinning() throws {
+        let meta = parse([
+            "IMAGETYP": .string("Light Frame"),
+            "PIXSIZE1": .floatingPoint(3.76),
             "XBINNING": .integer(2),
             "FOCALLEN": .floatingPoint(530),
         ])
