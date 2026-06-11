@@ -72,9 +72,10 @@ enum FITSHeaderReader {
         return (attrs?[.creationDate] as? Date) ?? (attrs?[.modificationDate] as? Date)
     }
 
-    // MARK: - Private
+    // MARK: - Parsing
 
-    private static func parse(
+    /// Internal (not private) so tests can exercise header parsing without a FITS file on disk.
+    static func parse(
         headers: [String: FITSHeaderValue],
         width: Int, height: Int, bitpix: Int
     ) -> FrameArchiveMetadata {
@@ -98,7 +99,19 @@ enum FITSHeaderReader {
         let site      = stringValue(headers, keys: ["OBSERVAT"])?.nilIfBlank
 
         let focalLength   = doubleValue(headers, keys: ["FOCALLEN"])
-        let pixelScale    = doubleValue(headers, keys: ["PIXSCALE", "SCALE"])
+
+        // Explicit scale keyword wins; otherwise derive it from the sensor pixel
+        // size and focal length (covers sources like Telescope Live that record
+        // optics headers but no PIXSCALE).
+        var pixelScale = doubleValue(headers, keys: ["PIXSCALE", "SCALE"])
+        if pixelScale == nil,
+           let pixSz = doubleValue(headers, keys: ["XPIXSZ"]),
+           let fl = focalLength {
+            let binning = headers["XBINNING"]?.intValue.map { Int($0) } ?? 1
+            pixelScale = PixelScale.arcsecPerPixel(
+                pixelSizeMicrons: pixSz, binning: binning, focalLengthMm: fl
+            )
+        }
         let temperature   = doubleValue(headers, keys: ["CCD-TEMP", "CCDTEMP"])
         let positionAngle = doubleValue(headers, keys: ["POSANGLE", "PA", "ROTATANG"])
 

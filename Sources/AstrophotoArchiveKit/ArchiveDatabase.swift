@@ -697,6 +697,57 @@ actor ArchiveDatabase {
         }
     }
 
+    /// Bulk-sets `pixel_scale` on all frames and framesets matching the given
+    /// telescope and/or camera (exact match; nil filters are ignored).
+    /// Unless `overwrite` is true, only rows whose pixel_scale is NULL are touched.
+    /// Returns the number of rows updated per table.
+    func bulkSetPixelScale(
+        _ value: Double,
+        telescope: String?,
+        camera: String?,
+        overwrite: Bool
+    ) throws -> (frames: Int, frameSets: Int) {
+        let frames    = try bulkSetPixelScale(value, table: "frames",     telescope: telescope, camera: camera, overwrite: overwrite)
+        let frameSets = try bulkSetPixelScale(value, table: "frame_sets", telescope: telescope, camera: camera, overwrite: overwrite)
+        return (frames, frameSets)
+    }
+
+    private func bulkSetPixelScale(
+        _ value: Double,
+        table: String,
+        telescope: String?,
+        camera: String?,
+        overwrite: Bool
+    ) throws -> Int {
+        var conditions: [String] = []
+        var strings: [String] = []
+        if let t = telescope { conditions.append("telescope = ?"); strings.append(t) }
+        if let c = camera    { conditions.append("camera = ?");    strings.append(c) }
+        if !overwrite { conditions.append("pixel_scale IS NULL") }
+        let whereClause = conditions.isEmpty ? "" : " WHERE " + conditions.joined(separator: " AND ")
+        let sql = "UPDATE \(table) SET pixel_scale = ?\(whereClause)"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_double(stmt, 1, value)
+        for (i, s) in strings.enumerated() { bind(stmt, Int32(i + 2), s) }
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+        return Int(sqlite3_changes(db))
+    }
+
+    /// Sets pixel_scale on a single frameset.
+    func updateFrameSetPixelScale(id: UUID, pixelScale: Double) throws {
+        let sql = "UPDATE frame_sets SET pixel_scale = ? WHERE id = ?"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_double(stmt, 1, pixelScale)
+        bind(stmt, 2, id.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
     /// Updates quality metrics on a frame. Only non-nil values are written;
     /// passing `nil` for a metric leaves the existing DB value unchanged.
     func updateFrameQuality(

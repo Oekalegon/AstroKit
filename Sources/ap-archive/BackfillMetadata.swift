@@ -53,16 +53,20 @@ struct BackfillMetadata: AsyncParsableCommand {
 
         if json {
             let obj: [String: Any] = [
-                "updated":      result.updated,
-                "skipped":      result.skipped,
-                "failed":       result.failed,
-                "failed_paths": result.failedPaths,
+                "updated":           result.updated,
+                "skipped":           result.skipped,
+                "failed":            result.failed,
+                "failed_paths":      result.failedPaths,
+                "framesets_updated": result.frameSetsUpdated,
             ]
             let data = try JSONSerialization.data(withJSONObject: obj, options: .prettyPrinted)
             print(String(data: data, encoding: .utf8)!)
         } else {
             print("  Updated:          \(result.updated)")
             print("  Skipped:          \(result.skipped)")
+            if result.frameSetsUpdated > 0 {
+                print("  Framesets (pixel scale): \(result.frameSetsUpdated)")
+            }
             if result.failed > 0 {
                 print("  Failed (file unreadable): \(result.failed)")
                 for path in result.failedPaths { print("    \(path)") }
