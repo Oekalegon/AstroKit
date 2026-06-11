@@ -501,6 +501,23 @@ public enum FrameType: String, Metadata {
     /// Used for frame sets that contain multiple frame types.
     case multiple
 
+    /// Whether this is a calibration frame type (bias, dark, flat, or dark flat,
+    /// including their calibrated and master variants).
+    ///
+    /// Calibration frames do not image a sky target, so they carry no meaningful
+    /// `OBJECT` name or RA/Dec coordinates.
+    public var isCalibrationFrame: Bool {
+        switch self {
+        case .bias, .masterBias,
+             .dark, .calibratedDark, .masterDark,
+             .flat, .calibratedFlat, .masterFlat,
+             .darkFlat, .calibratedDarkFlat, .masterDarkFlat:
+            return true
+        default:
+            return false
+        }
+    }
+
     /// The key for this metadata value.
     /// Returns the ``FrameMetadataKey.type`` key.
     public var key: any MetadataKey {

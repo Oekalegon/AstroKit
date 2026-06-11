@@ -107,7 +107,11 @@ extension Frame {
             offset = v
         }
 
-        let objectName = fitsImage.metadata["OBJECT"]?.stringValue?.nilIfBlank
+        // Calibration frames do not image a sky target: any OBJECT the capture software
+        // wrote is leftover mount state and must not propagate into pipeline outputs.
+        let objectName = frameType.isCalibrationFrame
+            ? nil
+            : fitsImage.metadata["OBJECT"]?.stringValue?.nilIfBlank
         let camera     = fitsImage.metadata["INSTRUME"]?.stringValue?.nilIfBlank
         let telescope  = fitsImage.metadata["TELESCOP"]?.stringValue?.nilIfBlank
         let site       = fitsImage.metadata["OBSERVAT"]?.stringValue?.nilIfBlank
