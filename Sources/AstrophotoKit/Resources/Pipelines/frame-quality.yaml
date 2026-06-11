@@ -241,3 +241,22 @@ steps:
         metadata:
           processing_stage: "quality_assessment"
           table_type: "quality_summary"
+
+  - id: write_quality
+    type: fits_quality_writer
+    name: FITS Quality Writer
+    description: Writes the quality summary (NSTARS, SATSTARS, MEDFWHM, MEDECC, BACKNOIS) to the primary HDU header of the source FITS file
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+        description: The original source frame (provides the FITS file path to update)
+      - name: frame_quality
+        type: table
+        from: quality.frame_quality
+        description: Quality summary table to persist into the FITS header
+    parameters: []
+    outputs: []
