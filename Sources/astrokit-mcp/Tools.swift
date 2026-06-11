@@ -94,6 +94,7 @@ struct Tools {
     /// original header as a flat keyword → value object.
     private func fitsHeaders(arguments: [String: Any]) async throws -> String {
         let resolvedPath: String
+        var resolvedFrameID: String? = nil
         if let path = arguments["path"] as? String {
             resolvedPath = (path as NSString).expandingTildeInPath
         } else if let frameID = arguments["frame_id"] as? String {
@@ -106,6 +107,7 @@ struct Tools {
                 throw ToolError("No frame with id '\(frameID)' found in archive.")
             }
             resolvedPath = af.filePath
+            resolvedFrameID = af.id.uuidString
         } else {
             throw ToolError("Provide either 'path' (FITS file path) or 'frame_id' (archive frame UUID).")
         }
@@ -118,6 +120,7 @@ struct Tools {
         let metadata = try fitsFile.readHeader()
         var object = FITSKeywordCatalog.jsonObject(from: metadata)
         object["file"] = resolvedPath
+        if let frameID = resolvedFrameID { object["frame_id"] = frameID }
 
         let data = try JSONSerialization.data(
             withJSONObject: object,
