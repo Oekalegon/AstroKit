@@ -356,6 +356,18 @@ ap run star_detection --input M51.fits
 
 The `frame_quality` pipeline runs on a single archived light frame and writes quality metrics back to the archive. Results are also archived automatically when `ASTROARCHIVE_PATH` is set.
 
+In addition, the quality summary is written into the **source FITS file's primary header** (in-place, idempotent):
+
+| Keyword | Description |
+|---------|-------------|
+| `NSTARS` | Number of detected stars |
+| `SATSTARS` | Number of saturated stars |
+| `MEDFWHM` | Median FWHM in pixels (average of major and minor axes) |
+| `MEDECC` | Median eccentricity (0 = round) |
+| `BACKNOIS` | Background level in ADU |
+
+These are the same keywords the archive reads back on import, so quality metrics survive a file being re-imported into a fresh archive.
+
 ```bash
 # Run on a single file:
 ap run frame_quality --input image.fits

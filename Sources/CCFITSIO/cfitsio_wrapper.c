@@ -581,6 +581,47 @@ int append_star_catalog_to_fits(
     return status;
 }
 
+// ---------------------------------------------------------------------------
+// Write frame quality statistics (NSTARS, SATSTARS, MEDFWHM, MEDECC,
+// BACKNOIS) into the primary HDU header of an existing FITS file.
+// Negative sentinel values (or n < 0) mean "metric not available — skip key".
+// fits_update_key is idempotent: existing keys are overwritten in place.
+// ---------------------------------------------------------------------------
+int update_quality_keys_fits(
+    const char *filename,
+    int         n_stars,            // < 0 → skip
+    int         n_saturated,        // < 0 → skip
+    double      median_fwhm,        // [pix] avg of major/minor axes; <= 0 → skip
+    double      median_eccentricity,// < 0 → skip
+    double      background_adu,     // [ADU]; < 0 → skip
+    int        *status_out
+) {
+    *status_out = 0;
+    int status = 0;
+    fitsfile *fptr = NULL;
+
+    fits_open_file(&fptr, filename, READWRITE, &status);
+    if (status) { *status_out = status; return status; }
+
+    fits_movabs_hdu(fptr, 1, NULL, &status);
+    if (status) { fits_close_file(fptr, &status); *status_out = status; return status; }
+
+    if (n_stars >= 0)
+        fits_update_key(fptr, TINT,    "NSTARS",   &n_stars,             "Number of detected stars",              &status);
+    if (n_saturated >= 0)
+        fits_update_key(fptr, TINT,    "SATSTARS", &n_saturated,         "Number of saturated stars",             &status);
+    if (median_fwhm > 0.0)
+        fits_update_key(fptr, TDOUBLE, "MEDFWHM",  &median_fwhm,         "[pix] Median FWHM (avg major/minor)",   &status);
+    if (median_eccentricity >= 0.0)
+        fits_update_key(fptr, TDOUBLE, "MEDECC",   &median_eccentricity, "Median eccentricity (0=round)",         &status);
+    if (background_adu >= 0.0)
+        fits_update_key(fptr, TDOUBLE, "BACKNOIS", &background_adu,      "[ADU] Background level",                &status);
+
+    fits_close_file(fptr, &status);
+    *status_out = status;
+    return status;
+}
+
 int fits_read_img_wrapper(fitsfile *fptr, int dataType, int naxis, LONGLONG *firstPixel, LONGLONG *numElements, float *nullValue, float *array, int *anyNull, int *status) {
     // Convert LONGLONG arrays to long arrays for fits_read_pix
     // fits_read_pix expects long* (32-bit), but we receive LONGLONG* (64-bit) from Swift
