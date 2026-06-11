@@ -25,6 +25,34 @@ private func tempFITSURL(_ label: String) -> URL {
         .appendingPathComponent("\(label)-\(UUID().uuidString).fits")
 }
 
+/// Executes SQL against the database file with a direct SQLite connection.
+private func exec(_ sql: String, on url: URL) throws {
+    var db: OpaquePointer?
+    try #require(sqlite3_open(url.path, &db) == SQLITE_OK)
+    defer { sqlite3_close(db) }
+    var err: UnsafeMutablePointer<CChar>?
+    let rc = sqlite3_exec(db, sql, nil, nil, &err)
+    let message = err.map { String(cString: $0) } ?? ""
+    sqlite3_free(err)
+    try #require(rc == SQLITE_OK, "SQL failed: \(message)")
+}
+
+/// Returns one row of nullable text/real values for the given query.
+private func queryRow(_ sql: String, columns: Int, on url: URL) throws -> [String?] {
+    var db: OpaquePointer?
+    try #require(sqlite3_open(url.path, &db) == SQLITE_OK)
+    defer { sqlite3_close(db) }
+    var stmt: OpaquePointer?
+    try #require(sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK)
+    defer { sqlite3_finalize(stmt) }
+    try #require(sqlite3_step(stmt) == SQLITE_ROW)
+    return (0..<Int32(columns)).map { i in
+        sqlite3_column_type(stmt, i) == SQLITE_NULL
+            ? nil
+            : String(cString: sqlite3_column_text(stmt, i))
+    }
+}
+
 // MARK: - FITSHeaderReader
 
 @Suite("Calibration frames carry no object / RA / DEC (ASTR-51)")
@@ -88,34 +116,6 @@ struct CalibrationFrameMetadataTests {
 @Suite("Migration v25 — clears object/coordinates on existing calibration rows")
 struct CalibrationMigrationTests {
 
-    /// Executes SQL against the database file with a direct SQLite connection.
-    private func exec(_ sql: String, on url: URL) throws {
-        var db: OpaquePointer?
-        #expect(sqlite3_open(url.path, &db) == SQLITE_OK)
-        defer { sqlite3_close(db) }
-        var err: UnsafeMutablePointer<CChar>?
-        let rc = sqlite3_exec(db, sql, nil, nil, &err)
-        let message = err.map { String(cString: $0) } ?? ""
-        sqlite3_free(err)
-        try #require(rc == SQLITE_OK, "SQL failed: \(message)")
-    }
-
-    /// Returns one row of nullable text/real values for the given query.
-    private func queryRow(_ sql: String, columns: Int, on url: URL) throws -> [String?] {
-        var db: OpaquePointer?
-        #expect(sqlite3_open(url.path, &db) == SQLITE_OK)
-        defer { sqlite3_close(db) }
-        var stmt: OpaquePointer?
-        try #require(sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK)
-        defer { sqlite3_finalize(stmt) }
-        try #require(sqlite3_step(stmt) == SQLITE_ROW)
-        return (0..<Int32(columns)).map { i in
-            sqlite3_column_type(stmt, i) == SQLITE_NULL
-                ? nil
-                : String(cString: sqlite3_column_text(stmt, i))
-        }
-    }
-
     @Test("v25 nulls object/ra/dec/healpix on calibration frames but not lights")
     func migrationClearsCalibrationRows() throws {
         let url = FileManager.default.temporaryDirectory
@@ -165,6 +165,63 @@ struct CalibrationMigrationTests {
             "SELECT object_name FROM frame_sets WHERE id = 'fs-light'", columns: 1, on: url
         )
         #expect(lightSet == ["M42"])
+    }
+}
+
+// MARK: - Backfill
+
+@Suite("backfillObservationMetadata — object is light-frame-only")
+struct CalibrationBackfillTests {
+
+    private func makeArchive() throws -> (Archive, URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("cal-backfill-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return (try Archive(configuration: ArchiveConfiguration(rootURL: root)), root)
+    }
+
+    @Test("backfill does not re-add OBJECT to a calibration frame whose FITS file carries one")
+    func backfillSkipsCalibrationObject() async throws {
+        let (archive, root) = try makeArchive()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let src = root.appendingPathComponent("dark.fits")
+        try writeFITS(imageType: "Dark Frame", to: src)
+        _ = try await archive.add(fitsFile: src)
+
+        let result = try await archive.backfillObservationMetadata()
+        #expect(result.updated == 0)
+        #expect(result.failed == 0)
+
+        var query = FrameQuery()
+        query.frameTypes = ["dark"]
+        let frame = try #require(try await archive.frames(matching: query).first)
+        #expect(frame.objectName == nil)
+        #expect(frame.ra == nil)
+        #expect(frame.dec == nil)
+    }
+
+    @Test("backfill still restores a missing OBJECT on a light frame")
+    func backfillRestoresLightObject() async throws {
+        let (archive, root) = try makeArchive()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let src = root.appendingPathComponent("light.fits")
+        try writeFITS(imageType: "Light Frame", to: src)
+        let (added, _) = try await archive.add(fitsFile: src)
+        #expect(added.objectName == "M42")
+
+        // Simulate a pre-existing row archived without an object.
+        try exec(
+            "UPDATE frames SET object_name = NULL WHERE id = '\(added.id.uuidString)'",
+            on: root.appendingPathComponent("archive.db")
+        )
+
+        let result = try await archive.backfillObservationMetadata()
+        #expect(result.updated == 1)
+
+        let frame = try #require(try await archive.frame(id: added.id))
+        #expect(frame.objectName == "M42")
     }
 }
 
