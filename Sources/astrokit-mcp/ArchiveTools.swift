@@ -1,5 +1,6 @@
 import AstrophotoKit
 import AstrophotoArchiveKit
+import AstrophotoToolDefinitions
 import Foundation
 
 struct ArchiveTools {

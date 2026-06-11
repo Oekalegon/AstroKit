@@ -251,6 +251,17 @@ actor ArchiveDatabase {
         ALTER TABLE frame_sets ADD COLUMN telescope TEXT;
         ALTER TABLE frame_sets ADD COLUMN site       TEXT;
         """,
+        // v25: calibration frames (bias/dark/flat) do not image a sky target — the
+        // OBJECT / RA / DEC their capture software wrote is leftover mount state from
+        // the preceding light frames. Clear them on existing rows; FITSHeaderReader no
+        // longer extracts them for these frame types on import. healpix_pixel is derived
+        // from ra/dec and must be cleared with them.
+        """
+        UPDATE frames SET object_name = NULL, ra = NULL, dec = NULL, healpix_pixel = NULL
+        WHERE LOWER(frame_type) IN ('bias', 'dark', 'flat');
+        UPDATE frame_sets SET object_name = NULL
+        WHERE LOWER(frame_type) IN ('bias', 'dark', 'flat');
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {

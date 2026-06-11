@@ -79,13 +79,18 @@ enum FITSHeaderReader {
         width: Int, height: Int, bitpix: Int
     ) -> FrameArchiveMetadata {
 
-        let objectName = stringValue(headers, keys: ["OBJECT"])?.nilIfBlank
-
-        let ra  = resolveRA(headers)
-        let dec = resolveDec(headers)
-
         let imageType = stringValue(headers, keys: ["IMAGETYP", "FRAME"]) ?? ""
         let frameType = parseFrameType(imageType.lowercased())
+
+        // Calibration frames do not image a sky target: any OBJECT / RA / DEC the capture
+        // software wrote is leftover mount state from the preceding light frames and must
+        // not be archived.
+        let isCalibration = calibrationFrameTypes.contains(frameType)
+
+        let objectName = isCalibration ? nil : stringValue(headers, keys: ["OBJECT"])?.nilIfBlank
+
+        let ra  = isCalibration ? nil : resolveRA(headers)
+        let dec = isCalibration ? nil : resolveDec(headers)
 
         let filter    = stringValue(headers, keys: ["FILTER"])?.nilIfBlank
         let camera    = stringValue(headers, keys: ["INSTRUME"])?.nilIfBlank
@@ -207,6 +212,11 @@ enum FITSHeaderReader {
     }
 
     // MARK: - Frame type
+
+    /// Archive labels produced by `parseFrameType` that denote calibration frames.
+    /// Dark flats normalize to "dark" ("dark" is matched before "flat" below).
+    /// Keep in sync with `FrameType.isCalibrationFrame` in AstrophotoKit.
+    static let calibrationFrameTypes: Set<String> = ["bias", "dark", "flat"]
 
     private static func parseFrameType(_ lowercased: String) -> String {
         if lowercased.contains("bias")       { return "bias" }
