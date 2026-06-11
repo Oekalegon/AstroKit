@@ -118,6 +118,56 @@ ap run star_detection --input M51.fits --json
 }
 ```
 
+---
+
+### `ap headers <file>`
+
+Prints the full FITS header of a file, grouped by topic (Object, Observation, Telescope & Optics, Camera, Site & Conditions, Astrometric Solution, Processing & Stacking, Quality, File Structure) with human readable names. The original FITS keyword is shown in brackets after each value.
+
+```bash
+ap headers M51.fits
+```
+
+```
+Object
+──────────
+  Object           M 101        [OBJECT]
+  Right Ascension  14 03 09.58  [OBJCTRA]
+  Declination      54 18 58.86  [OBJCTDEC]
+  ...
+
+Camera
+──────────
+  Camera              PlayerOne CCD Ares-M Pro  [INSTRUME]
+  Gain                125  [GAIN]
+  Sensor Temperature  -10.1 °C  [CCD-TEMP]
+  ...
+```
+
+Add `--json` for machine-readable output. Each entry carries the original FITS keyword, the human readable name, the raw value, and the formatted display value; the response also includes the complete original header as a flat `header` object:
+
+```bash
+ap headers M51.fits --json
+```
+
+```json
+{
+  "file": "/path/to/M51.fits",
+  "groups": [
+    {
+      "group": "Object",
+      "entries": [
+        { "keyword": "OBJECT", "name": "Object", "value": "M 101   ", "display": "M 101" },
+        { "keyword": "RA", "name": "Right Ascension", "value": 210.8141, "unit": "°", "display": "210.8141 °" }
+      ]
+    }
+  ],
+  "header": { "OBJECT": "M 101   ", "RA": 210.8141, "...": "..." }
+}
+```
+
+The same data is available for archived frames via `ap-archive headers <frame-id>`, and to MCP clients through the `fits_headers` tool of `astrokit-mcp` (by `path` or archive `frame_id`).
+
 ## Built-in pipelines
 
 | ID | Description |

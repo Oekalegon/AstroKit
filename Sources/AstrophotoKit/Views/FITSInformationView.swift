@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// Displays FITS header metadata and image properties.
+/// Displays FITS header metadata and image properties, grouped by topic
+/// (object, observation, telescope, camera, …) with human readable names.
 @available(iOS 16.0, macOS 13.0, *)
 public struct FITSInformationView: View {
     let fitsImage: FITSImage?
@@ -23,7 +24,7 @@ public struct FITSInformationView: View {
                             InfoRow(label: "Total Pixels", value: "\(fitsImage.width * fitsImage.height)")
                             InfoRow(label: "Data Type", value: fitsImage.dataType.description)
                             if let bitpix = fitsImage.metadata["BITPIX"]?.intValue {
-                                InfoRow(label: "BITPIX", value: "\(bitpix)")
+                                InfoRow(label: "Bits per Pixel", value: "\(bitpix)")
                             }
                             InfoRow(label: "Min Value", value: String(format: "%.6f", fitsImage.originalMinValue))
                             InfoRow(label: "Max Value", value: String(format: "%.6f", fitsImage.originalMaxValue))
@@ -31,15 +32,16 @@ public struct FITSInformationView: View {
                         .padding(.vertical, 4)
                     }
 
-                    GroupBox("FITS Header") {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(Array(fitsImage.metadata.keys.sorted()), id: \.self) { key in
-                                if let value = fitsImage.metadata[key] {
-                                    InfoRow(label: key, value: formatHeaderValue(value))
+                    ForEach(FITSKeywordCatalog.groupedSections(from: fitsImage.metadata), id: \.group) { section in
+                        GroupBox(section.group.rawValue) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(section.entries, id: \.keyword) { entry in
+                                    InfoRow(label: entry.displayName, value: entry.displayValue)
+                                        .help(entry.keyword)
                                 }
                             }
+                            .padding(.vertical, 4)
                         }
-                        .padding(.vertical, 4)
                     }
                 } else {
                     Text("No FITS image loaded")
@@ -52,13 +54,4 @@ public struct FITSInformationView: View {
         }
     }
 
-    private func formatHeaderValue(_ value: FITSHeaderValue) -> String {
-        switch value {
-        case .string(let str):         return str
-        case .integer(let int):        return "\(int)"
-        case .floatingPoint(let d):    return String(format: "%.6f", d)
-        case .boolean(let bool):       return bool ? "T" : "F"
-        case .comment(let comment):    return comment
-        }
-    }
 }
