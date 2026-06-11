@@ -13,6 +13,9 @@ struct BackfillMetadata: AsyncParsableCommand {
         Observation strings: OBJECT, INSTRUME, TELESCOP, OBSERVAT
         Numeric acquisition data: EXPTIME, GAIN, OFFSET, CCD-TEMP, EGAIN, FOCALLEN, PIXSCALE, POSANGLE
 
+        Calibration frames (bias, dark, flat) never carry a target object; OBJECT, RA, \
+        and DEC are not backfilled for them.
+
         When EXPTIME is recovered, the frame's deduplication signature is recomputed so \
         that re-importing the same file later does not create a duplicate entry.
 
