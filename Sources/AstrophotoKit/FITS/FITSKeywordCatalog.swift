@@ -313,6 +313,17 @@ public enum FITSKeywordCatalog {
         Entry("STCKRJHI", "Rejection Threshold (high)", .processing, unit: "σ", precision: 1),
 
         // Quality
+        // NSTARS/MEDFWHM/MEANFWHM/MEANECC are written into the primary header
+        // by FITSStarCatalogWriterProcessor (star_detection catalog output);
+        // FWHM values are in pixels. The bare FWHM keyword comes from
+        // third-party files (Telescope Live) with an undocumented unit.
+        Entry("NSTARS",   "Detected Stars",          .quality),
+        Entry("MEDFWHM",  "Median FWHM (major)",     .quality, unit: "px", precision: 1),
+        Entry("MEDFWHM2", "Median FWHM (minor)",     .quality, unit: "px", precision: 1),
+        Entry("MEANFWHM", "Mean FWHM (major)",       .quality, unit: "px", precision: 1),
+        Entry("MEANFWM2", "Mean FWHM (minor)",       .quality, unit: "px", precision: 1),
+        Entry("MEANECC",  "Mean Eccentricity",       .quality, precision: 3),
+        Entry("BACKNOIS", "Background Noise",        .quality),
         Entry("FWHM",     "FWHM",                    .quality, precision: 1),
         // SKY_BKG is written as a normalised 0–1 level, not ADU — no fixed precision.
         Entry("SKY_BKG",  "Sky Background",          .quality),
