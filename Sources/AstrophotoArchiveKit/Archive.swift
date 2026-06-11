@@ -324,10 +324,11 @@ public actor Archive {
         var failedPaths: [String] = []
 
         for frame in allFrames {
-            // Only light frames can be missing a target object — calibration frames never
-            // carry one (ASTR-51), so their permanently-nil object must not trigger a FITS
-            // re-read on every backfill run.
-            let needsObject = frame.frameType == "light" && frame.objectName == nil
+            // Only light and diagnostic frames can be missing a target object — calibration
+            // frames never carry one (ASTR-51), so their permanently-nil object must not
+            // trigger a FITS re-read on every backfill run.
+            let needsObject = ["light", "diagnostic"].contains(frame.frameType)
+                            && frame.objectName == nil
             let needsMeta = needsObject || frame.camera == nil
                             || frame.telescope == nil || frame.site == nil
             let needsDate = frame.timestamp == nil

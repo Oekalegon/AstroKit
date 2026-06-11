@@ -170,7 +170,7 @@ struct CalibrationMigrationTests {
 
 // MARK: - Backfill
 
-@Suite("backfillObservationMetadata — object is light-frame-only")
+@Suite("backfillObservationMetadata — object only for light/diagnostic frames")
 struct CalibrationBackfillTests {
 
     private func makeArchive() throws -> (Archive, URL) {
@@ -201,13 +201,16 @@ struct CalibrationBackfillTests {
         #expect(frame.dec == nil)
     }
 
-    @Test("backfill still restores a missing OBJECT on a light frame")
-    func backfillRestoresLightObject() async throws {
+    @Test("backfill still restores a missing OBJECT on light and diagnostic frames", arguments: [
+        "Light Frame",
+        "Diagnostic",
+    ])
+    func backfillRestoresLightObject(imageType: String) async throws {
         let (archive, root) = try makeArchive()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let src = root.appendingPathComponent("light.fits")
-        try writeFITS(imageType: "Light Frame", to: src)
+        let src = root.appendingPathComponent("frame.fits")
+        try writeFITS(imageType: imageType, to: src)
         let (added, _) = try await archive.add(fitsFile: src)
         #expect(added.objectName == "M42")
 
