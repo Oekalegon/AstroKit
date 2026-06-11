@@ -22,6 +22,10 @@ public struct FITSKeywordInfo: Sendable {
     public let group: FITSKeywordGroup
     /// Unit suffix appended to numeric values (e.g. "s", "mm", "°C").
     public let unit: String?
+    /// Standard number of decimal places for numeric values (e.g. 1 for FWHM,
+    /// 5 for RA/Dec in degrees). `nil` means no standard precision: the value
+    /// is shown trimmed of trailing-zero noise instead.
+    public let precision: Int?
     /// Position within the catalog; used to order rows within a group.
     public let sortIndex: Int
 }
@@ -78,7 +82,7 @@ public enum FITSKeywordCatalog {
                 keyword: key,
                 displayName: info?.displayName ?? key,
                 value: value,
-                displayValue: formatValue(value, unit: info?.unit),
+                displayValue: formatValue(value, unit: info?.unit, precision: info?.precision),
                 unit: info?.unit
             )
             buckets[info?.group ?? .other, default: []].append((entry, info?.sortIndex ?? Int.max))
@@ -93,15 +97,27 @@ public enum FITSKeywordCatalog {
     }
 
     /// Formats a header value for display, appending the unit suffix if given.
-    /// Floating point values are trimmed of trailing-zero noise
+    /// Numeric values are shown with `precision` decimal places when the
+    /// keyword has a standard precision (e.g. FWHM → 1, RA/Dec → 5);
+    /// otherwise floating point values are trimmed of trailing-zero noise
     /// (e.g. 120.0 → "120", 0.000513 → "0.000513").
-    public static func formatValue(_ value: FITSHeaderValue, unit: String?) -> String {
+    public static func formatValue(_ value: FITSHeaderValue, unit: String?, precision: Int? = nil) -> String {
         let base: String
         switch value {
         // FITS pads quoted strings to 8 characters; trim for display.
         case .string(let str):         base = str.trimmingCharacters(in: .whitespaces)
-        case .integer(let int):        base = "\(int)"
-        case .floatingPoint(let d):    base = formatDouble(d)
+        case .integer(let int):
+            if let precision = precision, precision > 0 {
+                base = String(format: "%.\(precision)f", Double(int))
+            } else {
+                base = "\(int)"
+            }
+        case .floatingPoint(let d):
+            if let precision = precision {
+                base = String(format: "%.\(precision)f", d)
+            } else {
+                base = trimmedDouble(d)
+            }
         case .boolean(let bool):       base = bool ? "Yes" : "No"
         case .comment(let comment):    base = comment.trimmingCharacters(in: .whitespaces)
         }
@@ -111,7 +127,7 @@ public enum FITSKeywordCatalog {
         return base
     }
 
-    private static func formatDouble(_ value: Double) -> String {
+    private static func trimmedDouble(_ value: Double) -> String {
         if value == value.rounded() && abs(value) < 1e15 {
             return String(format: "%.0f", value)
         }
@@ -159,6 +175,25 @@ public enum FITSKeywordCatalog {
         }
     }
 
+    // MARK: - Catalog data
+
+    private struct Entry {
+        let keyword: String
+        let name: String
+        let group: FITSKeywordGroup
+        let unit: String?
+        let precision: Int?
+
+        init(_ keyword: String, _ name: String, _ group: FITSKeywordGroup,
+             unit: String? = nil, precision: Int? = nil) {
+            self.keyword = keyword
+            self.name = name
+            self.group = group
+            self.unit = unit
+            self.precision = precision
+        }
+    }
+
     private static let lookup: [String: FITSKeywordInfo] = {
         var result: [String: FITSKeywordInfo] = [:]
         for (index, entry) in entries.enumerated() {
@@ -167,127 +202,132 @@ public enum FITSKeywordCatalog {
                 displayName: entry.name,
                 group: entry.group,
                 unit: entry.unit,
+                precision: entry.precision,
                 sortIndex: index
             )
         }
         return result
     }()
 
-    private static let entries: [(keyword: String, name: String, group: FITSKeywordGroup, unit: String?)] = [
+    // Precisions follow common astrophotography conventions:
+    // RA/Dec in degrees → 5 decimals (≈0.04″), alt/az → 2, plate scale → 3,
+    // temperatures → 1, FWHM → 1, pixel sizes → 2.
+    private static let entries: [Entry] = [
         // Object
-        ("OBJECT",   "Object",                  .object, nil),
-        ("OBJCTRA",  "Right Ascension",         .object, nil),
-        ("OBJCTDEC", "Declination",             .object, nil),
-        ("RA",       "Right Ascension",         .object, "°"),
-        ("DEC",      "Declination",             .object, "°"),
-        ("EQUINOX",  "Equinox",                 .object, nil),
+        Entry("OBJECT",   "Object",                  .object),
+        Entry("OBJCTRA",  "Right Ascension",         .object),
+        Entry("OBJCTDEC", "Declination",             .object),
+        Entry("RA",       "Right Ascension",         .object, unit: "°", precision: 5),
+        Entry("DEC",      "Declination",             .object, unit: "°", precision: 5),
+        Entry("EQUINOX",  "Equinox",                 .object, precision: 0),
 
         // Observation
-        ("DATE-OBS", "Observation Start",       .observation, nil),
-        ("DATE-BEG", "Observation Start",       .observation, nil),
-        ("DATE-END", "Observation End",         .observation, nil),
-        ("EXPSTART", "Exposure Start",          .observation, nil),
-        ("EXPEND",   "Exposure End",            .observation, nil),
-        ("EXPTIME",  "Exposure Time",           .observation, "s"),
-        ("EXPOSURE", "Exposure Time",           .observation, "s"),
-        ("DARKTIME", "Dark Time",               .observation, "s"),
-        ("LIVETIME", "Live Time",               .observation, "s"),
-        ("IMAGETYP", "Frame Type",              .observation, nil),
-        ("FRAME",    "Frame Type",              .observation, nil),
-        ("FRAMETYP", "Frame Type",              .observation, nil),
-        ("FILTER",   "Filter",                  .observation, nil),
-        ("OBSERVER", "Observer",                .observation, nil),
-        ("TIME-SRC", "Time Source",             .observation, nil),
+        Entry("DATE-OBS", "Observation Start",       .observation),
+        Entry("DATE-BEG", "Observation Start",       .observation),
+        Entry("DATE-END", "Observation End",         .observation),
+        Entry("EXPSTART", "Exposure Start",          .observation),
+        Entry("EXPEND",   "Exposure End",            .observation),
+        Entry("EXPTIME",  "Exposure Time",           .observation, unit: "s"),
+        Entry("EXPOSURE", "Exposure Time",           .observation, unit: "s"),
+        Entry("DARKTIME", "Dark Time",               .observation, unit: "s"),
+        Entry("LIVETIME", "Live Time",               .observation, unit: "s"),
+        Entry("IMAGETYP", "Frame Type",              .observation),
+        Entry("FRAME",    "Frame Type",              .observation),
+        Entry("FRAMETYP", "Frame Type",              .observation),
+        Entry("FILTER",   "Filter",                  .observation),
+        Entry("OBSERVER", "Observer",                .observation),
+        Entry("TIME-SRC", "Time Source",             .observation),
 
         // Telescope & Optics
-        ("TELESCOP", "Telescope",               .telescope, nil),
-        ("TELID",    "Telescope ID",            .telescope, nil),
-        ("FOCALLEN", "Focal Length",            .telescope, "mm"),
-        ("APTDIA",   "Aperture Diameter",       .telescope, "mm"),
-        ("FOCUSPOS", "Focuser Position",        .telescope, "steps"),
-        ("FOCUSTEM", "Focuser Temperature",     .telescope, "°C"),
-        ("PIERSIDE", "Pier Side",               .telescope, nil),
+        Entry("TELESCOP", "Telescope",               .telescope),
+        Entry("TELID",    "Telescope ID",            .telescope),
+        Entry("FOCALLEN", "Focal Length",            .telescope, unit: "mm", precision: 0),
+        Entry("APTDIA",   "Aperture Diameter",       .telescope, unit: "mm", precision: 0),
+        Entry("FOCUSPOS", "Focuser Position",        .telescope, unit: "steps"),
+        Entry("FOCUSTEM", "Focuser Temperature",     .telescope, unit: "°C", precision: 1),
+        Entry("PIERSIDE", "Pier Side",               .telescope),
 
         // Camera
-        ("INSTRUME", "Camera",                  .camera, nil),
-        ("IMAGERID", "Camera ID",               .camera, nil),
-        ("GAIN",     "Gain",                    .camera, nil),
-        ("EGAIN",    "Electron Gain",           .camera, "e⁻/ADU"),
-        ("OFFSET",   "Offset",                  .camera, nil),
-        ("AOFFSET",  "Analog Offset",           .camera, nil),
-        ("CCD-TEMP", "Sensor Temperature",      .camera, "°C"),
-        ("CCD-TMIN", "Sensor Temperature (min)", .camera, "°C"),
-        ("CCD-TMAX", "Sensor Temperature (max)", .camera, "°C"),
-        ("XBINNING", "Binning X",               .camera, nil),
-        ("YBINNING", "Binning Y",               .camera, nil),
-        ("XPIXSZ",   "Pixel Size X",            .camera, "µm"),
-        ("YPIXSZ",   "Pixel Size Y",            .camera, "µm"),
-        ("PIXSIZE1", "Pixel Size X",            .camera, "µm"),
-        ("PIXSIZE2", "Pixel Size Y",            .camera, "µm"),
-        ("BAYERPAT", "Bayer Pattern",           .camera, nil),
+        Entry("INSTRUME", "Camera",                  .camera),
+        Entry("IMAGERID", "Camera ID",               .camera),
+        Entry("GAIN",     "Gain",                    .camera),
+        Entry("EGAIN",    "Electron Gain",           .camera, unit: "e⁻/ADU", precision: 3),
+        Entry("OFFSET",   "Offset",                  .camera),
+        Entry("AOFFSET",  "Analog Offset",           .camera),
+        Entry("CCD-TEMP", "Sensor Temperature",      .camera, unit: "°C", precision: 1),
+        Entry("CCD-TMIN", "Sensor Temperature (min)", .camera, unit: "°C", precision: 1),
+        Entry("CCD-TMAX", "Sensor Temperature (max)", .camera, unit: "°C", precision: 1),
+        Entry("XBINNING", "Binning X",               .camera),
+        Entry("YBINNING", "Binning Y",               .camera),
+        Entry("XPIXSZ",   "Pixel Size X",            .camera, unit: "µm", precision: 2),
+        Entry("YPIXSZ",   "Pixel Size Y",            .camera, unit: "µm", precision: 2),
+        Entry("PIXSIZE1", "Pixel Size X",            .camera, unit: "µm", precision: 2),
+        Entry("PIXSIZE2", "Pixel Size Y",            .camera, unit: "µm", precision: 2),
+        Entry("BAYERPAT", "Bayer Pattern",           .camera),
 
         // Site & Conditions
-        ("OBSERVAT", "Observatory",             .site, nil),
-        ("SITELAT",  "Site Latitude",           .site, nil),
-        ("SITELONG", "Site Longitude",          .site, nil),
-        ("GPS-LAT",  "GPS Latitude",            .site, "°"),
-        ("GPS-LON",  "GPS Longitude",           .site, "°"),
-        ("OBJCTALT", "Altitude",                .site, "°"),
-        ("OBJCTAZ",  "Azimuth",                 .site, "°"),
-        ("AIRMASS",  "Airmass",                 .site, nil),
+        Entry("OBSERVAT", "Observatory",             .site),
+        Entry("SITELAT",  "Site Latitude",           .site, precision: 5),
+        Entry("SITELONG", "Site Longitude",          .site, precision: 5),
+        Entry("GPS-LAT",  "GPS Latitude",            .site, unit: "°", precision: 5),
+        Entry("GPS-LON",  "GPS Longitude",           .site, unit: "°", precision: 5),
+        Entry("OBJCTALT", "Altitude",                .site, unit: "°", precision: 2),
+        Entry("OBJCTAZ",  "Azimuth",                 .site, unit: "°", precision: 2),
+        Entry("AIRMASS",  "Airmass",                 .site, precision: 3),
 
         // Astrometric Solution (plate scale + WCS)
-        ("SCALE",    "Image Scale",             .astrometry, "″/px"),
-        ("PIXSCALE", "Pixel Scale",             .astrometry, "″/px"),
-        ("SECPIX1",  "Plate Scale X",           .astrometry, "″/px"),
-        ("SECPIX2",  "Plate Scale Y",           .astrometry, "″/px"),
-        ("RADECSYS", "Coordinate Frame",        .astrometry, nil),
-        ("CTYPE1",   "WCS Projection (axis 1)", .astrometry, nil),
-        ("CTYPE2",   "WCS Projection (axis 2)", .astrometry, nil),
-        ("CRVAL1",   "Reference RA",            .astrometry, "°"),
-        ("CRVAL2",   "Reference Dec",           .astrometry, "°"),
-        ("CRPIX1",   "Reference Pixel X",       .astrometry, "px"),
-        ("CRPIX2",   "Reference Pixel Y",       .astrometry, "px"),
-        ("CDELT1",   "Pixel Scale (axis 1)",    .astrometry, "°/px"),
-        ("CDELT2",   "Pixel Scale (axis 2)",    .astrometry, "°/px"),
-        ("CROTA1",   "Rotation (axis 1)",       .astrometry, "°"),
-        ("CROTA2",   "Rotation (axis 2)",       .astrometry, "°"),
-        ("CUNIT1",   "WCS Unit (axis 1)",       .astrometry, nil),
-        ("CUNIT2",   "WCS Unit (axis 2)",       .astrometry, nil),
-        ("PC1_1",    "WCS Matrix [1,1]",        .astrometry, nil),
-        ("PC1_2",    "WCS Matrix [1,2]",        .astrometry, nil),
-        ("PC2_1",    "WCS Matrix [2,1]",        .astrometry, nil),
-        ("PC2_2",    "WCS Matrix [2,2]",        .astrometry, nil),
+        Entry("SCALE",    "Image Scale",             .astrometry, unit: "″/px", precision: 3),
+        Entry("PIXSCALE", "Pixel Scale",             .astrometry, unit: "″/px", precision: 3),
+        Entry("SECPIX1",  "Plate Scale X",           .astrometry, unit: "″/px", precision: 3),
+        Entry("SECPIX2",  "Plate Scale Y",           .astrometry, unit: "″/px", precision: 3),
+        Entry("RADECSYS", "Coordinate Frame",        .astrometry),
+        Entry("CTYPE1",   "WCS Projection (axis 1)", .astrometry),
+        Entry("CTYPE2",   "WCS Projection (axis 2)", .astrometry),
+        Entry("CRVAL1",   "Reference RA",            .astrometry, unit: "°", precision: 5),
+        Entry("CRVAL2",   "Reference Dec",           .astrometry, unit: "°", precision: 5),
+        Entry("CRPIX1",   "Reference Pixel X",       .astrometry, unit: "px", precision: 2),
+        Entry("CRPIX2",   "Reference Pixel Y",       .astrometry, unit: "px", precision: 2),
+        Entry("CDELT1",   "Pixel Scale (axis 1)",    .astrometry, unit: "°/px"),
+        Entry("CDELT2",   "Pixel Scale (axis 2)",    .astrometry, unit: "°/px"),
+        Entry("CROTA1",   "Rotation (axis 1)",       .astrometry, unit: "°", precision: 2),
+        Entry("CROTA2",   "Rotation (axis 2)",       .astrometry, unit: "°", precision: 2),
+        Entry("CUNIT1",   "WCS Unit (axis 1)",       .astrometry),
+        Entry("CUNIT2",   "WCS Unit (axis 2)",       .astrometry),
+        Entry("PC1_1",    "WCS Matrix [1,1]",        .astrometry),
+        Entry("PC1_2",    "WCS Matrix [1,2]",        .astrometry),
+        Entry("PC2_1",    "WCS Matrix [2,1]",        .astrometry),
+        Entry("PC2_2",    "WCS Matrix [2,2]",        .astrometry),
 
         // Processing & Stacking
-        ("PROGRAM",  "Acquisition Software",    .processing, nil),
-        ("PROC",     "Processing Software",     .processing, nil),
-        ("SWCREATE", "Created By",              .processing, nil),
-        ("PIPELINE", "Pipeline",                .processing, nil),
-        ("NFRAMES",  "Combined Frames",         .processing, nil),
-        ("STACKED",  "Stacked",                 .processing, nil),
-        ("STACKCNT", "Stacked Frames",          .processing, nil),
-        ("STCKMET",  "Stacking Method",         .processing, nil),
-        ("STCKNORM", "Stack Normalization",     .processing, nil),
-        ("STCKREJO", "Stack Rejection",         .processing, nil),
-        ("STCKRJLO", "Rejection Threshold (low)",  .processing, "σ"),
-        ("STCKRJHI", "Rejection Threshold (high)", .processing, "σ"),
+        Entry("PROGRAM",  "Acquisition Software",    .processing),
+        Entry("PROC",     "Processing Software",     .processing),
+        Entry("SWCREATE", "Created By",              .processing),
+        Entry("PIPELINE", "Pipeline",                .processing),
+        Entry("NFRAMES",  "Combined Frames",         .processing),
+        Entry("STACKED",  "Stacked",                 .processing),
+        Entry("STACKCNT", "Stacked Frames",          .processing),
+        Entry("STCKMET",  "Stacking Method",         .processing),
+        Entry("STCKNORM", "Stack Normalization",     .processing),
+        Entry("STCKREJO", "Stack Rejection",         .processing),
+        Entry("STCKRJLO", "Rejection Threshold (low)",  .processing, unit: "σ", precision: 1),
+        Entry("STCKRJHI", "Rejection Threshold (high)", .processing, unit: "σ", precision: 1),
 
         // Quality
-        ("FWHM",     "FWHM",                    .quality, nil),
-        ("SKY_BKG",  "Sky Background",          .quality, nil),
+        Entry("FWHM",     "FWHM",                    .quality, precision: 1),
+        // SKY_BKG is written as a normalised 0–1 level, not ADU — no fixed precision.
+        Entry("SKY_BKG",  "Sky Background",          .quality),
 
         // File Structure
-        ("SIMPLE",   "Standard FITS",           .file, nil),
-        ("BITPIX",   "Bits per Pixel",          .file, nil),
-        ("NAXIS",    "Axes",                    .file, nil),
-        ("NAXIS1",   "Width",                   .file, "px"),
-        ("NAXIS2",   "Height",                  .file, "px"),
-        ("NAXIS3",   "Planes",                  .file, nil),
-        ("EXTEND",   "Extensions Allowed",      .file, nil),
-        ("BZERO",    "Zero Offset (BZERO)",     .file, nil),
-        ("BSCALE",   "Scale Factor (BSCALE)",   .file, nil),
-        ("ROWORDER", "Row Order",               .file, nil),
-        ("DATE",     "File Date",               .file, nil),
+        Entry("SIMPLE",   "Standard FITS",           .file),
+        Entry("BITPIX",   "Bits per Pixel",          .file),
+        Entry("NAXIS",    "Axes",                    .file),
+        Entry("NAXIS1",   "Width",                   .file, unit: "px"),
+        Entry("NAXIS2",   "Height",                  .file, unit: "px"),
+        Entry("NAXIS3",   "Planes",                  .file),
+        Entry("EXTEND",   "Extensions Allowed",      .file),
+        Entry("BZERO",    "Zero Offset (BZERO)",     .file, precision: 0),
+        Entry("BSCALE",   "Scale Factor (BSCALE)",   .file),
+        Entry("ROWORDER", "Row Order",               .file),
+        Entry("DATE",     "File Date",               .file),
     ]
 }
