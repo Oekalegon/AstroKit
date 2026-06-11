@@ -7,6 +7,6 @@ struct AP: AsyncParsableCommand {
         commandName: "ap",
         abstract: "Process astrophotos using AstrophotoKit pipelines.",
         version: Version.string,
-        subcommands: [List.self, Inspect.self, Run.self]
+        subcommands: [List.self, Inspect.self, Run.self, Headers.self]
     )
 }

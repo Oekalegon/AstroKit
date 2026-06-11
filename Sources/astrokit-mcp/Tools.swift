@@ -19,7 +19,7 @@ struct Tools {
                 "required": [String](),
             ] as [String: Any],
         ],
-    ] + PipelineToolDefinitions.all
+    ] + PipelineToolDefinitions.all + FITSToolDefinitions.all
 
     // MARK: - Dispatch
 
@@ -29,6 +29,7 @@ struct Tools {
         case "list_pipelines":   return listPipelines()
         case "inspect_pipeline": return try inspectPipeline(id: required(arguments, "pipeline_id"))
         case "run_pipeline":     return try await runPipeline(arguments: arguments)
+        case "fits_headers":     return try await fitsHeaders(arguments: arguments)
         default:                 throw ToolError("Unknown tool: \(name)")
         }
     }
@@ -86,6 +87,46 @@ struct Tools {
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    /// Returns the full FITS header of a file (by path or archive frame ID) as
+    /// pretty-printed JSON: grouped entries with human readable names plus the
+    /// original header as a flat keyword → value object.
+    private func fitsHeaders(arguments: [String: Any]) async throws -> String {
+        let resolvedPath: String
+        if let path = arguments["path"] as? String {
+            resolvedPath = (path as NSString).expandingTildeInPath
+        } else if let frameID = arguments["frame_id"] as? String {
+            guard let uuid = UUID(uuidString: frameID) else {
+                throw ToolError("frame_id must be a valid UUID: \(frameID)")
+            }
+            let config = try ArchiveConfiguration.fromEnvironment()
+            let archive = try Archive(configuration: config)
+            guard let af = try await archive.frame(id: uuid) else {
+                throw ToolError("No frame with id '\(frameID)' found in archive.")
+            }
+            resolvedPath = af.filePath
+        } else {
+            throw ToolError("Provide either 'path' (FITS file path) or 'frame_id' (archive frame UUID).")
+        }
+
+        guard FileManager.default.fileExists(atPath: resolvedPath) else {
+            throw ToolError("File not found: \(resolvedPath)")
+        }
+
+        let fitsFile = try FITSFile(path: resolvedPath)
+        let metadata = try fitsFile.readHeader()
+        var object = FITSKeywordCatalog.jsonObject(from: metadata)
+        object["file"] = resolvedPath
+
+        let data = try JSONSerialization.data(
+            withJSONObject: object,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw ToolError("Failed to encode header as JSON.")
+        }
+        return json
     }
 
     private func runPipeline(arguments: [String: Any]) async throws -> String {
