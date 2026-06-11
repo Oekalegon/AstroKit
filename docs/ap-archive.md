@@ -465,6 +465,35 @@ The Provenance section is shown only for frames that were archived automatically
 
 ---
 
+### `ap-archive headers`
+
+Prints the full FITS header of an archive frame, grouped by topic (Object, Observation, Telescope & Optics, Camera, Site & Conditions, Astrometric Solution, Processing & Stacking, Quality, File Structure) with human readable names. The original FITS keyword is shown in brackets after each value. Unlike `ap-archive info`, which shows the metadata stored in the archive database, `headers` reads the FITS file itself.
+
+```bash
+ap-archive headers F6AFAADD-5097-4976-970E-358F6249E7ED
+```
+
+```
+Frame: F6AFAADD-5097-4976-970E-358F6249E7ED
+File:  /path/in/archive/navi_result_….fits
+
+Object
+──────────
+  Object           NGC 6910  [OBJECT]
+  Right Ascension  305.8069 °  [RA]
+  Declination      40.77605 °  [DEC]
+
+Observation
+───────────────
+  Observation Start  2026-05-01T23:23:15Z  [DATE-OBS]
+  Exposure Time      3600 s  [EXPTIME]
+  ...
+```
+
+Add `--json` for machine-readable output: the same grouped entries (original keyword, human readable name, raw value, display value, unit) plus `frame_id`, `file`, and the complete original header as a flat `header` object. For arbitrary FITS files outside the archive, use `ap headers <file>` instead — both commands share the same grouping and output format.
+
+---
+
 ### `ap-archive cp`
 
 Exports a copy of a frame or an entire frame set out of the archive to a local path. The original stays in the archive.

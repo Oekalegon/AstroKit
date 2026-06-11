@@ -166,7 +166,7 @@ ap headers M51.fits --json
 }
 ```
 
-The same data is available to MCP clients through the `fits_headers` tool of `astrokit-mcp` (by `path` or archive `frame_id`).
+The same data is available for archived frames via `ap-archive headers <frame-id>`, and to MCP clients through the `fits_headers` tool of `astrokit-mcp` (by `path` or archive `frame_id`).
 
 ## Built-in pipelines
 
