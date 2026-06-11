@@ -318,7 +318,12 @@ public enum FITSKeywordCatalog {
         // FWHM values are in pixels. The bare FWHM keyword comes from
         // third-party files (Telescope Live) with an undocumented unit.
         Entry("NSTARS",   "Detected Stars",          .quality),
-        Entry("MEDFWHM",  "Median FWHM (major)",     .quality, unit: "px", precision: 1),
+        Entry("SATSTARS", "Saturated Stars",         .quality),
+        Entry("MEDECC",   "Median Eccentricity",     .quality, precision: 3),
+        // MEDFWHM is the major-axis median when written by star_detection
+        // (paired with MEDFWHM2) and the major/minor average when written by
+        // frame_quality — keep the display name neutral.
+        Entry("MEDFWHM",  "Median FWHM",             .quality, unit: "px", precision: 1),
         Entry("MEDFWHM2", "Median FWHM (minor)",     .quality, unit: "px", precision: 1),
         Entry("MEANFWHM", "Mean FWHM (major)",       .quality, unit: "px", precision: 1),
         Entry("MEANFWM2", "Mean FWHM (minor)",       .quality, unit: "px", precision: 1),

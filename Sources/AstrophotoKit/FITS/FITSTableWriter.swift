@@ -107,6 +107,17 @@ private func appendStarCatalogToFITSC(
     _ statusOut: UnsafeMutablePointer<Int32>
 ) -> Int32
 
+@_silgen_name("update_quality_keys_fits")
+private func updateQualityKeysFITSC(
+    _ filename: UnsafePointer<CChar>,
+    _ nStars: Int32,
+    _ nSaturated: Int32,
+    _ medianFWHM: Double,
+    _ medianEccentricity: Double,
+    _ backgroundADU: Double,
+    _ statusOut: UnsafeMutablePointer<Int32>
+) -> Int32
+
 @_silgen_name("write_registration_fits_table")
 private func writeRegistrationFITSTableC(
     _ filename: UnsafePointer<CChar>,
@@ -504,6 +515,50 @@ public struct FITSTableWriter {
             throw FITSTableWriterError.writeFailed(String(cString: errText))
         }
         Logger.swiftfitsio.info("Appended star catalog to FITS file at \(path)")
+    }
+
+    /// Write frame quality statistics (NSTARS, SATSTARS, MEDFWHM, MEDECC,
+    /// BACKNOIS) into the primary HDU header of an existing FITS file.
+    ///
+    /// Pass `nil` for metrics that are not available — those keys are left
+    /// untouched. `fits_update_key` overwrites existing keys in place, making
+    /// repeated runs idempotent. These are the keywords FITSHeaderReader reads
+    /// back when the file is (re-)imported into the archive.
+    ///
+    /// - Parameters:
+    ///   - starCount: Number of detected stars.
+    ///   - saturatedStarCount: Number of saturated stars.
+    ///   - medianFWHM: Median FWHM in pixels, averaged over major and minor axes.
+    ///   - medianEccentricity: Median eccentricity (0 = round).
+    ///   - backgroundADU: Background level in ADU.
+    ///   - path: Path to the existing FITS file to update.
+    public static func writeQualityKeys(
+        starCount: Int?,
+        saturatedStarCount: Int?,
+        medianFWHM: Double?,
+        medianEccentricity: Double?,
+        backgroundADU: Double?,
+        to path: String
+    ) throws {
+        var statusOut: Int32 = 0
+        _ = path.withCString { cPath in
+            updateQualityKeysFITSC(
+                cPath,
+                starCount.map { Int32($0) } ?? -1,
+                saturatedStarCount.map { Int32($0) } ?? -1,
+                medianFWHM ?? -1.0,
+                medianEccentricity ?? -1.0,
+                backgroundADU ?? -1.0,
+                &statusOut
+            )
+        }
+        if statusOut != 0 {
+            var errText = [CChar](repeating: 0, count: 81)
+            getFITSErrorStatus(statusOut, &errText)
+            errText[80] = 0
+            throw FITSTableWriterError.writeFailed(String(cString: errText))
+        }
+        Logger.swiftfitsio.info("Wrote quality keywords to FITS file at \(path)")
     }
 
     /// Write any DataFrame as CSV using TabularData's built-in exporter.
