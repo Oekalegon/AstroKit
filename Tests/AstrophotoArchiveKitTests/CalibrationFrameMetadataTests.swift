@@ -85,8 +85,10 @@ struct CalibrationFrameMetadataTests {
         let meta = try FITSHeaderReader.read(from: url.path)
         #expect(meta.frameType == "light")
         #expect(meta.objectName == "M42")
-        #expect(meta.ra != nil)
-        #expect(meta.dec != nil)
+        let ra = try #require(meta.ra)
+        #expect(abs(ra - 83.8221) < 1e-4)
+        let dec = try #require(meta.dec)
+        #expect(abs(dec - (-5.3911)) < 1e-4)
     }
 
     @Test("archived calibration frame stores no object, coordinates, or healpix pixel")
