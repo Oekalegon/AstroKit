@@ -1356,7 +1356,8 @@ actor ArchiveDatabase {
             frameCountByTypeAndFilter: byTypeAndFilter,
             processedFramesByObject: processedByObject,
             usedBytes: diskUsage(at: archiveRoot),
-            availableBytes: availableSpace(at: archiveRoot)
+            availableBytes: availableSpace(at: archiveRoot),
+            totalBytes: totalSpace(at: archiveRoot)
         )
     }
 
@@ -1597,6 +1598,12 @@ actor ArchiveDatabase {
     private func availableSpace(at url: URL) -> Int64 {
         guard let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityKey]),
               let capacity = values.volumeAvailableCapacity else { return 0 }
+        return Int64(capacity)
+    }
+
+    private func totalSpace(at url: URL) -> Int64 {
+        guard let values = try? url.resourceValues(forKeys: [.volumeTotalCapacityKey]),
+              let capacity = values.volumeTotalCapacity else { return 0 }
         return Int64(capacity)
     }
 }

@@ -8,9 +8,12 @@ public struct ArchiveStatistics: Sendable {
     public var processedFramesByObject: [String: Int]
     public var usedBytes: Int64
     public var availableBytes: Int64
+    // Total capacity of the volume holding the archive; 0 when unknown.
+    public var totalBytes: Int64 = 0
 
     public var usedBytesFormatted: String { formatBytes(usedBytes) }
     public var availableBytesFormatted: String { formatBytes(availableBytes) }
+    public var totalBytesFormatted: String { formatBytes(totalBytes) }
 
     private func formatBytes(_ bytes: Int64) -> String {
         let units = ["B", "KB", "MB", "GB", "TB", "PB"]
