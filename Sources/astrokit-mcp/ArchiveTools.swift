@@ -427,6 +427,7 @@ struct ArchiveTools {
         }
         lines.append("  Used:      \(stats.usedBytesFormatted)")
         lines.append("  Available: \(stats.availableBytesFormatted)")
+        lines.append("  Total:     \(stats.totalBytesFormatted)")
         return lines.joined(separator: "\n")
     }
 
