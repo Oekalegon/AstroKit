@@ -311,7 +311,7 @@ Lists the most recently archived frames, newest first. Useful for reviewing what
 
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
-| `limit` | integer | | Maximum number of frames to return (default: `15`) |
+| `limit` | integer | | Maximum number of frames to return (default: `15`); `0` or negative returns all frames |
 
 Example:
 ```

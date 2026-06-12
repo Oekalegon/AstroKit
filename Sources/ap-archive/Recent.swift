@@ -10,7 +10,7 @@ struct Recent: AsyncParsableCommand {
     @OptionGroup var archiveOptions: ArchivePathOption
 
     @Option(name: [.short, .customLong("count")],
-            help: "Number of frames to show (default: 15).")
+            help: "Number of frames to show (default: 15); 0 or negative shows all.")
     var count: Int = 15
 
     @Flag(name: .long, help: "Output as JSON.")
@@ -19,7 +19,7 @@ struct Recent: AsyncParsableCommand {
     func run() async throws {
         let config  = try archiveOptions.makeConfiguration()
         let archive = try Archive(configuration: config)
-        let frames  = try await archive.recentFrames(limit: count)
+        let frames  = try await archive.recentFrames(limit: count > 0 ? count : nil)
 
         if json {
             printJSON(frames)

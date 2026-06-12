@@ -52,6 +52,7 @@ struct Stats: AsyncParsableCommand {
         print("")
         print("  Disk used:      \(stats.usedBytesFormatted)")
         print("  Disk available: \(stats.availableBytesFormatted)")
+        print("  Disk total:     \(stats.totalBytesFormatted)")
     }
 
     private func printJSON(_ stats: ArchiveStatistics) {
@@ -63,6 +64,7 @@ struct Stats: AsyncParsableCommand {
             "processed_by_object":       stats.processedFramesByObject,
             "used_bytes":                stats.usedBytes,
             "available_bytes":           stats.availableBytes,
+            "total_bytes":               stats.totalBytes,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: .prettyPrinted),
            let str = String(data: data, encoding: .utf8) {

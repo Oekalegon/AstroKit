@@ -1356,19 +1356,22 @@ actor ArchiveDatabase {
             frameCountByTypeAndFilter: byTypeAndFilter,
             processedFramesByObject: processedByObject,
             usedBytes: diskUsage(at: archiveRoot),
-            availableBytes: availableSpace(at: archiveRoot)
+            availableBytes: availableSpace(at: archiveRoot),
+            totalBytes: totalSpace(at: archiveRoot)
         )
     }
 
-    func recentFrames(limit: Int, rejectionFilter: RejectionFilter = .excludeRejected) throws -> [ArchivedFrame] {
+    func recentFrames(limit: Int?, rejectionFilter: RejectionFilter = .excludeRejected) throws -> [ArchivedFrame] {
         let condition: String
         switch rejectionFilter {
         case .excludeRejected: condition = "WHERE rejected = 0 "
         case .onlyRejected:    condition = "WHERE rejected = 1 "
         case .includeAll:      condition = ""
         }
+        // max(_:0) keeps an explicit non-positive limit from becoming SQLite's "LIMIT -1" (unlimited).
+        let limitClause = limit.map { " LIMIT \(max($0, 0))" } ?? ""
         let stmt = try prepare(
-            "SELECT * FROM frames \(condition)ORDER BY added_at DESC LIMIT \(limit)"
+            "SELECT * FROM frames \(condition)ORDER BY added_at DESC\(limitClause)"
         )
         defer { sqlite3_finalize(stmt) }
         var results: [ArchivedFrame] = []
@@ -1595,8 +1598,19 @@ actor ArchiveDatabase {
     }
 
     private func availableSpace(at url: URL) -> Int64 {
-        guard let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityKey]),
-              let capacity = values.volumeAvailableCapacity else { return 0 }
+        volumeCapacity(at: url, key: .volumeAvailableCapacityKey) { $0.volumeAvailableCapacity }
+    }
+
+    private func totalSpace(at url: URL) -> Int64 {
+        volumeCapacity(at: url, key: .volumeTotalCapacityKey) { $0.volumeTotalCapacity }
+    }
+
+    /// Reads a volume-capacity resource value, returning 0 when unknown.
+    private func volumeCapacity(
+        at url: URL, key: URLResourceKey, value: (URLResourceValues) -> Int?
+    ) -> Int64 {
+        guard let values = try? url.resourceValues(forKeys: [key]),
+              let capacity = value(values) else { return 0 }
         return Int64(capacity)
     }
 }

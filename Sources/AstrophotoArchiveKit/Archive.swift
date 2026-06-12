@@ -263,9 +263,9 @@ public actor Archive {
 
     /// Returns the most recently archived frames, newest first.
     /// - Parameters:
-    ///   - limit: Maximum number of frames to return (default 15).
+    ///   - limit: Maximum number of frames to return (default 15); pass `nil` to return all frames.
     ///   - rejectionFilter: Whether to include, exclude, or exclusively show rejected frames (default `.excludeRejected`).
-    public func recentFrames(limit: Int = 15, rejectionFilter: RejectionFilter = .excludeRejected) async throws -> [ArchivedFrame] {
+    public func recentFrames(limit: Int? = 15, rejectionFilter: RejectionFilter = .excludeRejected) async throws -> [ArchivedFrame] {
         expandPaths(try await database.recentFrames(limit: limit, rejectionFilter: rejectionFilter))
     }
 
