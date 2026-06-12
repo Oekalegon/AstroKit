@@ -31,15 +31,13 @@ steps:
   - id: blur
     type: gaussian_blur
     name: Gaussian Blur
-    description: Applies Gaussian blur to reduce noise and smooth the image
+    description: Applies Gaussian blur to reduce noise for detection — FWHM is
+      measured on the unblurred background-subtracted frame
     dataInputs:
       - name: input_frame
         type: frame
-        from: grayscale.grayscale_frame
-        metadata_restrictions:
-          frame_type:
-            - light
-        description: The input frame to blur (must be a light frame)
+        from: background.background_subtracted_frame
+        description: Background-subtracted grayscale frame to blur
     parameters:
       - name: radius
         from: blur_radius
@@ -61,8 +59,8 @@ steps:
     dataInputs:
       - name: input_frame
         type: frame
-        from: blur.blurred_frame
-        description: The blurred frame to estimate background from
+        from: grayscale.grayscale_frame
+        description: Grayscale frame to estimate background from (mesh median is robust to noise)
     parameters:
       - name: cell_size
         from: cell_size
@@ -97,8 +95,8 @@ steps:
     dataInputs:
       - name: input_frame
         type: frame
-        from: background.background_subtracted_frame
-        description: The background-subtracted frame to threshold
+        from: blur.blurred_frame
+        description: The blurred background-subtracted frame to threshold
     parameters:
       - name: threshold_value
         from: threshold_value
@@ -168,8 +166,8 @@ steps:
     dataInputs:
       - name: input_frame
         type: frame
-        from: background.background_subtracted_frame
-        description: Background-subtracted continuous frame for intensity comparison
+        from: blur.blurred_frame
+        description: Blurred background-subtracted frame for intensity comparison
       - name: mask_frame
         type: frame
         from: dilation.dilated_frame

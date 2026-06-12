@@ -34,8 +34,8 @@ steps:
     dataInputs:
       - name: input_frame
         type: frame
-        from: grayscale.grayscale_frame
-        description: Grayscale input frame
+        from: background.background_subtracted_frame
+        description: Background-subtracted grayscale frame
     parameters:
       - name: radius
         from: blur_radius
@@ -56,8 +56,8 @@ steps:
     dataInputs:
       - name: input_frame
         type: frame
-        from: blur.blurred_frame
-        description: Blurred frame for background estimation
+        from: grayscale.grayscale_frame
+        description: Grayscale frame for background estimation (mesh median is robust to noise)
     parameters:
       - name: cell_size
         from: cell_size
@@ -87,8 +87,8 @@ steps:
     dataInputs:
       - name: input_frame
         type: frame
-        from: background.background_subtracted_frame
-        description: Background-subtracted frame
+        from: blur.blurred_frame
+        description: Blurred background-subtracted frame
     parameters:
       - name: threshold_value
         from: threshold_value
@@ -153,8 +153,8 @@ steps:
     dataInputs:
       - name: input_frame
         type: frame
-        from: background.background_subtracted_frame
-        description: Background-subtracted continuous frame for intensity comparison
+        from: blur.blurred_frame
+        description: Blurred background-subtracted frame for intensity comparison
       - name: mask_frame
         type: frame
         from: dilation.dilated_frame

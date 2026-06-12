@@ -74,21 +74,17 @@ enum RegistrationCore {
                                 outputKey: "grayscale_frame",
                                 device: device, commandQueue: commandQueue)
 
-        // 2. Blur
-        let blurred = try runFrame(GaussianBlurProcessor(),
-                                   inputs: ["input_frame": gray],
-                                   outputKey: "blurred_frame",
-                                   params: ["radius": .double(blurRadius)],
-                                   device: device, commandQueue: commandQueue)
-
-        // 3. Background estimation
+        // 2. Background estimation on the unblurred grayscale frame.
+        //    The mesh-median estimate is robust to pixel noise, and keeping the
+        //    subtracted frame unblurred matters for FWHM: measuring on a blurred
+        //    frame inflates the star sigma in quadrature with the blur sigma.
         var bgOutputs: [String: ProcessData] = [
             "background_frame": emptyFrame(),
             "background_subtracted_frame": emptyFrame(),
             "background_level": TableData()
         ]
         try BackgroundEstimationProcessor().execute(
-            inputs: ["input_frame": blurred],
+            inputs: ["input_frame": gray],
             outputs: &bgOutputs,
             parameters: [:],
             device: device, commandQueue: commandQueue
@@ -97,9 +93,16 @@ enum RegistrationCore {
             throw ProcessorExecutionError.executionFailed("BackgroundEstimation: missing background_subtracted_frame")
         }
 
+        // 3. Blur (detection only — FWHM is measured on the unblurred frame)
+        let blurred = try runFrame(GaussianBlurProcessor(),
+                                   inputs: ["input_frame": bgSubtracted],
+                                   outputKey: "blurred_frame",
+                                   params: ["radius": .double(blurRadius)],
+                                   device: device, commandQueue: commandQueue)
+
         // 4. Threshold
         let thresholded = try runFrame(ThresholdProcessor(),
-                                       inputs: ["input_frame": bgSubtracted],
+                                       inputs: ["input_frame": blurred],
                                        outputKey: "thresholded_frame",
                                        params: ["threshold_value": .double(thresholdValue),
                                                 "method": .string("sigma")],

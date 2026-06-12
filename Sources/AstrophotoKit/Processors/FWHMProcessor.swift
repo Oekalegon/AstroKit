@@ -8,6 +8,7 @@ private struct FWHMMeasurements {
     let fwhmMajor: Double  // FWHM along major axis
     let fwhmMinor: Double  // FWHM along minor axis
     let eccentricity: Double  // 0 = circular, 1 = fully elongated
+    let rotationAngle: Double  // orientation of the major axis in radians
 }
 
 /// Processor for calculating Full Width at Half Maximum (FWHM) for detected stars
@@ -82,6 +83,7 @@ public struct FWHMProcessor: Processor {
         let fwhmMajor: [Double]
         let fwhmMinor: [Double]
         let eccentricity: [Double]
+        let rotationAngle: [Double]
         let flux: [Double]
         let centroidX: [Double]
         let centroidY: [Double]
@@ -156,6 +158,7 @@ public struct FWHMProcessor: Processor {
         var fwhmMajorValues: [Double] = []
         var fwhmMinorValues: [Double] = []
         var eccentricityValues: [Double] = []
+        var rotationAngleValues: [Double] = []
         var fluxValues: [Double] = []
         var updatedCentroidXValues: [Double] = []
         var updatedCentroidYValues: [Double] = []
@@ -178,6 +181,7 @@ public struct FWHMProcessor: Processor {
             fwhmMajorValues.append(fwhm.fwhmMajor)
             fwhmMinorValues.append(fwhm.fwhmMinor)
             eccentricityValues.append(fwhm.eccentricity)
+            rotationAngleValues.append(fwhm.rotationAngle)
 
             // Flux is the zeroth moment (total weighted intensity)
             fluxValues.append(moment.m00)
@@ -199,6 +203,7 @@ public struct FWHMProcessor: Processor {
             fwhmMajor: fwhmMajorValues,
             fwhmMinor: fwhmMinorValues,
             eccentricity: eccentricityValues,
+            rotationAngle: rotationAngleValues,
             flux: fluxValues,
             centroidX: updatedCentroidXValues,
             centroidY: updatedCentroidYValues,
@@ -287,8 +292,11 @@ public struct FWHMProcessor: Processor {
         reorderedDataFrame.append(column: Column(name: "centroid_x", contents: starProperties.centroidX))
         reorderedDataFrame.append(column: Column(name: "centroid_y", contents: starProperties.centroidY))
 
-        // Add remaining columns from original (major_axis, minor_axis, rotation_angle)
+        // Add remaining columns from original (major_axis, minor_axis)
         try addRemainingColumns(to: &reorderedDataFrame, from: dataFrame)
+
+        // Rotation angle from intensity-weighted moments (replaces the detection-blob angle)
+        reorderedDataFrame.append(column: Column(name: "rotation_angle", contents: starProperties.rotationAngle))
 
         // Add FWHM columns
         reorderedDataFrame.append(column: Column(name: "fwhm_major", contents: starProperties.fwhmMajor))
@@ -304,9 +312,9 @@ public struct FWHMProcessor: Processor {
         outputs["pixel_coordinates"] = outputTable
     }
 
-    /// Adds remaining columns (major_axis, minor_axis, rotation_angle) to the DataFrame.
-    /// Eccentricity is intentionally excluded — it is computed from intensity-weighted moments
-    /// and written separately in updateOutputTable.
+    /// Adds remaining columns (major_axis, minor_axis) to the DataFrame.
+    /// Eccentricity and rotation_angle are intentionally excluded — they are computed from
+    /// intensity-weighted moments and written separately in updateOutputTable.
     private func addRemainingColumns(to dataFrame: inout DataFrame, from sourceDataFrame: DataFrame) throws {
         if let majorAxisColumn = sourceDataFrame.columns.first(where: { $0.name == "major_axis" }) {
             let majorAxisValues: [Double] = (0..<sourceDataFrame.rows.count).compactMap { majorAxisColumn[$0] as? Double }
@@ -315,10 +323,6 @@ public struct FWHMProcessor: Processor {
         if let minorAxisColumn = sourceDataFrame.columns.first(where: { $0.name == "minor_axis" }) {
             let minorAxisValues: [Double] = (0..<sourceDataFrame.rows.count).compactMap { minorAxisColumn[$0] as? Double }
             dataFrame.append(column: Column(name: "minor_axis", contents: minorAxisValues))
-        }
-        if let rotationAngleColumn = sourceDataFrame.columns.first(where: { $0.name == "rotation_angle" }) {
-            let rotationAngleValues: [Double] = (0..<sourceDataFrame.rows.count).compactMap { rotationAngleColumn[$0] as? Double }
-            dataFrame.append(column: Column(name: "rotation_angle", contents: rotationAngleValues))
         }
     }
 
@@ -353,6 +357,7 @@ public struct FWHMProcessor: Processor {
         let mu11: Double
         let mu02: Double
         let maxPixelValue: Double  // Maximum pixel value for saturation detection
+        let windowSigma: Double    // Sigma of the Gaussian window used by the shader
     }
 
     /// Calculates weighted image moments for all stars using GPU shader
@@ -419,6 +424,7 @@ public struct FWHMProcessor: Processor {
             var mu11: Float
             var mu02: Float
             var maxPixelValue: Float
+            var windowSigma: Float
         }
 
         guard let momentResultsBuffer = device.makeBuffer(
@@ -435,7 +441,7 @@ public struct FWHMProcessor: Processor {
         )
         for index in 0..<starInfo.count {
             momentResultsPointer[index] = MomentResults(
-                m00: 0, m10: 0, m01: 0, mu20: 0, mu11: 0, mu02: 0, maxPixelValue: 0
+                m00: 0, m10: 0, m01: 0, mu20: 0, mu11: 0, mu02: 0, maxPixelValue: 0, windowSigma: 0
             )
         }
 
@@ -470,7 +476,8 @@ public struct FWHMProcessor: Processor {
                 mu20: Double(moment.mu20),
                 mu11: Double(moment.mu11),
                 mu02: Double(moment.mu02),
-                maxPixelValue: Double(moment.maxPixelValue)
+                maxPixelValue: Double(moment.maxPixelValue),
+                windowSigma: Double(moment.windowSigma)
             ))
         }
 
@@ -480,7 +487,7 @@ public struct FWHMProcessor: Processor {
     /// Calculates FWHM and eccentricity from intensity-weighted image moments.
     private func calculateFWHMFromMoments(moment: GPUMomentResults) -> FWHMMeasurements {
         guard moment.m00 > 0 else {
-            return FWHMMeasurements(fwhmMajor: 0.0, fwhmMinor: 0.0, eccentricity: 0.0)
+            return FWHMMeasurements(fwhmMajor: 0.0, fwhmMinor: 0.0, eccentricity: 0.0, rotationAngle: 0.0)
         }
 
         // Covariance matrix: [[μ20, μ11], [μ11, μ02]]
@@ -490,16 +497,22 @@ public struct FWHMProcessor: Processor {
         let discriminant = trace * trace - 4 * determinant
 
         guard discriminant >= 0 else {
-            return FWHMMeasurements(fwhmMajor: 0.0, fwhmMinor: 0.0, eccentricity: 0.0)
+            return FWHMMeasurements(fwhmMajor: 0.0, fwhmMinor: 0.0, eccentricity: 0.0, rotationAngle: 0.0)
         }
 
         let sqrtDiscriminant = sqrt(discriminant)
         let lambda1 = (trace + sqrtDiscriminant) / 2.0
         let lambda2 = (trace - sqrtDiscriminant) / 2.0
 
-        // Major axis variance is larger eigenvalue, minor axis variance is smaller
-        let majorAxisVariance = max(lambda1, lambda2)
-        let minorAxisVariance = min(lambda1, lambda2)
+        // Major axis variance is larger eigenvalue, minor axis variance is smaller.
+        // The shader measures moments under a Gaussian window of variance σw², which
+        // shrinks the measured variance: σ_measured⁻² = σ_star⁻² + σw⁻². Invert that
+        // per eigenvalue to recover the true star variance. A star as large as the
+        // window itself cannot be measured reliably — report 0 so it is filtered out.
+        guard let majorAxisVariance = correctForWindow(max(lambda1, lambda2), windowSigma: moment.windowSigma),
+              let minorAxisVariance = correctForWindow(min(lambda1, lambda2), windowSigma: moment.windowSigma) else {
+            return FWHMMeasurements(fwhmMajor: 0.0, fwhmMinor: 0.0, eccentricity: 0.0, rotationAngle: 0.0)
+        }
 
         // FWHM = 2.355 * sigma for a Gaussian profile; sigma² is the variance eigenvalue
         let sigmaMajor = sqrt(max(0.0, majorAxisVariance))
@@ -517,7 +530,28 @@ public struct FWHMProcessor: Processor {
             eccentricity = 0.0
         }
 
-        return FWHMMeasurements(fwhmMajor: fwhmMajor, fwhmMinor: fwhmMinor, eccentricity: eccentricity)
+        // Orientation of the major axis; the circular Gaussian window does not bias it.
+        let rotationAngle = 0.5 * atan2(2.0 * moment.mu11, moment.mu20 - moment.mu02)
+
+        return FWHMMeasurements(
+            fwhmMajor: fwhmMajor, fwhmMinor: fwhmMinor,
+            eccentricity: eccentricity, rotationAngle: rotationAngle
+        )
+    }
+
+    /// Removes the Gaussian-window bias from a measured variance eigenvalue.
+    ///
+    /// Returns nil when the measured variance is invalid or not meaningfully smaller
+    /// than the window variance (the star is too large for the window to resolve).
+    /// A non-positive windowSigma means the moments were not windowed; the value is
+    /// returned unchanged.
+    private func correctForWindow(_ measuredVariance: Double, windowSigma: Double) -> Double? {
+        guard measuredVariance > 0 else { return nil }
+        guard windowSigma > 0 else { return measuredVariance }
+        let windowVariance = windowSigma * windowSigma
+        let inverseDiff = 1.0 / measuredVariance - 1.0 / windowVariance
+        guard inverseDiff > 0 else { return nil }
+        return 1.0 / inverseDiff
     }
 
     /// Calculates the median of an array
