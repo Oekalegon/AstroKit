@@ -293,6 +293,8 @@ public actor Archive {
         public let failed: Int
         /// Absolute paths of the FITS files that could not be read.
         public let failedPaths: [String]
+        /// Framesets whose pixel scale was filled in from their member frames.
+        public let frameSetsUpdated: Int
     }
 
     /// Re-reads FITS headers for existing archived frames and fills in missing fields:
@@ -406,7 +408,71 @@ public actor Archive {
                 failedPaths.append(toAbsolutePath(frame.filePath))
             }
         }
-        return BackfillResult(updated: updated, skipped: skipped, failed: failed, failedPaths: failedPaths)
+
+        // Framesets created before their member frames had a pixel scale carry NULL —
+        // fill them from the (now possibly backfilled) members.
+        let frameSetsUpdated = try await propagatePixelScaleToFrameSets()
+
+        return BackfillResult(
+            updated: updated, skipped: skipped, failed: failed,
+            failedPaths: failedPaths, frameSetsUpdated: frameSetsUpdated
+        )
+    }
+
+    // MARK: - Pixel scale
+
+    /// Bulk-sets the pixel scale (arcsec/px) on all frames and framesets whose
+    /// telescope and/or camera match the given values (exact match).
+    ///
+    /// Use this to repair archives from sources that record neither a scale keyword
+    /// nor the optics headers needed to derive one. Stacked result frames inherit
+    /// telescope/camera from their inputs, so they are matched by the same call.
+    /// Framesets that don't match directly (e.g. their telescope is NULL because it
+    /// was never aggregated) are still filled in when their member frames now agree
+    /// on a single pixel scale.
+    ///
+    /// - Parameters:
+    ///   - arcsecPerPixel: The image scale to set, in arcseconds per pixel.
+    ///   - telescope: Match frames with this exact telescope name (FITS `TELESCOP`).
+    ///   - camera: Match frames with this exact camera name (FITS `INSTRUME`).
+    ///   - overwrite: When false (default) only fills NULL values; when true,
+    ///     replaces existing pixel scales on matching records as well.
+    /// - Returns: The number of frame and frameset records updated.
+    /// - Throws: `ArchiveError.invalidArgument` when the scale is not positive or
+    ///   neither telescope nor camera is given (which would update the whole archive).
+    public func setPixelScale(
+        _ arcsecPerPixel: Double,
+        telescope: String? = nil,
+        camera: String? = nil,
+        overwrite: Bool = false
+    ) async throws -> (frames: Int, frameSets: Int) {
+        guard arcsecPerPixel > 0 else {
+            throw ArchiveError.invalidArgument("pixel scale must be positive (got \(arcsecPerPixel))")
+        }
+        guard telescope != nil || camera != nil else {
+            throw ArchiveError.invalidArgument(
+                "setPixelScale requires a telescope and/or camera to match — " +
+                "updating every frame in the archive is almost certainly a mistake")
+        }
+        var (frames, frameSets) = try await database.bulkSetPixelScale(
+            arcsecPerPixel, telescope: telescope, camera: camera, overwrite: overwrite
+        )
+        frameSets += try await propagatePixelScaleToFrameSets()
+        return (frames, frameSets)
+    }
+
+    /// Fills NULL frameset pixel scales from member frames that unanimously agree
+    /// on a value (nil members don't vote). Returns the number of framesets updated.
+    private func propagatePixelScaleToFrameSets() async throws -> Int {
+        var updated = 0
+        for fs in try await frameSets() where fs.pixelScale == nil {
+            let members = try await frames(inFrameSet: fs.id)
+            if let scale = sharedDouble(members.map { $0.pixelScale }) {
+                try await database.updateFrameSetPixelScale(id: fs.id, pixelScale: scale)
+                updated += 1
+            }
+        }
+        return updated
     }
 
     /// Updates quality metrics on an archived frame.

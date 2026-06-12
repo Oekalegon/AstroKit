@@ -82,6 +82,7 @@ struct ArchiveTools {
         case "archive_frameset_exclude":  return try await archiveFrameSetExclude(arguments)
         case "archive_frameset_delete":   return try await archiveFrameSetDelete(arguments)
         case "archive_backfill_metadata": return try await archiveBackfillMetadata(arguments)
+        case "archive_set_pixel_scale":   return try await archiveSetPixelScale(arguments)
         default: throw ToolError("Unknown archive tool: \(name)")
         }
     }
@@ -443,11 +444,47 @@ struct ArchiveTools {
             "  Updated:          \(result.updated)",
             "  Skipped:          \(result.skipped)",
         ]
+        if result.frameSetsUpdated > 0 {
+            lines.append("  Framesets (pixel scale): \(result.frameSetsUpdated)")
+        }
         if result.failed > 0 {
             lines.append("  Failed (unreadable): \(result.failed)")
             lines += result.failedPaths.map { "    \($0)" }
         }
         return lines.joined(separator: "\n")
+    }
+
+    private func archiveSetPixelScale(_ args: [String: Any]) async throws -> String {
+        let telescope = args["telescope"] as? String
+        let camera    = args["camera"]    as? String
+        let overwrite = args["overwrite"] as? Bool ?? false
+
+        let scale: Double
+        if let explicit = args["arcsec_per_pixel"] as? Double {
+            scale = explicit
+        } else if let fl = args["focal_length_mm"] as? Double,
+                  let px = args["pixel_size_um"] as? Double {
+            let binning = (args["binning"] as? Int) ?? 1
+            guard let computed = PixelScale.arcsecPerPixel(
+                pixelSizeMicrons: px, binning: binning, focalLengthMm: fl
+            ) else {
+                throw ToolError("focal_length_mm, pixel_size_um, and binning must all be positive.")
+            }
+            scale = computed
+        } else {
+            throw ToolError("archive_set_pixel_scale requires 'arcsec_per_pixel', or 'focal_length_mm' + 'pixel_size_um'.")
+        }
+
+        let archive = try makeArchive()
+        let (frames, frameSets) = try await archive.setPixelScale(
+            scale, telescope: telescope, camera: camera, overwrite: overwrite
+        )
+        let scope = [telescope.map { "telescope: \($0)" }, camera.map { "camera: \($0)" }]
+            .compactMap { $0 }.joined(separator: ", ")
+        return String(
+            format: "Set pixel scale %.4f\"/px (%@):\n  Frames updated:    %d\n  Framesets updated: %d",
+            scale, scope, frames, frameSets
+        )
     }
 
     private func archiveReject(_ args: [String: Any]) async throws -> String {
