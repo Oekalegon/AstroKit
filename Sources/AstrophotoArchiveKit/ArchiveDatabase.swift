@@ -1598,14 +1598,19 @@ actor ArchiveDatabase {
     }
 
     private func availableSpace(at url: URL) -> Int64 {
-        guard let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityKey]),
-              let capacity = values.volumeAvailableCapacity else { return 0 }
-        return Int64(capacity)
+        volumeCapacity(at: url, key: .volumeAvailableCapacityKey) { $0.volumeAvailableCapacity }
     }
 
     private func totalSpace(at url: URL) -> Int64 {
-        guard let values = try? url.resourceValues(forKeys: [.volumeTotalCapacityKey]),
-              let capacity = values.volumeTotalCapacity else { return 0 }
+        volumeCapacity(at: url, key: .volumeTotalCapacityKey) { $0.volumeTotalCapacity }
+    }
+
+    /// Reads a volume-capacity resource value, returning 0 when unknown.
+    private func volumeCapacity(
+        at url: URL, key: URLResourceKey, value: (URLResourceValues) -> Int?
+    ) -> Int64 {
+        guard let values = try? url.resourceValues(forKeys: [key]),
+              let capacity = value(values) else { return 0 }
         return Int64(capacity)
     }
 }
