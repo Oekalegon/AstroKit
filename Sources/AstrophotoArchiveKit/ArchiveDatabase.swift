@@ -262,6 +262,17 @@ actor ArchiveDatabase {
         UPDATE frame_sets SET object_name = NULL
         WHERE LOWER(frame_type) IN ('bias', 'dark', 'flat');
         """,
+        // v26: re-run the v25 cleanup. A metadata backfill executed with a pre-v25 binary
+        // (a stale long-running MCP server process) re-read the FITS files — which still
+        // carry the OBJECT keyword on disk — and wrote object_name back onto calibration
+        // rows after v25 had cleared it. backfillObservationMetadata now refuses to write
+        // an object for calibration frame types, so this cannot recur.
+        """
+        UPDATE frames SET object_name = NULL, ra = NULL, dec = NULL, healpix_pixel = NULL
+        WHERE LOWER(frame_type) IN ('bias', 'dark', 'flat');
+        UPDATE frame_sets SET object_name = NULL
+        WHERE LOWER(frame_type) IN ('bias', 'dark', 'flat');
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {

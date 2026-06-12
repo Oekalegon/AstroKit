@@ -168,6 +168,43 @@ struct CalibrationMigrationTests {
         )
         #expect(lightSet == ["M42"])
     }
+
+    @Test("v26 re-clears an object re-added to a calibration row after v25")
+    func migrationReclearsCalibrationObject() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("migr26-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let rootPath = FileManager.default.temporaryDirectory.path
+
+        // Simulate the post-v25 regression: a stale-binary backfill wrote object_name
+        // back onto calibration rows (ra/dec stayed NULL — backfill never writes those).
+        _ = try ArchiveDatabase(url: url, archiveRootPath: rootPath)
+        try exec("""
+            INSERT INTO frames (id, file_path, object_name, frame_type, added_at, frame_signature)
+            VALUES ('f-bias',  'a.fits', 'HD 116798', 'bias',       '2026-06-12', 'sig-bias'),
+                   ('f-flat',  'b.fits', 'M 101',     'flat',       '2026-06-12', 'sig-flat'),
+                   ('f-diag',  'c.fits', 'NGC 6910',  'diagnostic', '2026-06-12', 'sig-diag'),
+                   ('f-light', 'd.fits', 'M 101',     'light',      '2026-06-12', 'sig-light');
+            PRAGMA user_version = 25;
+            """, on: url)
+
+        // Reopen — migrations resume from v25 and apply v26.
+        _ = try ArchiveDatabase(url: url, archiveRootPath: rootPath)
+
+        let objects = try queryRow(
+            """
+            SELECT (SELECT object_name FROM frames WHERE id = 'f-bias'),
+                   (SELECT object_name FROM frames WHERE id = 'f-flat'),
+                   (SELECT object_name FROM frames WHERE id = 'f-diag'),
+                   (SELECT object_name FROM frames WHERE id = 'f-light')
+            """,
+            columns: 4, on: url
+        )
+        #expect(objects[0] == nil)
+        #expect(objects[1] == nil)
+        #expect(objects[2] == "NGC 6910", "Diagnostic frames may carry an object")
+        #expect(objects[3] == "M 101")
+    }
 }
 
 // MARK: - Backfill
