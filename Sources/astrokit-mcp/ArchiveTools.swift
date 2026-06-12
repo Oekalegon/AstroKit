@@ -370,7 +370,8 @@ struct ArchiveTools {
     }
 
     private func archiveRecent(_ args: [String: Any]) async throws -> String {
-        let limit   = args["limit"] as? Int ?? 15
+        let limitArg = args["limit"] as? Int ?? 15
+        let limit: Int? = limitArg > 0 ? limitArg : nil
         let archive = try makeArchive()
         let frames  = try await archive.recentFrames(limit: limit)
         if frames.isEmpty { return "No frames in archive." }

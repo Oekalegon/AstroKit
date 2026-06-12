@@ -138,7 +138,7 @@ ap-archive recent [-c <count>] [--json]
 
 | Option | Description |
 |--------|-------------|
-| `-c`, `--count <n>` | Number of frames to show (default: 15) |
+| `-c`, `--count <n>` | Number of frames to show (default: 15); 0 or negative shows all |
 | `--json` | Print results as JSON |
 
 **Examples:**

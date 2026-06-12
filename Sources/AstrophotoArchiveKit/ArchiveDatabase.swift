@@ -1361,14 +1361,15 @@ actor ArchiveDatabase {
         )
     }
 
-    func recentFrames(limit: Int, rejectionFilter: RejectionFilter = .excludeRejected) throws -> [ArchivedFrame] {
+    func recentFrames(limit: Int?, rejectionFilter: RejectionFilter = .excludeRejected) throws -> [ArchivedFrame] {
         let condition: String
         switch rejectionFilter {
         case .excludeRejected: condition = "WHERE rejected = 0 "
         case .onlyRejected:    condition = "WHERE rejected = 1 "
         case .includeAll:      condition = ""
         }
-        let limitClause = limit > 0 ? " LIMIT \(limit)" : ""
+        // max(_:0) keeps an explicit non-positive limit from becoming SQLite's "LIMIT -1" (unlimited).
+        let limitClause = limit.map { " LIMIT \(max($0, 0))" } ?? ""
         let stmt = try prepare(
             "SELECT * FROM frames \(condition)ORDER BY added_at DESC\(limitClause)"
         )
