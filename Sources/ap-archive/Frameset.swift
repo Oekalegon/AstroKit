@@ -7,7 +7,8 @@ struct Frameset: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "frameset",
         abstract: "Manage frame sets.",
-        subcommands: [Create.self, Show.self, Quality.self, Exclude.self, Include.self, Delete.self]
+        subcommands: [Create.self, Show.self, Quality.self, Add.self, Remove.self,
+                      Exclude.self, Include.self, Delete.self]
     )
 
     // MARK: - Shared query options
@@ -484,6 +485,116 @@ struct Frameset: AsyncParsableCommand {
         }
     }
 
+    // MARK: - Add / Remove
+
+    struct Add: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Add frames to an existing frame set. Frames must match the set's type, "
+                + "processing level, filter, and the criteria the set was created with."
+        )
+
+        @OptionGroup var archiveOptions: ArchivePathOption
+
+        @Argument(help: "Frame set UUID.")
+        var frameSetID: String
+
+        @Argument(help: "One or more frame UUIDs to add.")
+        var frameIds: [String]
+
+        @Flag(name: .long, help: "Skip the filter and creation-criteria checks (frame type and processing level must still match).")
+        var force: Bool = false
+
+        @Flag(name: .long, help: "Output the updated frame set as JSON.")
+        var json: Bool = false
+
+        func run() async throws {
+            let (setUUID, frameUUIDs) = try parseUUIDs(set: frameSetID, frames: frameIds)
+            let config  = try archiveOptions.makeConfiguration()
+            let archive = try Archive(configuration: config)
+
+            let result = try await archive.addFrames(
+                toFrameSet: setUUID, frameIDs: frameUUIDs, force: force
+            )
+
+            if json {
+                let iso = ISO8601DateFormatter()
+                var d = frameSetDict(result.frameSet, iso: iso)
+                d["added"]           = result.addedIDs.map { $0.uuidString }
+                d["already_members"] = result.alreadyMemberIDs.map { $0.uuidString }
+                d["excluded"]        = result.excludedReasons.map { ["id": $0.key.uuidString, "reason": $0.value] }
+                writeJSON(d)
+                return
+            }
+
+            let n = result.addedIDs.count
+            print("Added \(n) frame\(n == 1 ? "" : "s") to frame set '\(result.frameSet.name)'.")
+            if !result.alreadyMemberIDs.isEmpty {
+                let m = result.alreadyMemberIDs.count
+                print(orangeText("⚠  \(m) frame\(m == 1 ? " was" : "s were") already in the set and skipped:"))
+                for id in result.alreadyMemberIDs.prefix(5) { print(orangeText("   \(id.uuidString)")) }
+                if m > 5 { print(orangeText("   …and \(m - 5) more")) }
+            }
+            if !result.excludedReasons.isEmpty {
+                let m = result.excludedReasons.count
+                print(orangeText("⚠  \(m) frame\(m == 1 ? " was" : "s were") added but marked as excluded (quality threshold exceeded):"))
+                for (id, reason) in result.excludedReasons.sorted(by: { $0.key.uuidString < $1.key.uuidString }).prefix(5) {
+                    print(orangeText("   \(id.uuidString)  (\(reason))"))
+                }
+                if m > 5 { print(orangeText("   …and \(m - 5) more")) }
+                print(orangeText("   Use 'ap-archive frameset include <set-id> <frame-id>' to re-enable a frame."))
+            }
+            let suffix = result.frameSet.excludedFrameCount > 0
+                ? " (\(result.frameSet.excludedFrameCount) excluded)" : ""
+            print("The set now contains \(result.frameSet.frameCount) frame\(result.frameSet.frameCount == 1 ? "" : "s")\(suffix).")
+        }
+    }
+
+    struct Remove: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            abstract: "Remove frames from a frame set. The frames themselves stay in the archive."
+        )
+
+        @OptionGroup var archiveOptions: ArchivePathOption
+
+        @Argument(help: "Frame set UUID.")
+        var frameSetID: String
+
+        @Argument(help: "One or more frame UUIDs to remove.")
+        var frameIds: [String]
+
+        @Flag(name: .long, help: "Output the updated frame set as JSON.")
+        var json: Bool = false
+
+        func run() async throws {
+            let (setUUID, frameUUIDs) = try parseUUIDs(set: frameSetID, frames: frameIds)
+            let config  = try archiveOptions.makeConfiguration()
+            let archive = try Archive(configuration: config)
+
+            let result = try await archive.removeFrames(fromFrameSet: setUUID, frameIDs: frameUUIDs)
+
+            if json {
+                let iso = ISO8601DateFormatter()
+                var d = frameSetDict(result.frameSet, iso: iso)
+                d["removed"]     = result.removedIDs.map { $0.uuidString }
+                d["not_members"] = result.notMemberIDs.map { $0.uuidString }
+                writeJSON(d)
+                return
+            }
+
+            let n = result.removedIDs.count
+            print("Removed \(n) frame\(n == 1 ? "" : "s") from frame set '\(result.frameSet.name)'.")
+            if !result.notMemberIDs.isEmpty {
+                let m = result.notMemberIDs.count
+                print(orangeText("⚠  \(m) frame\(m == 1 ? " was" : "s were") not in the set and skipped:"))
+                for id in result.notMemberIDs.prefix(5) { print(orangeText("   \(id.uuidString)")) }
+                if m > 5 { print(orangeText("   …and \(m - 5) more")) }
+            }
+            let suffix = result.frameSet.excludedFrameCount > 0
+                ? " (\(result.frameSet.excludedFrameCount) excluded)" : ""
+            print("The set now contains \(result.frameSet.frameCount) frame\(result.frameSet.frameCount == 1 ? "" : "s")\(suffix).")
+        }
+    }
+
     // MARK: - Exclude / Include
 
     struct Exclude: AsyncParsableCommand {
@@ -575,6 +686,22 @@ struct Frameset: AsyncParsableCommand {
             print("Deleted frame set \(id).")
         }
     }
+}
+
+// MARK: - Shared argument parsing (file-private, used by Add/Remove)
+
+private func parseUUIDs(set: String, frames: [String]) throws -> (UUID, [UUID]) {
+    guard let setUUID = UUID(uuidString: set) else {
+        throw ValidationError("Invalid frame set UUID: \(set)")
+    }
+    var frameUUIDs: [UUID] = []
+    for s in frames {
+        guard let uuid = UUID(uuidString: s) else {
+            throw ValidationError("Invalid frame UUID: \(s)")
+        }
+        frameUUIDs.append(uuid)
+    }
+    return (setUUID, frameUUIDs)
 }
 
 // MARK: - Shared JSON helpers (file-private, used by all subcommands)

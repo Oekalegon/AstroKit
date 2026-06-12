@@ -137,6 +137,8 @@ struct CalibrationMigrationTests {
             INSERT INTO frame_sets (id, name, frame_type, object_name, created_at)
             VALUES ('fs-flat',  'Flats',  'flat',  'M42', '2026-06-11'),
                    ('fs-light', 'Lights', 'light', 'M42', '2026-06-11');
+            -- v27 added this column via ALTER TABLE; drop it so the replay can re-add it.
+            ALTER TABLE frame_sets DROP COLUMN criteria;
             PRAGMA user_version = 24;
             """, on: url)
 
@@ -185,6 +187,8 @@ struct CalibrationMigrationTests {
                    ('f-flat',  'b.fits', 'M 101',     'flat',       '2026-06-12', 'sig-flat'),
                    ('f-diag',  'c.fits', 'NGC 6910',  'diagnostic', '2026-06-12', 'sig-diag'),
                    ('f-light', 'd.fits', 'M 101',     'light',      '2026-06-12', 'sig-light');
+            -- v27 added this column via ALTER TABLE; drop it so the replay can re-add it.
+            ALTER TABLE frame_sets DROP COLUMN criteria;
             PRAGMA user_version = 25;
             """, on: url)
 

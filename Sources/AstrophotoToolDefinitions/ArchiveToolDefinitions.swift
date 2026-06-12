@@ -168,6 +168,31 @@ public enum ArchiveToolDefinitions {
             ] as [String: Any],
         ],
         [
+            "name": "archive_frameset_add",
+            "description": "Add frames to an existing frame set. Frames must match the set's frame type, processing level, optical filter, and the query criteria the set was created with; frames exceeding the set's quality thresholds are added but marked excluded. Frames already in the set are skipped. Set force=true to bypass the filter and criteria checks (type and level must still match).",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "frameset_id": ["type": "string", "description": "Frame set UUID."],
+                    "frame_ids": ["type": "array", "items": ["type": "string"], "description": "Frame UUIDs to add."],
+                    "force": ["type": "boolean", "description": "Skip the filter and creation-criteria checks (default false)."],
+                ] as [String: Any],
+                "required": ["frameset_id", "frame_ids"],
+            ] as [String: Any],
+        ],
+        [
+            "name": "archive_frameset_remove",
+            "description": "Remove frames from a frame set. The frames themselves stay in the archive. Removing all remaining members is refused — use archive_frameset_delete instead.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "frameset_id": ["type": "string", "description": "Frame set UUID."],
+                    "frame_ids": ["type": "array", "items": ["type": "string"], "description": "Frame UUIDs to remove."],
+                ] as [String: Any],
+                "required": ["frameset_id", "frame_ids"],
+            ] as [String: Any],
+        ],
+        [
             "name": "archive_frameset_exclude",
             "description": "Mark a frame as excluded within a specific frame set. Excluded frames are skipped during processing but remain in the set. Unlike the global reject flag, this is specific to one frame set.",
             "inputSchema": [

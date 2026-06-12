@@ -273,6 +273,11 @@ actor ArchiveDatabase {
         UPDATE frame_sets SET object_name = NULL
         WHERE LOWER(frame_type) IN ('bias', 'dark', 'flat');
         """,
+        // v27: persist the selection criteria a frameset was created with (JSON-encoded
+        // FrameSetCriteria). Frames added to an existing set are validated against these
+        // criteria so the set stays consistent with its original query. NULL for sets
+        // created before this version — those only get the type/level/filter checks.
+        "ALTER TABLE frame_sets ADD COLUMN criteria TEXT;",
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -855,7 +860,7 @@ actor ArchiveDatabase {
     // Shared SELECT columns for both list and single-item queries.
     // Indices: 0–13 = v6 core, 14–21 = v7 extras,
     //          22–26 = v19 quality aggregates, 27 = frame_count, 28 = excluded_count,
-    //          29–30 = v24 telescope/site.
+    //          29–30 = v24 telescope/site, 31 = v27 criteria.
     private static let frameSetSelectSQL = """
         SELECT fs.id, fs.name, fs.frame_type, fs.processing_level,
                fs.object_name, fs.filter, fs.camera, fs.exposure_time, fs.temperature,
@@ -867,7 +872,7 @@ actor ArchiveDatabase {
                fs.median_background_noise, fs.median_background_noise_electrons,
                COUNT(fsm.frame_id) AS frame_count,
                SUM(CASE WHEN fsm.excluded = 1 THEN 1 ELSE 0 END) AS excluded_count,
-               fs.telescope, fs.site
+               fs.telescope, fs.site, fs.criteria
         FROM frame_sets fs
         LEFT JOIN frame_set_members fsm ON fsm.frame_set_id = fs.id
         """
@@ -888,8 +893,8 @@ actor ArchiveDatabase {
          date_from, date_to, temperature_mean, temperature_min, temperature_max,
          pixel_scale, focal_length, position_angle,
          median_star_count, median_fwhm, median_eccentricity,
-         median_background_noise, median_background_noise_electrons)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         median_background_noise, median_background_noise_electrons, criteria)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -922,6 +927,7 @@ actor ArchiveDatabase {
         bind(stmt, 27, fs.medianEccentricity)
         bind(stmt, 28, fs.medianBackgroundNoise)
         bind(stmt, 29, fs.medianBackgroundNoiseElectrons)
+        bind(stmt, 30, ArchiveDatabase.encodeCriteria(fs.criteria))
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -1095,6 +1101,117 @@ actor ArchiveDatabase {
         }
     }
 
+    /// Appends frames to an existing frame set, positioned after the current members.
+    /// Callers are responsible for validation — this performs the raw inserts only.
+    func addFrameSetMembers(
+        setID: UUID,
+        frameIDs: [UUID],
+        excludedIDs: Set<UUID> = [],
+        excludedReasons: [UUID: String] = [:]
+    ) throws {
+        guard !frameIDs.isEmpty else { return }
+
+        // New members go after the highest existing position.
+        let posStmt = try prepare(
+            "SELECT COALESCE(MAX(position), -1) FROM frame_set_members WHERE frame_set_id = ?"
+        )
+        defer { sqlite3_finalize(posStmt) }
+        bind(posStmt, 1, setID.uuidString)
+        guard sqlite3_step(posStmt) == SQLITE_ROW else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+        let nextPosition = Int(sqlite3_column_int(posStmt, 0)) + 1
+
+        try exec("BEGIN")
+        let memberSQL = """
+            INSERT INTO frame_set_members (frame_set_id, frame_id, position, excluded, excluded_reason)
+            VALUES (?,?,?,?,?)
+            """
+        for (offset, frameID) in frameIDs.enumerated() {
+            let mstmt = try prepare(memberSQL)
+            defer { sqlite3_finalize(mstmt) }
+            bind(mstmt, 1, setID.uuidString)
+            bind(mstmt, 2, frameID.uuidString)
+            sqlite3_bind_int(mstmt, 3, Int32(nextPosition + offset))
+            sqlite3_bind_int(mstmt, 4, excludedIDs.contains(frameID) ? 1 : 0)
+            bind(mstmt, 5, excludedReasons[frameID])
+            guard sqlite3_step(mstmt) == SQLITE_DONE else {
+                sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+                throw ArchiveError.databaseError(dbErrorMessage())
+            }
+        }
+        try exec("COMMIT")
+    }
+
+    /// Removes the given frames from a frame set. Frames not in the set are ignored.
+    /// Returns the number of membership rows actually deleted.
+    func removeFrameSetMembers(setID: UUID, frameIDs: [UUID]) throws -> Int {
+        guard !frameIDs.isEmpty else { return 0 }
+        let placeholders = frameIDs.map { _ in "?" }.joined(separator: ",")
+        let stmt = try prepare(
+            "DELETE FROM frame_set_members WHERE frame_set_id = ? AND frame_id IN (\(placeholders))"
+        )
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, setID.uuidString)
+        for (i, fid) in frameIDs.enumerated() {
+            bind(stmt, Int32(i + 2), fid.uuidString)
+        }
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+        return Int(sqlite3_changes(db))
+    }
+
+    /// Rewrites the stored aggregate columns (shared scalars, date span, temperature
+    /// statistics, and quality medians) of a frame set from the given value.
+    /// Identity fields (id, name, frame_type, processing_level, created_at, criteria)
+    /// are not touched.
+    func updateFrameSetAggregates(_ fs: ArchivedFrameSet) throws {
+        let iso = ISO8601DateFormatter()
+        let sql = """
+        UPDATE frame_sets SET
+            object_name = ?, filter = ?, camera = ?, telescope = ?, site = ?,
+            exposure_time = ?, temperature = ?, gain = ?, offset = ?,
+            width = ?, height = ?,
+            date_from = ?, date_to = ?,
+            temperature_mean = ?, temperature_min = ?, temperature_max = ?,
+            pixel_scale = ?, focal_length = ?, position_angle = ?,
+            median_star_count = ?, median_fwhm = ?, median_eccentricity = ?,
+            median_background_noise = ?, median_background_noise_electrons = ?
+        WHERE id = ?
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1,  fs.objectName)
+        bind(stmt, 2,  fs.filter)
+        bind(stmt, 3,  fs.camera)
+        bind(stmt, 4,  fs.telescope)
+        bind(stmt, 5,  fs.site)
+        bind(stmt, 6,  fs.exposureTime)
+        bind(stmt, 7,  fs.temperatureMean)   // legacy `temperature` column = mean
+        bind(stmt, 8,  fs.gain)
+        bind(stmt, 9,  fs.offset)
+        bind(stmt, 10, fs.width.map { Int64($0) })
+        bind(stmt, 11, fs.height.map { Int64($0) })
+        bind(stmt, 12, fs.dateFrom.map { iso.string(from: $0) })
+        bind(stmt, 13, fs.dateTo.map   { iso.string(from: $0) })
+        bind(stmt, 14, fs.temperatureMean)
+        bind(stmt, 15, fs.temperatureMin)
+        bind(stmt, 16, fs.temperatureMax)
+        bind(stmt, 17, fs.pixelScale)
+        bind(stmt, 18, fs.focalLength)
+        bind(stmt, 19, fs.positionAngle)
+        bind(stmt, 20, fs.medianStarCount)
+        bind(stmt, 21, fs.medianFWHM)
+        bind(stmt, 22, fs.medianEccentricity)
+        bind(stmt, 23, fs.medianBackgroundNoise)
+        bind(stmt, 24, fs.medianBackgroundNoiseElectrons)
+        bind(stmt, 25, fs.id.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
     /// Returns all frameset IDs that contain the given frame.
     func frameSetIDsForFrame(_ frameID: UUID) throws -> [UUID] {
         let stmt = try prepare(
@@ -1151,7 +1268,7 @@ actor ArchiveDatabase {
         // Column map — see frameSetSelectSQL for ordering.
         // 0–13: v6 core, 14–21: v7 extras,
         // 22–26: v19 quality aggregates, 27: frame_count, 28: excluded_count,
-        // 29–30: v24 telescope/site.
+        // 29–30: v24 telescope/site, 31: v27 criteria.
         guard let stmt,
               let idStr = columnText(stmt, 0), let id = UUID(uuidString: idStr),
               let name = columnText(stmt, 1),
@@ -1199,7 +1316,23 @@ actor ArchiveDatabase {
         // telescope (col 29) and site (col 30) added in migration v24.
         fs.telescope = columnText(stmt, 29)
         fs.site      = columnText(stmt, 30)
+        // criteria (col 31) added in migration v27.
+        fs.criteria  = ArchiveDatabase.decodeCriteria(columnText(stmt, 31))
         return fs
+    }
+
+    // MARK: - Criteria JSON coding
+
+    private static func encodeCriteria(_ criteria: FrameSetCriteria?) -> String? {
+        guard let criteria else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return (try? encoder.encode(criteria)).flatMap { String(data: $0, encoding: .utf8) }
+    }
+
+    private static func decodeCriteria(_ json: String?) -> FrameSetCriteria? {
+        guard let json, let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(FrameSetCriteria.self, from: data)
     }
 
     // MARK: - Processing runs

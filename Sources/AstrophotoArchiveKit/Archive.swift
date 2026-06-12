@@ -707,7 +707,10 @@ public actor Archive {
             medianFWHM:                    median(activeFrames.compactMap { $0.medianFWHM }),
             medianEccentricity:            median(activeFrames.compactMap { $0.medianEccentricity }),
             medianBackgroundNoise:         median(activeFrames.compactMap { $0.backgroundNoise }),
-            medianBackgroundNoiseElectrons: median(activeFrames.compactMap { $0.backgroundNoiseElectrons })
+            medianBackgroundNoiseElectrons: median(activeFrames.compactMap { $0.backgroundNoiseElectrons }),
+            // Persist the cleaned query plus the exclusion thresholds so frames added
+            // later can be validated against the same criteria.
+            criteria: FrameSetCriteria(query: q, maxFWHM: maxFWHM, maxEccentricity: maxEccentricity)
         )
         try await database.insertFrameSet(
             frameSet,
@@ -772,6 +775,248 @@ public actor Archive {
             excluded: excluded,
             reason: excluded ? reason : nil
         )
+    }
+
+    /// Adds frames to an existing frame set.
+    ///
+    /// Each frame must match the set's invariants: same frame type, same processing level,
+    /// and an optical filter compatible with the set's filter(s). When the set carries
+    /// persisted creation criteria (sets created since schema v27), the frames must also
+    /// match the query the set was created with. Frames exceeding the set's quality
+    /// thresholds (`maxFWHM` / `maxEccentricity` from the creation criteria) are added
+    /// but marked excluded — the same include-but-exclude semantics as set creation.
+    ///
+    /// - Parameters:
+    ///   - setID: The frame set to add to.
+    ///   - frameIDs: Archive frame UUIDs to add. Frames already in the set are skipped.
+    ///   - force: Skips the filter and creation-criteria checks (frame type and
+    ///     processing level always must match). Mirrors `--force` on set creation.
+    /// - Throws: `ArchiveError.frameSetError` when the set or a frame does not exist,
+    ///   a frame is rejected, or a frame fails validation.
+    @discardableResult
+    public func addFrames(
+        toFrameSet setID: UUID,
+        frameIDs: [UUID],
+        force: Bool = false
+    ) async throws -> FrameSetAddResult {
+        guard let set = try await database.frameSetByID(setID) else {
+            throw ArchiveError.frameSetError("No frame set with id \(setID.uuidString).")
+        }
+        let existingIDs = Set(try await database.frameIDsForSet(setID))
+
+        // Resolve candidates, skipping duplicates in the input and existing members.
+        var alreadyMembers: [UUID] = []
+        var candidates: [ArchivedFrame] = []
+        var seen = Set<UUID>()
+        for fid in frameIDs {
+            guard seen.insert(fid).inserted else { continue }
+            guard let frame = try await database.frameByID(fid) else {
+                throw ArchiveError.frameSetError("No frame with id \(fid.uuidString) in the archive.")
+            }
+            if existingIDs.contains(fid) {
+                alreadyMembers.append(fid)
+            } else {
+                candidates.append(frame)
+            }
+        }
+
+        for frame in candidates {
+            let label = (frame.filePath as NSString).lastPathComponent
+            if frame.rejected {
+                let reason = frame.rejectedReason.map { " (\($0))" } ?? ""
+                throw ArchiveError.frameSetError(
+                    "Frame \(frame.id.uuidString) [\(label)] is rejected\(reason). "
+                    + "Un-reject it first with 'ap-archive reject \(frame.id.uuidString) --undo'."
+                )
+            }
+            guard frame.frameType.lowercased() == set.frameType.lowercased() else {
+                throw ArchiveError.frameSetError(
+                    "Frame \(frame.id.uuidString) [\(label)] has type '\(frame.frameType)' "
+                    + "but the set contains '\(set.frameType)' frames."
+                )
+            }
+            guard frame.processingLevel == set.processingLevel else {
+                throw ArchiveError.frameSetError(
+                    "Frame \(frame.id.uuidString) [\(label)] has processing level "
+                    + "'\(frame.processingLevel.rawValue)' but the set contains "
+                    + "'\(set.processingLevel.rawValue)' frames."
+                )
+            }
+            if !force && !filterAllowed(frame.filter, inSet: set.filter) {
+                let setFilter   = set.filter ?? "(none)"
+                let frameFilter = frame.filter ?? "(none)"
+                throw ArchiveError.frameSetError(
+                    "Frame \(frame.id.uuidString) [\(label)] has filter '\(frameFilter)' "
+                    + "but the set was created with filter '\(setFilter)'. Use --force to add anyway."
+                )
+            }
+        }
+
+        // Validate against the persisted creation criteria: the candidate must be in the
+        // result of the same query the set was created with. Re-running the query reuses
+        // all SQL predicate logic (object, camera, dates, temperature, quality filters, …).
+        if !force, let criteria = set.criteria {
+            var q = criteria.query
+            q.rejectionFilter = .excludeRejected
+            q.limit = nil
+            q.maxFWHM = nil
+            q.maxEccentricity = nil
+            let matchingIDs = Set(try await frames(matching: q).map { $0.id })
+            for frame in candidates where !matchingIDs.contains(frame.id) {
+                let label = (frame.filePath as NSString).lastPathComponent
+                throw ArchiveError.frameSetError(
+                    "Frame \(frame.id.uuidString) [\(label)] does not match the criteria "
+                    + "this set was created with. Use --force to add anyway."
+                )
+            }
+        }
+
+        // Quality thresholds from the creation criteria: include-but-exclude, as on creation.
+        var excludedReasons: [UUID: String] = [:]
+        if let criteria = set.criteria {
+            for f in candidates {
+                var reasons: [String] = []
+                if let max = criteria.maxFWHM, let v = f.medianFWHM, v > max {
+                    reasons.append(String(format: "FWHM %.2f px > max %.2f px", v, max))
+                }
+                if let max = criteria.maxEccentricity, let v = f.medianEccentricity, v > max {
+                    reasons.append(String(format: "eccentricity %.3f > max %.3f", v, max))
+                }
+                if !reasons.isEmpty { excludedReasons[f.id] = reasons.joined(separator: "; ") }
+            }
+        }
+
+        guard !candidates.isEmpty else {
+            return FrameSetAddResult(
+                frameSet: set, addedIDs: [],
+                alreadyMemberIDs: alreadyMembers, excludedReasons: [:]
+            )
+        }
+
+        try await database.addFrameSetMembers(
+            setID: setID,
+            frameIDs: candidates.map { $0.id },
+            excludedIDs: Set(excludedReasons.keys),
+            excludedReasons: excludedReasons
+        )
+        let updated = try await recomputeFrameSetAggregates(id: setID)
+        return FrameSetAddResult(
+            frameSet: updated,
+            addedIDs: candidates.map { $0.id },
+            alreadyMemberIDs: alreadyMembers,
+            excludedReasons: excludedReasons
+        )
+    }
+
+    /// Removes frames from an existing frame set. The frames themselves stay in the archive.
+    ///
+    /// Frames that are not members of the set are skipped and reported in the result.
+    /// Removing all remaining members is refused — delete the set instead.
+    @discardableResult
+    public func removeFrames(
+        fromFrameSet setID: UUID,
+        frameIDs: [UUID]
+    ) async throws -> FrameSetRemoveResult {
+        guard let set = try await database.frameSetByID(setID) else {
+            throw ArchiveError.frameSetError("No frame set with id \(setID.uuidString).")
+        }
+        let existingIDs = Set(try await database.frameIDsForSet(setID))
+
+        var toRemove: [UUID] = []
+        var notMembers: [UUID] = []
+        var seen = Set<UUID>()
+        for fid in frameIDs {
+            guard seen.insert(fid).inserted else { continue }
+            if existingIDs.contains(fid) {
+                toRemove.append(fid)
+            } else {
+                notMembers.append(fid)
+            }
+        }
+
+        guard !toRemove.isEmpty else {
+            return FrameSetRemoveResult(frameSet: set, removedIDs: [], notMemberIDs: notMembers)
+        }
+        guard toRemove.count < existingIDs.count else {
+            throw ArchiveError.frameSetError(
+                "Removing \(toRemove.count) frame\(toRemove.count == 1 ? "" : "s") would leave "
+                + "the set empty. Use 'ap-archive frameset delete' to delete the whole set instead."
+            )
+        }
+
+        _ = try await database.removeFrameSetMembers(setID: setID, frameIDs: toRemove)
+        let updated = try await recomputeFrameSetAggregates(id: setID)
+        return FrameSetRemoveResult(frameSet: updated, removedIDs: toRemove, notMemberIDs: notMembers)
+    }
+
+    /// Whether a frame's optical filter is compatible with a set's filter field.
+    /// The set field is a single name, a comma-separated list (force-created sets),
+    /// or nil when the members carry no filter.
+    private func filterAllowed(_ frameFilter: String?, inSet setFilter: String?) -> Bool {
+        guard let setFilter else { return frameFilter == nil }
+        guard let frameFilter else { return false }
+        let allowed = setFilter.split(separator: ",").map {
+            $0.trimmingCharacters(in: .whitespaces).lowercased()
+        }
+        return allowed.contains(frameFilter.lowercased())
+    }
+
+    /// Recomputes the stored aggregates (shared scalars, filter list, date span,
+    /// temperature statistics, and quality medians) from the current membership and
+    /// persists them. Returns the refreshed frame set.
+    @discardableResult
+    private func recomputeFrameSetAggregates(id: UUID) async throws -> ArchivedFrameSet {
+        guard var fs = try await database.frameSetByID(id) else {
+            throw ArchiveError.frameSetError("No frame set with id \(id.uuidString).")
+        }
+        let allIDs = try await database.frameIDsForSet(id)
+        var allFrames: [ArchivedFrame] = []
+        for fid in allIDs {
+            if let f = try await database.frameByID(fid) { allFrames.append(f) }
+        }
+        let activeIDs = Set(try await database.frameIDsForSet(id, activeOnly: true))
+        let activeFrames = allFrames.filter { activeIDs.contains($0.id) }
+
+        // Filter column: single shared name, or a sorted comma-separated list when the
+        // membership is mixed (only reachable on force-created or force-extended sets).
+        let realFilters = Set(allFrames.compactMap { $0.filter })
+        fs.filter = realFilters.count == 1
+            ? realFilters.first
+            : (realFilters.isEmpty ? nil : realFilters.sorted().joined(separator: ","))
+
+        fs.objectName    = sharedString(allFrames.map { $0.objectName })
+        fs.camera        = sharedString(allFrames.map { $0.camera })
+        fs.telescope     = sharedString(allFrames.map { $0.telescope })
+        fs.site          = sharedString(allFrames.map { $0.site })
+        fs.exposureTime  = sharedDouble(allFrames.map { $0.exposureTime })
+        fs.gain          = sharedDouble(allFrames.map { $0.gain })
+        fs.offset        = sharedDouble(allFrames.map { $0.offset })
+        fs.width         = sharedInt(allFrames.map    { $0.width })
+        fs.height        = sharedInt(allFrames.map    { $0.height })
+        fs.pixelScale    = sharedDouble(allFrames.map { $0.pixelScale })
+        fs.focalLength   = sharedDouble(allFrames.map { $0.focalLength })
+        fs.positionAngle = sharedDouble(allFrames.map { $0.positionAngle })
+
+        let timestamps = allFrames.compactMap { $0.timestamp }
+        fs.dateFrom = timestamps.min()
+        fs.dateTo   = timestamps.max()
+
+        let temps = allFrames.compactMap { $0.temperature }
+        fs.temperatureMin  = temps.min()
+        fs.temperatureMax  = temps.max()
+        fs.temperatureMean = temps.isEmpty ? nil : temps.reduce(0, +) / Double(temps.count)
+
+        fs.medianStarCount                = median(activeFrames.compactMap { $0.starCount.map { Double($0) } })
+        fs.medianFWHM                     = median(activeFrames.compactMap { $0.medianFWHM })
+        fs.medianEccentricity             = median(activeFrames.compactMap { $0.medianEccentricity })
+        fs.medianBackgroundNoise          = median(activeFrames.compactMap { $0.backgroundNoise })
+        fs.medianBackgroundNoiseElectrons = median(activeFrames.compactMap { $0.backgroundNoiseElectrons })
+
+        fs.frameCount         = allFrames.count
+        fs.excludedFrameCount = allFrames.count - activeFrames.count
+
+        try await database.updateFrameSetAggregates(fs)
+        return fs
     }
 
     /// Returns all frame set IDs that contain the given frame.

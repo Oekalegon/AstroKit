@@ -1,6 +1,6 @@
 import Foundation
 
-public enum RejectionFilter: Sendable {
+public enum RejectionFilter: String, Sendable, Codable {
     /// Return only non-rejected frames (default — safe for processing pipelines).
     case excludeRejected
     /// Return all frames regardless of rejection status.
@@ -9,7 +9,7 @@ public enum RejectionFilter: Sendable {
     case onlyRejected
 }
 
-public struct FrameQuery: Sendable {
+public struct FrameQuery: Sendable, Codable {
     public var objectName: String?
     public var camera: String?
     public var coneSearch: ConeSearch?
@@ -37,7 +37,7 @@ public struct FrameQuery: Sendable {
 
     public init() {}
 
-    public struct ConeSearch: Sendable {
+    public struct ConeSearch: Sendable, Codable {
         public var ra: Double           // degrees
         public var dec: Double          // degrees
         public var radiusDeg: Double

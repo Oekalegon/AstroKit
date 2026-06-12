@@ -32,7 +32,7 @@ Add the following to your `claude_desktop_config.json` (usually at `~/Library/Ap
 }
 ```
 
-Restart Claude Desktop. The sixteen tools below will be available in every conversation.
+Restart Claude Desktop. The tools below will be available in every conversation.
 
 > **Archive tools** (`archive_*`) require `ASTROARCHIVE_PATH` to be set — either in the MCP server `env` block above or as a system environment variable.
 
@@ -626,6 +626,34 @@ Members:
   { id: b2c3d4e5-..., type: light, object: M51, filter: Ha, exp: 300s, date: 2024-03-16 }
   …
 ```
+
+---
+
+### `archive_frameset_add`
+
+Adds frames to an existing frame set. Each frame must match the set's frame type, processing level, optical filter, and the query criteria the set was created with. Frames exceeding the set's quality thresholds (`max_fwhm` / `max_eccentricity` at creation) are added but marked excluded; frames already in the set are skipped; rejected frames are refused. Aggregated set properties are recomputed afterwards.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `frameset_id` | string | ✓ | Frame set UUID |
+| `frame_ids` | array | ✓ | Frame UUIDs to add |
+| `force` | boolean | | Skip the filter and creation-criteria checks (type and level must still match). Default `false`. |
+
+Example:
+```
+archive_frameset_add(frameset_id="A3F2B1C0-...", frame_ids=["a1b2c3d4-...", "b2c3d4e5-..."])
+```
+
+---
+
+### `archive_frameset_remove`
+
+Removes frames from a frame set. The frames themselves stay in the archive. Frames not in the set are skipped; removing all remaining members is refused — use `archive_frameset_delete` instead. Aggregated set properties are recomputed afterwards.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `frameset_id` | string | ✓ | Frame set UUID |
+| `frame_ids` | array | ✓ | Frame UUIDs to remove |
 
 ---
 
