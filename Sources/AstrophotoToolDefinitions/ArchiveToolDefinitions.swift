@@ -200,7 +200,7 @@ public enum ArchiveToolDefinitions {
                 "properties": [
                     "limit": [
                         "type": "integer",
-                        "description": "Maximum number of frames to return (default: 15).",
+                        "description": "Maximum number of frames to return (default: 15); 0 returns all frames.",
                     ],
                 ] as [String: Any],
                 "required": [],

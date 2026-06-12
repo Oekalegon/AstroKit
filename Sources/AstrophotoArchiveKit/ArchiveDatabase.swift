@@ -1368,8 +1368,9 @@ actor ArchiveDatabase {
         case .onlyRejected:    condition = "WHERE rejected = 1 "
         case .includeAll:      condition = ""
         }
+        let limitClause = limit > 0 ? " LIMIT \(limit)" : ""
         let stmt = try prepare(
-            "SELECT * FROM frames \(condition)ORDER BY added_at DESC LIMIT \(limit)"
+            "SELECT * FROM frames \(condition)ORDER BY added_at DESC\(limitClause)"
         )
         defer { sqlite3_finalize(stmt) }
         var results: [ArchivedFrame] = []
