@@ -213,13 +213,13 @@ func stepDataInputFromPreviousStep() throws {
     
     let pipeline = try Pipeline.load(from: pipelineURL)
     
-    // Find the blur step which takes input from grayscale step
+    // Find the blur step which takes input from the background estimation step
     guard let blurStep = pipeline.steps.first(where: { $0.id == "blur" }) else {
         throw NSError(domain: "TestError", code: 1, userInfo: [NSLocalizedDescriptionKey: "Blur step not found"])
     }
     
     let dataInput = blurStep.dataInputs[0]
-    #expect(dataInput.from == "grayscale.grayscale_frame")
+    #expect(dataInput.from == "background.background_subtracted_frame")
 }
 
 @Test("Step parameter with int default value loads correctly")

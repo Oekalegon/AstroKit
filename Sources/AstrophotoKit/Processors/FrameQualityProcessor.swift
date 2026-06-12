@@ -111,10 +111,15 @@ public struct FrameQualityProcessor: Processor {
             return v
         }()
 
+        // FWHM lower cutoff: a real star is spread over at least ~1 pixel by sampling
+        // alone, so anything narrower is a hot/warm pixel, not a star.
+        let minFWHMPixels: Double = parameters["min_fwhm_pixels"]?.doubleValue ?? 1.0
+
         // Compute per-star quality metrics (FWHM, eccentricity, and SNR when noise sigma is known).
         let metrics = computeMetrics(
             from: starDF,
             maxFWHMPixels: maxFWHMPixels,
+            minFWHMPixels: minFWHMPixels,
             maxEccentricity: maxEccentricity,
             noiseSigmaNorm: noiseSigmaNorm,
             lowSNRThreshold: lowSNRThreshold
@@ -212,6 +217,7 @@ public struct FrameQualityProcessor: Processor {
     private func computeMetrics(
         from df: DataFrame,
         maxFWHMPixels: Double?,
+        minFWHMPixels: Double,
         maxEccentricity: Double?,
         noiseSigmaNorm: Double?,
         lowSNRThreshold: Double
@@ -230,13 +236,6 @@ public struct FrameQualityProcessor: Processor {
         var excludedCount = 0
 
         for i in 0..<df.rows.count {
-            let sat = (saturatedCol?[i] as? Bool) ?? false
-            if sat {
-                // Saturated sources are stars regardless of FWHM (bloom makes FWHM unreliable).
-                saturatedCount += 1
-                continue
-            }
-
             let major = fwhmMajorCol?[i] as? Double
             let minor = fwhmMinorCol?[i] as? Double
             let ecc   = eccentricityCol?[i] as? Double
@@ -245,11 +244,25 @@ public struct FrameQualityProcessor: Processor {
             let fwhm: Double? = (major.flatMap { m in minor.map { n in (m + n) / 2.0 } }).flatMap { $0 > 0 ? $0 : nil }
             let eccValid = ecc.flatMap { $0.isNaN ? nil : $0 }
 
+            let sat = (saturatedCol?[i] as? Bool) ?? false
+            if sat {
+                // Saturated sources are stars regardless of how large their FWHM is
+                // (bloom makes it unreliable), but a sub-pixel "saturated" source is a
+                // hot pixel at full well, not a star.
+                if fwhm.map({ $0 < minFWHMPixels }) ?? true {
+                    excludedCount += 1
+                } else {
+                    saturatedCount += 1
+                }
+                continue
+            }
+
             // Reject blobs that cannot be stars: galaxy cores, extended nebulae (too large),
-            // cosmic rays, and satellite trails (too elongated).
+            // hot/warm pixels (too narrow), cosmic rays, and satellite trails (too elongated).
             let exceedsFWHM = maxFWHMPixels.flatMap { cutoff in fwhm.map     { $0 > cutoff } } ?? false
+            let belowFWHM   = fwhm.map { $0 < minFWHMPixels } ?? false
             let exceedsEcc  = maxEccentricity.flatMap { maxEcc in eccValid.map { $0 > maxEcc } } ?? false
-            if exceedsFWHM || exceedsEcc {
+            if exceedsFWHM || belowFWHM || exceedsEcc {
                 excludedCount += 1
                 continue
             }

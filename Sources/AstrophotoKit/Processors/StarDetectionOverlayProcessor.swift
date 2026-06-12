@@ -127,6 +127,12 @@ public struct StarDetectionOverlayProcessor: Processor {
             throw ProcessorExecutionError.executionFailed("Missing required columns in pixel_coordinates table")
         }
 
+        // Prefer measured FWHM over the detection-blob axes: blob axes are sized for
+        // measurement apertures (≈4σ) and draw far outside the visible star. The drawn
+        // ellipse is the half-maximum contour, so its semi-axes are FWHM / 2.
+        let fwhmMajorColumn = dataFrame.columns.first(where: { $0.name == "fwhm_major" })
+        let fwhmMinorColumn = dataFrame.columns.first(where: { $0.name == "fwhm_minor" })
+
         var ellipses: [StarEllipse] = []
         for rowIndex in 0..<dataFrame.rows.count {
             guard let centroidX = centroidXColumn[rowIndex] as? Double,
@@ -137,11 +143,20 @@ public struct StarDetectionOverlayProcessor: Processor {
                 continue
             }
 
+            var semiMajor = majorAxis
+            var semiMinor = minorAxis
+            if let fwhmMajor = fwhmMajorColumn?[rowIndex] as? Double,
+               let fwhmMinor = fwhmMinorColumn?[rowIndex] as? Double,
+               fwhmMajor > 0, fwhmMinor > 0 {
+                semiMajor = fwhmMajor / 2.0
+                semiMinor = fwhmMinor / 2.0
+            }
+
             ellipses.append(StarEllipse(
                 centroidX: Float(centroidX),
                 centroidY: Float(centroidY),
-                majorAxis: Float(majorAxis),
-                minorAxis: Float(minorAxis),
+                majorAxis: Float(semiMajor),
+                minorAxis: Float(semiMinor),
                 rotationAngle: Float(rotationAngle)
             ))
         }
