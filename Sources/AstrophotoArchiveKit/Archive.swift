@@ -352,7 +352,10 @@ public actor Archive {
                     wroteAnything = true
                 }
 
-                let newObj   = frame.objectName == nil ? meta.objectName : nil
+                // Guard on needsObject (not just nil) so a calibration frame whose FITS
+                // file still carries a leftover OBJECT keyword can never get it written
+                // back, even if a future reader regression returns one (ASTR-51).
+                let newObj   = needsObject ? meta.objectName : nil
                 let newCam   = frame.camera     == nil ? meta.camera     : nil
                 let newScope = frame.telescope  == nil ? meta.telescope  : nil
                 let newSite  = frame.site       == nil ? meta.site       : nil
