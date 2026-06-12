@@ -266,11 +266,28 @@ public enum ArchiveToolDefinitions {
         ],
         [
             "name": "archive_backfill_metadata",
-            "description": "Re-read FITS headers for existing archived frames and fill in missing metadata. Fills observation strings (OBJECT → objectName, INSTRUME → camera, TELESCOP → telescope, OBSERVAT → site) and numeric acquisition data (EXPTIME → exposureTime, GAIN → gain, OFFSET → offset, CCD-TEMP → temperature, EGAIN → egain, FOCALLEN → focalLength, PIXSCALE → pixelScale, POSANGLE → positionAngle). Only fills fields that are currently nil — existing values are never overwritten. When exposureTime is recovered the frame's deduplication signature is recomputed. By default only raw frames are processed; pass include_stacked: true to also include calibrated and stacked frames.",
+            "description": "Re-read FITS headers for existing archived frames and fill in missing metadata. Fills observation strings (OBJECT → objectName, INSTRUME → camera, TELESCOP → telescope, OBSERVAT → site) and numeric acquisition data (EXPTIME → exposureTime, GAIN → gain, OFFSET → offset, CCD-TEMP → temperature, EGAIN → egain, FOCALLEN → focalLength, PIXSCALE → pixelScale, POSANGLE → positionAngle). When no explicit scale keyword exists, pixelScale is derived from XPIXSZ × XBINNING / FOCALLEN. Framesets whose member frames now agree on a pixel scale are filled in as well. Only fills fields that are currently nil — existing values are never overwritten. When exposureTime is recovered the frame's deduplication signature is recomputed. By default only raw frames are processed; pass include_stacked: true to also include calibrated and stacked frames.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
                     "include_stacked": ["type": "boolean", "description": "Also process calibrated and stacked frames (default: false, raw only)."],
+                ] as [String: Any],
+                "required": [],
+            ] as [String: Any],
+        ],
+        [
+            "name": "archive_set_pixel_scale",
+            "description": "Bulk-set the pixel scale (arcsec/px) on all archived frames and framesets matching a telescope and/or camera (exact names as stored in the archive — check archive_search output). Use this for frames whose FITS headers carry neither a scale keyword nor the optics keywords needed to derive one. Pass arcsec_per_pixel directly, or focal_length_mm + pixel_size_um (+ optional binning) to compute it as 206.265 × pixel_size × binning / focal_length. By default only fills missing (nil) values; pass overwrite: true to replace existing ones. Stacked frames and framesets inherit equipment names from their inputs, so they are updated by the same call.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "arcsec_per_pixel": ["type": "number", "description": "Image scale in arcseconds per pixel. Either this or focal_length_mm + pixel_size_um is required."],
+                    "focal_length_mm":  ["type": "number", "description": "Telescope focal length in mm (used with pixel_size_um when arcsec_per_pixel is not given)."],
+                    "pixel_size_um":    ["type": "number", "description": "Unbinned sensor pixel size in µm (used with focal_length_mm)."],
+                    "binning":          ["type": "integer", "description": "Binning factor for the computed scale (default: 1)."],
+                    "telescope":        ["type": "string", "description": "Exact telescope name to match (FITS TELESCOP). At least one of telescope/camera is required."],
+                    "camera":           ["type": "string", "description": "Exact camera name to match (FITS INSTRUME). At least one of telescope/camera is required."],
+                    "overwrite":        ["type": "boolean", "description": "Replace existing pixel scales too (default: false, only fills missing values)."],
                 ] as [String: Any],
                 "required": [],
             ] as [String: Any],

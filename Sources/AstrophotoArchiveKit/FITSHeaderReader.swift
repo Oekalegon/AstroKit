@@ -72,9 +72,10 @@ enum FITSHeaderReader {
         return (attrs?[.creationDate] as? Date) ?? (attrs?[.modificationDate] as? Date)
     }
 
-    // MARK: - Private
+    // MARK: - Parsing
 
-    private static func parse(
+    /// Internal (not private) so tests can exercise header parsing without a FITS file on disk.
+    static func parse(
         headers: [String: FITSHeaderValue],
         width: Int, height: Int, bitpix: Int
     ) -> FrameArchiveMetadata {
@@ -98,7 +99,24 @@ enum FITSHeaderReader {
         let site      = stringValue(headers, keys: ["OBSERVAT"])?.nilIfBlank
 
         let focalLength   = doubleValue(headers, keys: ["FOCALLEN"])
-        let pixelScale    = doubleValue(headers, keys: ["PIXSCALE", "SCALE"])
+
+        // Explicit scale keyword wins; otherwise derive it from the sensor pixel
+        // size and focal length. XPIXSZ is the *binned* pixel size by MaxIm DL /
+        // INDI convention — no binning factor must be applied. PIXSIZE1 is the
+        // physical (unbinned) size and needs XBINNING.
+        var pixelScale = doubleValue(headers, keys: ["PIXSCALE", "SCALE"])
+        if pixelScale == nil, let fl = focalLength {
+            if let binnedSize = doubleValue(headers, keys: ["XPIXSZ"]) {
+                pixelScale = PixelScale.arcsecPerPixel(
+                    pixelSizeMicrons: binnedSize, focalLengthMm: fl
+                )
+            } else if let physicalSize = doubleValue(headers, keys: ["PIXSIZE1"]) {
+                let binning = headers["XBINNING"]?.intValue.map { Int($0) } ?? 1
+                pixelScale = PixelScale.arcsecPerPixel(
+                    pixelSizeMicrons: physicalSize, binning: binning, focalLengthMm: fl
+                )
+            }
+        }
         let temperature   = doubleValue(headers, keys: ["CCD-TEMP", "CCDTEMP"])
         let positionAngle = doubleValue(headers, keys: ["POSANGLE", "PA", "ROTATANG"])
 

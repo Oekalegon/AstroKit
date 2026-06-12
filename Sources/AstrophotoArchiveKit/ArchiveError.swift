@@ -5,6 +5,7 @@ public enum ArchiveError: Error, LocalizedError, Sendable {
     case databaseError(String)
     case fileNotFound(String)
     case frameSetError(String)
+    case invalidArgument(String)
 
     public var errorDescription: String? {
         switch self {
@@ -16,6 +17,8 @@ public enum ArchiveError: Error, LocalizedError, Sendable {
             return "File not found: \(path)"
         case .frameSetError(let msg):
             return "Frame set error: \(msg)"
+        case .invalidArgument(let msg):
+            return "Invalid argument: \(msg)"
         }
     }
 }
