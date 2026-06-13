@@ -1439,6 +1439,34 @@ actor ArchiveDatabase {
         }
     }
 
+    /// Returns the full lineage chain starting from `id`, ordered newest-to-oldest.
+    ///
+    /// Uses a single recursive CTE so the entire chain is fetched in one SQLite query
+    /// regardless of depth — O(1) actor hops instead of O(N). The `_depth` counter
+    /// appended by the CTE lands at column 48, safely beyond the range `rowToFrame`
+    /// reads (0–47), so no mapper changes are needed. Depth is capped at 999 rows
+    /// (WHERE clause in the recursive term) as a cycle guard against corrupt data.
+    func lineageChain(startingAt id: UUID) throws -> [ArchivedFrame] {
+        let sql = """
+        WITH RECURSIVE chain AS (
+            SELECT *, 0 AS _depth FROM frames WHERE id = ?
+            UNION ALL
+            SELECT f.*, c._depth + 1 FROM frames f
+            JOIN chain c ON f.id = c.supersedes_id
+            WHERE c._depth < 999
+        )
+        SELECT * FROM chain ORDER BY _depth
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        var results: [ArchivedFrame] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let f = rowToFrame(stmt) { results.append(f) }
+        }
+        return results
+    }
+
     /// Returns all frames that directly supersede the given frame ID (i.e. frames whose
     /// `supersedes_id` equals `id`). Typically zero or one, but the schema allows multiple.
     func successors(of id: UUID) throws -> [ArchivedFrame] {

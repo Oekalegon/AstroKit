@@ -232,22 +232,15 @@ public actor Archive {
 
     /// Returns the complete lineage chain for a frame, ordered from newest to oldest.
     ///
-    /// Walks the `supersedesID` linked list starting from the given frame and returns every
-    /// ancestor in order: `[frame, predecessor, predecessor's predecessor, …]`.
-    /// The chain terminates when a frame has no `supersedesID`, or after 1 000 steps to
-    /// guard against cycles caused by data corruption.
+    /// Fetches the entire chain in a single recursive CTE query — one actor hop regardless
+    /// of depth. The chain starts with `frame` and follows `supersedesID` links until a
+    /// frame has no predecessor, or until the 1 000-row cycle guard fires.
     ///
     /// - Parameter frame: The frame to start the walk from (included as the first element).
     /// - Returns: The frame followed by its ancestors in lineage order.
     public func lineage(of frame: ArchivedFrame) async throws -> [ArchivedFrame] {
-        var chain: [ArchivedFrame] = [frame]
-        var current = frame
-        while let predecessorID = current.supersedesID, chain.count < 1_000 {
-            guard let predecessor = try await database.frameByID(predecessorID) else { break }
-            chain.append(expandPath(predecessor))
-            current = predecessor
-        }
-        return chain
+        let chain = try await database.lineageChain(startingAt: frame.id)
+        return expandPaths(chain)
     }
 
     /// Returns all frames that directly supersede the given frame — i.e. results from a
