@@ -582,10 +582,8 @@ public actor Archive {
         q.maxFWHM = nil
         q.maxEccentricity = nil
         let matchedFrames = try await frames(matching: q)
-        let excludedByQuality = matchedFrames.filter { f in
-            if let max = maxFWHM,        let v = f.medianFWHM,        v > max { return true }
-            if let max = maxEccentricity, let v = f.medianEccentricity, v > max { return true }
-            return false
+        let excludedByQuality = matchedFrames.filter {
+            qualityExclusionReason(for: $0, maxFWHM: maxFWHM, maxEccentricity: maxEccentricity) != nil
         }
         return buildInspection(from: matchedFrames, excludedFrames: excludedByQuality)
     }
@@ -625,12 +623,14 @@ public actor Archive {
         let matchedFrames = try await frames(matching: q)
 
         // Determine which frames should be excluded based on quality thresholds.
-        let excludedByQuality = matchedFrames.filter { f in
-            if let max = maxFWHM,        let v = f.medianFWHM,        v > max { return true }
-            if let max = maxEccentricity, let v = f.medianEccentricity, v > max { return true }
-            return false
+        var excludedReasons: [UUID: String] = [:]
+        for f in matchedFrames {
+            if let reason = qualityExclusionReason(for: f, maxFWHM: maxFWHM, maxEccentricity: maxEccentricity) {
+                excludedReasons[f.id] = reason
+            }
         }
-        let excludedIDs = Set(excludedByQuality.map { $0.id })
+        let excludedIDs = Set(excludedReasons.keys)
+        let excludedByQuality = matchedFrames.filter { excludedIDs.contains($0.id) }
 
         let inspection = buildInspection(from: matchedFrames, excludedFrames: excludedByQuality)
 
@@ -666,19 +666,6 @@ public actor Archive {
             }
             return nil
         }()
-
-        // Build per-frame exclusion reasons.
-        var excludedReasons: [UUID: String] = [:]
-        for f in excludedByQuality {
-            var reasons: [String] = []
-            if let max = maxFWHM, let v = f.medianFWHM, v > max {
-                reasons.append(String(format: "FWHM %.2f px > max %.2f px", v, max))
-            }
-            if let max = maxEccentricity, let v = f.medianEccentricity, v > max {
-                reasons.append(String(format: "eccentricity %.3f > max %.3f", v, max))
-            }
-            if !reasons.isEmpty { excludedReasons[f.id] = reasons.joined(separator: "; ") }
-        }
 
         let activeFrames = matchedFrames.filter { !excludedIDs.contains($0.id) }
         let frameSet = ArchivedFrameSet(
@@ -875,14 +862,11 @@ public actor Archive {
         var excludedReasons: [UUID: String] = [:]
         if let criteria = set.criteria {
             for f in candidates {
-                var reasons: [String] = []
-                if let max = criteria.maxFWHM, let v = f.medianFWHM, v > max {
-                    reasons.append(String(format: "FWHM %.2f px > max %.2f px", v, max))
+                if let reason = qualityExclusionReason(
+                    for: f, maxFWHM: criteria.maxFWHM, maxEccentricity: criteria.maxEccentricity
+                ) {
+                    excludedReasons[f.id] = reason
                 }
-                if let max = criteria.maxEccentricity, let v = f.medianEccentricity, v > max {
-                    reasons.append(String(format: "eccentricity %.3f > max %.3f", v, max))
-                }
-                if !reasons.isEmpty { excludedReasons[f.id] = reasons.joined(separator: "; ") }
             }
         }
 
@@ -1148,6 +1132,21 @@ public actor Archive {
     }
 
     // MARK: - Math helpers
+
+    private func qualityExclusionReason(
+        for frame: ArchivedFrame,
+        maxFWHM: Double?,
+        maxEccentricity: Double?
+    ) -> String? {
+        var reasons: [String] = []
+        if let max = maxFWHM, let v = frame.medianFWHM, v > max {
+            reasons.append(String(format: "FWHM %.2f px > max %.2f px", v, max))
+        }
+        if let max = maxEccentricity, let v = frame.medianEccentricity, v > max {
+            reasons.append(String(format: "eccentricity %.3f > max %.3f", v, max))
+        }
+        return reasons.isEmpty ? nil : reasons.joined(separator: "; ")
+    }
 
     private func median(_ values: [Double]) -> Double? {
         guard !values.isEmpty else { return nil }

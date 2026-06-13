@@ -885,72 +885,65 @@ actor ArchiveDatabase {
     ) throws {
         let iso = ISO8601DateFormatter()
         try exec("BEGIN")
-        let sql = """
-        INSERT INTO frame_sets
-        (id, name, frame_type, processing_level, object_name, filter, camera,
-         telescope, site,
-         exposure_time, temperature, gain, offset, width, height, created_at,
-         date_from, date_to, temperature_mean, temperature_min, temperature_max,
-         pixel_scale, focal_length, position_angle,
-         median_star_count, median_fwhm, median_eccentricity,
-         median_background_noise, median_background_noise_electrons, criteria)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """
-        let stmt = try prepare(sql)
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1,  fs.id.uuidString)
-        bind(stmt, 2,  fs.name)
-        bind(stmt, 3,  fs.frameType)
-        bind(stmt, 4,  fs.processingLevel.rawValue)
-        bind(stmt, 5,  fs.objectName)
-        bind(stmt, 6,  fs.filter)
-        bind(stmt, 7,  fs.camera)
-        bind(stmt, 8,  fs.telescope)
-        bind(stmt, 9,  fs.site)
-        bind(stmt, 10, fs.exposureTime)
-        bind(stmt, 11, fs.temperatureMean)   // legacy `temperature` column = mean
-        bind(stmt, 12, fs.gain)
-        bind(stmt, 13, fs.offset)
-        bind(stmt, 14, fs.width.map { Int64($0) })
-        bind(stmt, 15, fs.height.map { Int64($0) })
-        bind(stmt, 16, iso.string(from: fs.createdAt))
-        bind(stmt, 17, fs.dateFrom.map { iso.string(from: $0) })
-        bind(stmt, 18, fs.dateTo.map   { iso.string(from: $0) })
-        bind(stmt, 19, fs.temperatureMean)
-        bind(stmt, 20, fs.temperatureMin)
-        bind(stmt, 21, fs.temperatureMax)
-        bind(stmt, 22, fs.pixelScale)
-        bind(stmt, 23, fs.focalLength)
-        bind(stmt, 24, fs.positionAngle)
-        bind(stmt, 25, fs.medianStarCount)
-        bind(stmt, 26, fs.medianFWHM)
-        bind(stmt, 27, fs.medianEccentricity)
-        bind(stmt, 28, fs.medianBackgroundNoise)
-        bind(stmt, 29, fs.medianBackgroundNoiseElectrons)
-        bind(stmt, 30, ArchiveDatabase.encodeCriteria(fs.criteria))
-        guard sqlite3_step(stmt) == SQLITE_DONE else {
-            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
-            throw ArchiveError.databaseError(dbErrorMessage())
-        }
-
-        let memberSQL = """
-            INSERT INTO frame_set_members (frame_set_id, frame_id, position, excluded, excluded_reason)
-            VALUES (?,?,?,?,?)
+        do {
+            let sql = """
+            INSERT INTO frame_sets
+            (id, name, frame_type, processing_level, object_name, filter, camera,
+             telescope, site,
+             exposure_time, temperature, gain, offset, width, height, created_at,
+             date_from, date_to, temperature_mean, temperature_min, temperature_max,
+             pixel_scale, focal_length, position_angle,
+             median_star_count, median_fwhm, median_eccentricity,
+             median_background_noise, median_background_noise_electrons, criteria)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """
-        for (position, frameID) in frameIDs.enumerated() {
-            let mstmt = try prepare(memberSQL)
-            defer { sqlite3_finalize(mstmt) }
-            bind(mstmt, 1, fs.id.uuidString)
-            bind(mstmt, 2, frameID.uuidString)
-            sqlite3_bind_int(mstmt, 3, Int32(position))
-            sqlite3_bind_int(mstmt, 4, excludedIDs.contains(frameID) ? 1 : 0)
-            bind(mstmt, 5, excludedReasons[frameID])
-            guard sqlite3_step(mstmt) == SQLITE_DONE else {
-                sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            let stmt = try prepare(sql)
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1,  fs.id.uuidString)
+            bind(stmt, 2,  fs.name)
+            bind(stmt, 3,  fs.frameType)
+            bind(stmt, 4,  fs.processingLevel.rawValue)
+            bind(stmt, 5,  fs.objectName)
+            bind(stmt, 6,  fs.filter)
+            bind(stmt, 7,  fs.camera)
+            bind(stmt, 8,  fs.telescope)
+            bind(stmt, 9,  fs.site)
+            bind(stmt, 10, fs.exposureTime)
+            bind(stmt, 11, fs.temperatureMean)   // legacy `temperature` column = mean
+            bind(stmt, 12, fs.gain)
+            bind(stmt, 13, fs.offset)
+            bind(stmt, 14, fs.width.map { Int64($0) })
+            bind(stmt, 15, fs.height.map { Int64($0) })
+            bind(stmt, 16, iso.string(from: fs.createdAt))
+            bind(stmt, 17, fs.dateFrom.map { iso.string(from: $0) })
+            bind(stmt, 18, fs.dateTo.map   { iso.string(from: $0) })
+            bind(stmt, 19, fs.temperatureMean)
+            bind(stmt, 20, fs.temperatureMin)
+            bind(stmt, 21, fs.temperatureMax)
+            bind(stmt, 22, fs.pixelScale)
+            bind(stmt, 23, fs.focalLength)
+            bind(stmt, 24, fs.positionAngle)
+            bind(stmt, 25, fs.medianStarCount)
+            bind(stmt, 26, fs.medianFWHM)
+            bind(stmt, 27, fs.medianEccentricity)
+            bind(stmt, 28, fs.medianBackgroundNoise)
+            bind(stmt, 29, fs.medianBackgroundNoiseElectrons)
+            bind(stmt, 30, ArchiveDatabase.encodeCriteria(fs.criteria))
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
                 throw ArchiveError.databaseError(dbErrorMessage())
             }
+            try insertMembers(
+                setID: fs.id.uuidString,
+                frameIDs: frameIDs,
+                startPosition: 0,
+                excludedIDs: excludedIDs,
+                excludedReasons: excludedReasons
+            )
+            try exec("COMMIT")
+        } catch {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            throw error
         }
-        try exec("COMMIT")
     }
 
     func queryFrameSets() throws -> [ArchivedFrameSet] {
@@ -1123,25 +1116,13 @@ actor ArchiveDatabase {
                 throw ArchiveError.databaseError(dbErrorMessage())
             }
             let nextPosition = Int(sqlite3_column_int(posStmt, 0)) + 1
-
-            let memberSQL = """
-                INSERT INTO frame_set_members (frame_set_id, frame_id, position, excluded, excluded_reason)
-                VALUES (?,?,?,?,?)
-                """
-            let mstmt = try prepare(memberSQL)
-            defer { sqlite3_finalize(mstmt) }
-            for (offset, frameID) in frameIDs.enumerated() {
-                sqlite3_reset(mstmt)
-                sqlite3_clear_bindings(mstmt)
-                bind(mstmt, 1, setID.uuidString)
-                bind(mstmt, 2, frameID.uuidString)
-                sqlite3_bind_int(mstmt, 3, Int32(nextPosition + offset))
-                sqlite3_bind_int(mstmt, 4, excludedIDs.contains(frameID) ? 1 : 0)
-                bind(mstmt, 5, excludedReasons[frameID])
-                guard sqlite3_step(mstmt) == SQLITE_DONE else {
-                    throw ArchiveError.databaseError(dbErrorMessage())
-                }
-            }
+            try insertMembers(
+                setID: setID.uuidString,
+                frameIDs: frameIDs,
+                startPosition: nextPosition,
+                excludedIDs: excludedIDs,
+                excludedReasons: excludedReasons
+            )
             try exec("COMMIT")
         } catch {
             sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
@@ -1636,6 +1617,37 @@ actor ArchiveDatabase {
         frame.telescope = columnText(stmt, 45)
         frame.site      = columnText(stmt, 46)
         return frame
+    }
+
+    // MARK: - Frame set member helpers
+
+    /// Inserts membership rows for `frameIDs` starting at `startPosition`.
+    /// Must be called inside an open transaction.
+    private func insertMembers(
+        setID: String,
+        frameIDs: [UUID],
+        startPosition: Int,
+        excludedIDs: Set<UUID> = [],
+        excludedReasons: [UUID: String] = [:]
+    ) throws {
+        guard !frameIDs.isEmpty else { return }
+        let stmt = try prepare("""
+            INSERT INTO frame_set_members (frame_set_id, frame_id, position, excluded, excluded_reason)
+            VALUES (?,?,?,?,?)
+            """)
+        defer { sqlite3_finalize(stmt) }
+        for (offset, frameID) in frameIDs.enumerated() {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+            bind(stmt, 1, setID)
+            bind(stmt, 2, frameID.uuidString)
+            sqlite3_bind_int(stmt, 3, Int32(startPosition + offset))
+            sqlite3_bind_int(stmt, 4, excludedIDs.contains(frameID) ? 1 : 0)
+            bind(stmt, 5, excludedReasons[frameID])
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw ArchiveError.databaseError(dbErrorMessage())
+            }
+        }
     }
 
     // MARK: - SQLite helpers
