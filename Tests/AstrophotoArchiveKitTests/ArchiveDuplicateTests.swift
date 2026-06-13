@@ -282,6 +282,27 @@ struct ReArchiveRunIDTests {
         #expect(isNew2 == false)
         #expect(second.processingRunID == run.id, "Nil processingRunID must not overwrite an existing run ID")
     }
+
+    @Test("Re-archiving sets a processingRunID on a frame that had none")
+    func reArchiveSetsRunIDWhenPreviouslyNil() async throws {
+        let (archive, root) = try makeArchive()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let src = root.appendingPathComponent("source.fits")
+        try writeTinyLightFITS(to: src)
+
+        let (first, isNew1) = try await archive.add(fitsFile: src)
+        #expect(isNew1 == true)
+        #expect(first.processingRunID == nil)
+
+        let run = try await archive.recordProcessingRun(pipelineID: "frame_stacking", parameters: [:], inputs: [])
+        let (second, isNew2) = try await archive.add(fitsFile: src, processingRunID: run.id)
+        #expect(isNew2 == false)
+        #expect(second.processingRunID == run.id, "First-time run ID must be written on re-archive")
+
+        let reloaded = try await archive.frame(id: first.id)
+        #expect(reloaded?.processingRunID == run.id)
+    }
 }
 
 // MARK: - Signature stability tests
