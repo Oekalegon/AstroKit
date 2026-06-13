@@ -372,3 +372,38 @@ struct FrameSetAddRemoveTests {
         }
     }
 }
+
+// MARK: - Codable stability
+
+@Suite("FrameSetCriteria — JSON round-trip stability")
+struct FrameSetCriteriaRoundTripTests {
+
+    private func makeCriteria() -> FrameSetCriteria {
+        var q = FrameQuery()
+        q.objectName = "M42"
+        q.frameTypes = ["light"]
+        q.filters = ["Hɑ"]
+        return FrameSetCriteria(query: q, maxFWHM: 3.5, maxEccentricity: 0.5)
+    }
+
+    @Test func encodesToStableJSON() throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try encoder.encode(makeCriteria())
+        let json = try #require(String(data: data, encoding: .utf8))
+        // Pinned snapshot — if this fails, persisted criteria format changed.
+        // Before updating this string: verify every deployed archive can decode the new format.
+        #expect(json == #"{"maxEccentricity":0.5,"maxFWHM":3.5,"query":{"filters":["Hɑ"],"frameTypes":["light"],"objectName":"M42","rejectionFilter":"excludeRejected"}}"#)
+    }
+
+    @Test func pinnedJSONDecodesCorrectly() throws {
+        let json = #"{"maxEccentricity":0.5,"maxFWHM":3.5,"query":{"filters":["Hɑ"],"frameTypes":["light"],"objectName":"M42","rejectionFilter":"excludeRejected"}}"#
+        let criteria = try JSONDecoder().decode(FrameSetCriteria.self, from: Data(json.utf8))
+        #expect(criteria.query.objectName == "M42")
+        #expect(criteria.query.frameTypes == ["light"])
+        #expect(criteria.query.filters == ["Hɑ"])
+        #expect(criteria.query.rejectionFilter == .excludeRejected)
+        #expect(criteria.maxFWHM == 3.5)
+        #expect(criteria.maxEccentricity == 0.5)
+    }
+}

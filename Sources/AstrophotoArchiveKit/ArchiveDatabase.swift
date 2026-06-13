@@ -1314,7 +1314,13 @@ actor ArchiveDatabase {
         guard let criteria else { return nil }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
-        return (try? encoder.encode(criteria)).flatMap { String(data: $0, encoding: .utf8) }
+        do {
+            let data = try encoder.encode(criteria)
+            return String(data: data, encoding: .utf8)
+        } catch {
+            assertionFailure("FrameSetCriteria encoding failed — check Codable conformance: \(error)")
+            return nil
+        }
     }
 
     private static func decodeCriteria(_ json: String?) -> FrameSetCriteria? {
