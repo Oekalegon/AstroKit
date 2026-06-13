@@ -1111,36 +1111,42 @@ actor ArchiveDatabase {
     ) throws {
         guard !frameIDs.isEmpty else { return }
 
-        // New members go after the highest existing position.
-        let posStmt = try prepare(
-            "SELECT COALESCE(MAX(position), -1) FROM frame_set_members WHERE frame_set_id = ?"
-        )
-        defer { sqlite3_finalize(posStmt) }
-        bind(posStmt, 1, setID.uuidString)
-        guard sqlite3_step(posStmt) == SQLITE_ROW else {
-            throw ArchiveError.databaseError(dbErrorMessage())
-        }
-        let nextPosition = Int(sqlite3_column_int(posStmt, 0)) + 1
-
-        try exec("BEGIN")
-        let memberSQL = """
-            INSERT INTO frame_set_members (frame_set_id, frame_id, position, excluded, excluded_reason)
-            VALUES (?,?,?,?,?)
-            """
-        for (offset, frameID) in frameIDs.enumerated() {
-            let mstmt = try prepare(memberSQL)
-            defer { sqlite3_finalize(mstmt) }
-            bind(mstmt, 1, setID.uuidString)
-            bind(mstmt, 2, frameID.uuidString)
-            sqlite3_bind_int(mstmt, 3, Int32(nextPosition + offset))
-            sqlite3_bind_int(mstmt, 4, excludedIDs.contains(frameID) ? 1 : 0)
-            bind(mstmt, 5, excludedReasons[frameID])
-            guard sqlite3_step(mstmt) == SQLITE_DONE else {
-                sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+        // BEGIN IMMEDIATE so the MAX(position) read and all inserts are atomic.
+        try exec("BEGIN IMMEDIATE")
+        do {
+            let posStmt = try prepare(
+                "SELECT COALESCE(MAX(position), -1) FROM frame_set_members WHERE frame_set_id = ?"
+            )
+            defer { sqlite3_finalize(posStmt) }
+            bind(posStmt, 1, setID.uuidString)
+            guard sqlite3_step(posStmt) == SQLITE_ROW else {
                 throw ArchiveError.databaseError(dbErrorMessage())
             }
+            let nextPosition = Int(sqlite3_column_int(posStmt, 0)) + 1
+
+            let memberSQL = """
+                INSERT INTO frame_set_members (frame_set_id, frame_id, position, excluded, excluded_reason)
+                VALUES (?,?,?,?,?)
+                """
+            let mstmt = try prepare(memberSQL)
+            defer { sqlite3_finalize(mstmt) }
+            for (offset, frameID) in frameIDs.enumerated() {
+                sqlite3_reset(mstmt)
+                sqlite3_clear_bindings(mstmt)
+                bind(mstmt, 1, setID.uuidString)
+                bind(mstmt, 2, frameID.uuidString)
+                sqlite3_bind_int(mstmt, 3, Int32(nextPosition + offset))
+                sqlite3_bind_int(mstmt, 4, excludedIDs.contains(frameID) ? 1 : 0)
+                bind(mstmt, 5, excludedReasons[frameID])
+                guard sqlite3_step(mstmt) == SQLITE_DONE else {
+                    throw ArchiveError.databaseError(dbErrorMessage())
+                }
+            }
+            try exec("COMMIT")
+        } catch {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            throw error
         }
-        try exec("COMMIT")
     }
 
     /// Removes the given frames from a frame set. Frames not in the set are ignored.
