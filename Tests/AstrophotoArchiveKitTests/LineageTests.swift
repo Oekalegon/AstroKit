@@ -205,6 +205,8 @@ private extension ArchivedFrame {
             width: width, height: height, bitpix: bitpix,
             calibrated: calibrated, stacked: stacked, stretched: stretched,
             processingLevel: processingLevel, addedAt: addedAt,
+            processingRunID: processingRunID,
+            supersedesID: supersedesID,
             fileDate: fileDate
         )
     }
