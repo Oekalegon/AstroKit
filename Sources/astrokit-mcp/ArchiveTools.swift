@@ -79,6 +79,8 @@ struct ArchiveTools {
         case "archive_frameset_create":   return try await archiveFrameSetCreate(arguments)
         case "archive_frameset_get":      return try await archiveFrameSetGet(arguments)
         case "archive_frameset_quality":  return try await archiveFrameSetQuality(arguments)
+        case "archive_frameset_add":      return try await archiveFrameSetAdd(arguments)
+        case "archive_frameset_remove":   return try await archiveFrameSetRemove(arguments)
         case "archive_frameset_exclude":  return try await archiveFrameSetExclude(arguments)
         case "archive_frameset_delete":   return try await archiveFrameSetDelete(arguments)
         case "archive_backfill_metadata": return try await archiveBackfillMetadata(arguments)
@@ -773,6 +775,58 @@ struct ArchiveTools {
         return n % 2 == 0
             ? (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
             : sorted[n / 2]
+    }
+
+    private func archiveFrameSetAdd(_ args: [String: Any]) async throws -> String {
+        let (setUUID, frameUUIDs) = try frameSetMemberArgs(args, tool: "archive_frameset_add")
+        let force = args["force"] as? Bool ?? false
+        let archive = try makeArchive()
+        let result = try await archive.addFrames(toFrameSet: setUUID, frameIDs: frameUUIDs, force: force)
+
+        var lines = ["Added \(result.addedIDs.count) frame(s) to frame set '\(result.frameSet.name)'."]
+        if !result.alreadyMemberIDs.isEmpty {
+            lines.append("Skipped \(result.alreadyMemberIDs.count) frame(s) already in the set: "
+                + result.alreadyMemberIDs.map { $0.uuidString }.joined(separator: ", "))
+        }
+        for (id, reason) in result.excludedReasons.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
+            lines.append("Frame \(id.uuidString) was added but marked excluded: \(reason)")
+        }
+        lines.append("The set now contains \(result.frameSet.frameCount) frame(s)"
+            + (result.frameSet.excludedFrameCount > 0
+                ? " (\(result.frameSet.excludedFrameCount) excluded)." : "."))
+        return lines.joined(separator: "\n")
+    }
+
+    private func archiveFrameSetRemove(_ args: [String: Any]) async throws -> String {
+        let (setUUID, frameUUIDs) = try frameSetMemberArgs(args, tool: "archive_frameset_remove")
+        let archive = try makeArchive()
+        let result = try await archive.removeFrames(fromFrameSet: setUUID, frameIDs: frameUUIDs)
+
+        var lines = ["Removed \(result.removedIDs.count) frame(s) from frame set '\(result.frameSet.name)'."]
+        if !result.notMemberIDs.isEmpty {
+            lines.append("Skipped \(result.notMemberIDs.count) frame(s) not in the set: "
+                + result.notMemberIDs.map { $0.uuidString }.joined(separator: ", "))
+        }
+        lines.append("The set now contains \(result.frameSet.frameCount) frame(s)"
+            + (result.frameSet.excludedFrameCount > 0
+                ? " (\(result.frameSet.excludedFrameCount) excluded)." : "."))
+        return lines.joined(separator: "\n")
+    }
+
+    private func frameSetMemberArgs(_ args: [String: Any], tool: String) throws -> (UUID, [UUID]) {
+        guard let setStr = args["frameset_id"] as? String, let setUUID = UUID(uuidString: setStr) else {
+            throw ToolError("\(tool) requires a valid 'frameset_id' UUID.")
+        }
+        guard let idStrings = args["frame_ids"] as? [String], !idStrings.isEmpty else {
+            throw ToolError("\(tool) requires a non-empty 'frame_ids' array.")
+        }
+        let frameUUIDs = try idStrings.map { s -> UUID in
+            guard let uuid = UUID(uuidString: s) else {
+                throw ToolError("\(tool): invalid frame UUID '\(s)'.")
+            }
+            return uuid
+        }
+        return (setUUID, frameUUIDs)
     }
 
     private func archiveFrameSetExclude(_ args: [String: Any]) async throws -> String {

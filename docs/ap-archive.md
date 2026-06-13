@@ -389,6 +389,43 @@ Members (18):
   …
 ```
 
+#### `ap-archive frameset add`
+
+Adds frames to an existing frame set.
+
+```
+ap-archive frameset add <set-id> <frame-id...> [--force] [--json]
+```
+
+Each frame must match the set's **type**, **processing level**, and **optical filter**, and — for sets created since the criteria were persisted — the full query the set was created with (object, camera, date range, temperature, quality filters). This keeps a set consistent with what `frameset create` originally selected. Rejected frames are refused; frames already in the set are skipped.
+
+When the set was created with `--max-fwhm` or `--max-eccentricity`, frames exceeding those thresholds are added but marked **excluded**, exactly as on creation.
+
+| Option | Description |
+|--------|-------------|
+| `--force` | Skip the filter and creation-criteria checks. Frame type and processing level must still match. New filters are merged into the set's comma-separated filter list. |
+| `--json` | Print the updated frame set as JSON |
+
+```bash
+# Add two newly archived frames to an existing set:
+ap-archive frameset add a3f2b1c0-... 1111aaaa-... 2222bbbb-...
+
+# Add a frame from a different filter (broadband LRGB set):
+ap-archive frameset add a3f2b1c0-... 3333cccc-... --force
+```
+
+After the change, the set's shared properties, date span, temperature statistics, and quality medians are recomputed from the new membership.
+
+#### `ap-archive frameset remove`
+
+Removes frames from a frame set. The frames themselves stay in the archive.
+
+```
+ap-archive frameset remove <set-id> <frame-id...> [--json]
+```
+
+Frames that are not members of the set are skipped (with a warning). Removing **all** remaining members is refused — use `frameset delete` to delete the whole set instead. Aggregated set properties are recomputed after the removal.
+
 #### `ap-archive frameset delete`
 
 Deletes a frame set. Member frames are **not** removed from the archive.

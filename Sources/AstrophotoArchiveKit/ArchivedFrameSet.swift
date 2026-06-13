@@ -53,6 +53,10 @@ public struct ArchivedFrameSet: Sendable, Identifiable {
     public var medianBackgroundNoise: Double?
     public var medianBackgroundNoiseElectrons: Double?
 
+    /// The selection criteria the set was created with. Nil for sets created
+    /// before criteria were persisted (schema < v27).
+    public var criteria: FrameSetCriteria?
+
     public init(
         id: UUID, name: String, frameType: String, processingLevel: ProcessingLevel,
         createdAt: Date, frameCount: Int, excludedFrameCount: Int = 0,
@@ -65,7 +69,8 @@ public struct ArchivedFrameSet: Sendable, Identifiable {
         temperatureMean: Double?, temperatureMin: Double?, temperatureMax: Double?,
         medianStarCount: Double? = nil, medianFWHM: Double? = nil,
         medianEccentricity: Double? = nil, medianBackgroundNoise: Double? = nil,
-        medianBackgroundNoiseElectrons: Double? = nil
+        medianBackgroundNoiseElectrons: Double? = nil,
+        criteria: FrameSetCriteria? = nil
     ) {
         self.id = id
         self.name = name
@@ -97,5 +102,8 @@ public struct ArchivedFrameSet: Sendable, Identifiable {
         self.medianEccentricity = medianEccentricity
         self.medianBackgroundNoise = medianBackgroundNoise
         self.medianBackgroundNoiseElectrons = medianBackgroundNoiseElectrons
+        self.criteria = criteria
     }
 }
+
+

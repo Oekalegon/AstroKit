@@ -1,6 +1,6 @@
 import Foundation
 
-public enum RejectionFilter: Sendable {
+public enum RejectionFilter: String, Sendable, Codable {
     /// Return only non-rejected frames (default — safe for processing pipelines).
     case excludeRejected
     /// Return all frames regardless of rejection status.
@@ -9,7 +9,12 @@ public enum RejectionFilter: Sendable {
     case onlyRejected
 }
 
-public struct FrameQuery: Sendable {
+// PERSISTENCE CONTRACT: FrameQuery is stored as JSON in the `criteria` column of
+// frame_sets (migration v27, via FrameSetCriteria). Any new stored property MUST be
+// optional (or declare a default in init(from:)) so that existing persisted criteria
+// keep decoding as "legacy" sets lose their add-validation silently.
+// See FrameSetCriteriaRoundTripTests for a pinned snapshot that catches breaking changes.
+public struct FrameQuery: Sendable, Codable {
     public var objectName: String?
     public var camera: String?
     public var coneSearch: ConeSearch?
@@ -37,7 +42,7 @@ public struct FrameQuery: Sendable {
 
     public init() {}
 
-    public struct ConeSearch: Sendable {
+    public struct ConeSearch: Sendable, Codable {
         public var ra: Double           // degrees
         public var dec: Double          // degrees
         public var radiusDeg: Double
