@@ -1,26 +1,5 @@
 import Foundation
 
-/// The selection criteria a frame set was created with.
-///
-/// Persisted alongside the set so that frames added later can be validated
-/// against the same query (and quality thresholds) used at creation time.
-public struct FrameSetCriteria: Sendable, Codable {
-    /// The frame query used to select the original members. Stored with
-    /// `maxFWHM`/`maxEccentricity` stripped — those live in the threshold
-    /// fields below because they mark frames excluded rather than filter them out.
-    public var query: FrameQuery
-    /// Frames whose median FWHM (pixels) exceeds this are added but marked excluded.
-    public var maxFWHM: Double?
-    /// Frames whose median eccentricity exceeds this are added but marked excluded.
-    public var maxEccentricity: Double?
-
-    public init(query: FrameQuery, maxFWHM: Double? = nil, maxEccentricity: Double? = nil) {
-        self.query = query
-        self.maxFWHM = maxFWHM
-        self.maxEccentricity = maxEccentricity
-    }
-}
-
 /// A named, homogeneous collection of archived frames.
 ///
 /// All members share the same `frameType` and `processingLevel`.
@@ -127,25 +106,4 @@ public struct ArchivedFrameSet: Sendable, Identifiable {
     }
 }
 
-/// Outcome of `Archive.addFrames(toFrameSet:frameIDs:force:)`.
-public struct FrameSetAddResult: Sendable {
-    /// The frame set after the addition, with refreshed aggregates.
-    public let frameSet: ArchivedFrameSet
-    /// Frames that were added, in input order.
-    public let addedIDs: [UUID]
-    /// Frames skipped because they were already members of the set.
-    public let alreadyMemberIDs: [UUID]
-    /// Subset of `addedIDs` that was added but marked excluded because a quality
-    /// threshold from the set's creation criteria was exceeded, with the reason.
-    public let excludedReasons: [UUID: String]
-}
 
-/// Outcome of `Archive.removeFrames(fromFrameSet:frameIDs:)`.
-public struct FrameSetRemoveResult: Sendable {
-    /// The frame set after the removal, with refreshed aggregates.
-    public let frameSet: ArchivedFrameSet
-    /// Frames that were removed, in input order.
-    public let removedIDs: [UUID]
-    /// Frames skipped because they were not members of the set.
-    public let notMemberIDs: [UUID]
-}
