@@ -53,6 +53,9 @@ public actor Archive {
     /// - Parameters:
     ///   - url: The source FITS file to copy into the archive.
     ///   - processingRunID: Optional ID of the processing run that produced this frame.
+    ///     When the frame already exists in the archive (duplicate signature) and this
+    ///     value is non-nil and differs from the stored run ID, the stored ID is updated
+    ///     to reflect the most recent run. Pass `nil` to leave the existing run ID intact.
     /// - Returns: The frame record and `isNew: true` if it was inserted, `false` if already in archive.
     @discardableResult
     public func add(fitsFile url: URL, processingRunID: UUID? = nil) async throws -> (frame: ArchivedFrame, isNew: Bool) {
