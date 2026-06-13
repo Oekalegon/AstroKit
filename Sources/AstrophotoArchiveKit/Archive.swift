@@ -56,9 +56,12 @@ public actor Archive {
     ///     When the frame already exists in the archive (duplicate signature) and this
     ///     value is non-nil and differs from the stored run ID, the stored ID is updated
     ///     to reflect the most recent run. Pass `nil` to leave the existing run ID intact.
+    ///   - supersedesID: Optional ID of an earlier pipeline result that this frame replaces.
+    ///     Use this to link successive pipeline runs into a lineage chain (newest → oldest).
+    ///     Applies to any pipeline output — stacking, calibration, registration, etc.
     /// - Returns: The frame record and `isNew: true` if it was inserted, `false` if already in archive.
     @discardableResult
-    public func add(fitsFile url: URL, processingRunID: UUID? = nil) async throws -> (frame: ArchivedFrame, isNew: Bool) {
+    public func add(fitsFile url: URL, processingRunID: UUID? = nil, supersedesID: UUID? = nil) async throws -> (frame: ArchivedFrame, isNew: Bool) {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw ArchiveError.fileNotFound(url.path)
         }
@@ -134,6 +137,7 @@ public actor Archive {
             addedAt: Date(),
             positionAngle: meta.positionAngle,
             processingRunID: processingRunID,
+            supersedesID: supersedesID,
             sessionBeg: meta.sessionBeg,
             sessionEnd: meta.sessionEnd,
             temperatureMin: meta.temperatureMin,
@@ -218,6 +222,35 @@ public actor Archive {
         guard let run = try await database.processingRunByID(runID) else { return nil }
         let inputs = try await database.inputsForRun(runID)
         return (run, inputs)
+    }
+
+    // MARK: - Lineage
+
+    /// Returns the complete lineage chain for a frame, ordered from newest to oldest.
+    ///
+    /// Walks the `supersedesID` linked list starting from the given frame and returns every
+    /// ancestor in order: `[frame, predecessor, predecessor's predecessor, …]`.
+    /// The chain terminates when a frame has no `supersedesID`, or after 1 000 steps to
+    /// guard against cycles caused by data corruption.
+    ///
+    /// - Parameter frame: The frame to start the walk from (included as the first element).
+    /// - Returns: The frame followed by its ancestors in lineage order.
+    public func lineage(of frame: ArchivedFrame) async throws -> [ArchivedFrame] {
+        var chain: [ArchivedFrame] = [frame]
+        var current = frame
+        while let predecessorID = current.supersedesID, chain.count < 1_000 {
+            guard let predecessor = try await database.frameByID(predecessorID) else { break }
+            chain.append(expandPath(predecessor)!)
+            current = predecessor
+        }
+        return chain
+    }
+
+    /// Returns all frames that directly supersede the given frame — i.e. results from a
+    /// later pipeline run that explicitly linked themselves to this frame as their predecessor.
+    public func successors(of frame: ArchivedFrame) async throws -> [ArchivedFrame] {
+        let frames = try await database.successors(of: frame.id)
+        return expandPaths(frames)
     }
 
     /// Adds all FITS files in a directory, copying each into the archive folder hierarchy.

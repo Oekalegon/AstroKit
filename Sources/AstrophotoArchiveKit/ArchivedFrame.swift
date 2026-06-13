@@ -44,6 +44,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var positionAngle: Double?
     /// ID of the processing run that produced this frame, if it was the output of a pipeline.
     public var processingRunID: UUID?
+    /// ID of the earlier pipeline result that this frame supersedes, if any.
+    /// Follows the lineage chain from newest to oldest result for the same frameset/pipeline.
+    public var supersedesID: UUID?
     /// Earliest input-frame timestamp for stacked frames (DATE-BEG).
     public var sessionBeg: Date?
     /// Latest input-frame timestamp for stacked frames (DATE-END).
@@ -109,6 +112,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         rejected: Bool = false, rejectedReason: String? = nil,
         positionAngle: Double? = nil,
         processingRunID: UUID? = nil,
+        supersedesID: UUID? = nil,
         sessionBeg: Date? = nil,
         sessionEnd: Date? = nil,
         temperatureMin: Double? = nil,
@@ -158,6 +162,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.rejectedReason = rejectedReason
         self.positionAngle = positionAngle
         self.processingRunID = processingRunID
+        self.supersedesID = supersedesID
         self.sessionBeg = sessionBeg
         self.sessionEnd = sessionEnd
         self.temperatureMin = temperatureMin
