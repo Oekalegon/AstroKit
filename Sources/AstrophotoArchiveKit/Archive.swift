@@ -154,7 +154,11 @@ public actor Archive {
                 filter: meta.filter,
                 exposureTime: meta.exposureTime
             )
-            if let existing = try await database.frameBySignature(sig) {
+            if var existing = try await database.frameBySignature(sig) {
+                if let runID = processingRunID, runID != existing.processingRunID {
+                    try await database.updateFrameRunID(id: existing.id, processingRunID: runID)
+                    existing.processingRunID = runID
+                }
                 return (expandPath(existing)!, false)
             }
         }

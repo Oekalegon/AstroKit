@@ -214,6 +214,78 @@ func testFilterComparisonIsCaseInsensitive() async throws {
     #expect(mixed == false, "'Ha' should be treated as the same filter as 'ha'")
 }
 
+// MARK: - Re-archive processingRunID update tests
+
+@Suite("Re-archiving a duplicate frame updates its processingRunID")
+struct ReArchiveRunIDTests {
+
+    private func writeTinyLightFITS(to url: URL) throws {
+        var block = Data(repeating: 32, count: 2880)
+        func card(_ text: String, slot: Int) {
+            let padded = text.padding(toLength: 80, withPad: " ", startingAt: 0)
+            for (i, byte) in padded.utf8.prefix(80).enumerated() { block[slot * 80 + i] = byte }
+        }
+        card("SIMPLE  =                    T / conforms to FITS standard", slot: 0)
+        card("BITPIX  =                   16 / bits per pixel", slot: 1)
+        card("NAXIS   =                    0 / no data array", slot: 2)
+        card("IMAGETYP= 'Light Frame'", slot: 3)
+        card("DATE-OBS= '2025-03-25T08:25:40'", slot: 4)
+        card("EXPTIME =                 300.0 / exposure in seconds", slot: 5)
+        card("END", slot: 6)
+        try block.write(to: url)
+    }
+
+    private func makeArchive() throws -> (Archive, URL) {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rearchive-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return (try Archive(configuration: ArchiveConfiguration(rootURL: root)), root)
+    }
+
+    @Test("Re-archiving with a new processingRunID updates the stored run ID")
+    func reArchiveUpdatesProcessingRunID() async throws {
+        let (archive, root) = try makeArchive()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let src = root.appendingPathComponent("source.fits")
+        try writeTinyLightFITS(to: src)
+
+        let run1 = try await archive.recordProcessingRun(pipelineID: "frame_stacking", parameters: [:], inputs: [])
+        let run2 = try await archive.recordProcessingRun(pipelineID: "frame_stacking", parameters: [:], inputs: [])
+
+        let (first, isNew1) = try await archive.add(fitsFile: src, processingRunID: run1.id)
+        #expect(isNew1 == true)
+        #expect(first.processingRunID == run1.id)
+
+        // Same file → same signature → duplicate path; processingRunID should be updated.
+        let (second, isNew2) = try await archive.add(fitsFile: src, processingRunID: run2.id)
+        #expect(isNew2 == false)
+        #expect(second.processingRunID == run2.id, "Re-archive must update processingRunID to the new run")
+
+        // Verify the change is persisted in the database.
+        let reloaded = try await archive.frame(id: first.id)
+        #expect(reloaded?.processingRunID == run2.id)
+    }
+
+    @Test("Re-archiving without a processingRunID leaves the existing run ID intact")
+    func reArchiveWithoutRunIDPreservesExisting() async throws {
+        let (archive, root) = try makeArchive()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let src = root.appendingPathComponent("source.fits")
+        try writeTinyLightFITS(to: src)
+
+        let run = try await archive.recordProcessingRun(pipelineID: "frame_stacking", parameters: [:], inputs: [])
+        _ = try await archive.add(fitsFile: src, processingRunID: run.id)
+
+        let (second, isNew2) = try await archive.add(fitsFile: src, processingRunID: nil)
+        #expect(isNew2 == false)
+        #expect(second.processingRunID == run.id, "Nil processingRunID must not overwrite an existing run ID")
+    }
+}
+
+// MARK: - Signature stability tests
+
 @Test("frameSignature produces consistent output")
 func testFrameSignatureIsStable() {
     let date = Date(timeIntervalSince1970: 1_740_000_000)
