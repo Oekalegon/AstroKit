@@ -1134,19 +1134,25 @@ actor ArchiveDatabase {
     /// Returns the number of membership rows actually deleted.
     func removeFrameSetMembers(setID: UUID, frameIDs: [UUID]) throws -> Int {
         guard !frameIDs.isEmpty else { return 0 }
-        let placeholders = frameIDs.map { _ in "?" }.joined(separator: ",")
-        let stmt = try prepare(
-            "DELETE FROM frame_set_members WHERE frame_set_id = ? AND frame_id IN (\(placeholders))"
-        )
-        defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, setID.uuidString)
-        for (i, fid) in frameIDs.enumerated() {
-            bind(stmt, Int32(i + 2), fid.uuidString)
+        // Chunk to stay well under SQLite's default 999-variable limit (setID takes one slot).
+        let chunkSize = 500
+        var totalDeleted = 0
+        for chunk in stride(from: 0, to: frameIDs.count, by: chunkSize).map({ frameIDs[$0..<min($0 + chunkSize, frameIDs.count)] }) {
+            let placeholders = chunk.map { _ in "?" }.joined(separator: ",")
+            let stmt = try prepare(
+                "DELETE FROM frame_set_members WHERE frame_set_id = ? AND frame_id IN (\(placeholders))"
+            )
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, setID.uuidString)
+            for (i, fid) in chunk.enumerated() {
+                bind(stmt, Int32(i + 2), fid.uuidString)
+            }
+            guard sqlite3_step(stmt) == SQLITE_DONE else {
+                throw ArchiveError.databaseError(dbErrorMessage())
+            }
+            totalDeleted += Int(sqlite3_changes(db))
         }
-        guard sqlite3_step(stmt) == SQLITE_DONE else {
-            throw ArchiveError.databaseError(dbErrorMessage())
-        }
-        return Int(sqlite3_changes(db))
+        return totalDeleted
     }
 
     /// Rewrites the stored aggregate columns (shared scalars, date span, temperature
