@@ -652,7 +652,7 @@ public actor Archive {
         if !force && inspection.filters.count > 1 {
             let names = inspection.filters.map { $0.label }.joined(separator: ", ")
             throw ArchiveError.frameSetError(
-                "Frames have mixed filters (\(names)). Use --force to create anyway."
+                "Frames have mixed filters (\(names)). Enable force to create anyway."
             )
         }
 
@@ -813,7 +813,7 @@ public actor Archive {
                 let reason = frame.rejectedReason.map { " (\($0))" } ?? ""
                 throw ArchiveError.frameSetError(
                     "Frame \(frame.id.uuidString) [\(label)] is rejected\(reason). "
-                    + "Un-reject it first with 'ap-archive reject \(frame.id.uuidString) --undo'."
+                    + "Un-reject it first."
                 )
             }
             guard frame.frameType.lowercased() == set.frameType.lowercased() else {
@@ -834,7 +834,7 @@ public actor Archive {
                 let frameFilter = frame.filter ?? "(none)"
                 throw ArchiveError.frameSetError(
                     "Frame \(frame.id.uuidString) [\(label)] has filter '\(frameFilter)' "
-                    + "but the set was created with filter '\(setFilter)'. Use --force to add anyway."
+                    + "but the set was created with filter '\(setFilter)'. Enable force to add anyway."
                 )
             }
         }
@@ -857,7 +857,7 @@ public actor Archive {
                 let label = (frame.filePath as NSString).lastPathComponent
                 throw ArchiveError.frameSetError(
                     "Frame \(frame.id.uuidString) [\(label)] does not match the criteria "
-                    + "this set was created with. Use --force to add anyway."
+                    + "this set was created with. Enable force to add anyway."
                 )
             }
         }
@@ -1116,7 +1116,7 @@ public actor Archive {
         }
         if filters.count > 1 {
             let names = filters.map { $0.label }.joined(separator: ", ")
-            issues.append("Mixed filters (\(names)) — use --force to override.")
+            issues.append("Mixed filters (\(names)) — enable force to override.")
             needsForce = true
         }
 
