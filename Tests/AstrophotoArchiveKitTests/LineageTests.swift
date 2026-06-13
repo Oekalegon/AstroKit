@@ -12,7 +12,7 @@ struct LineageTests {
         let (db, url) = try makeTestDatabase()
         defer { try? FileManager.default.removeItem(at: url) }
 
-        var v1 = makeFrame()
+        let v1 = makeFrame()
         var v2 = makeFrame().withNewID()
         v2.supersedesID = v1.id
 
@@ -40,9 +40,9 @@ struct LineageTests {
         let (db, url) = try makeTestDatabase()
         defer { try? FileManager.default.removeItem(at: url) }
 
-        var predecessor = makeFrame()
+        let predecessor = makeFrame()
         var successor   = makeFrame().withNewID()
-        var unrelated   = makeFrame().withNewID()
+        let unrelated   = makeFrame().withNewID()
         successor.supersedesID = predecessor.id
 
         _ = try await db.insertFrame(predecessor, deduplicate: false)
