@@ -147,7 +147,16 @@ public actor Archive {
             hotPixelCount: meta.hotPixelCount,
             egain: resolvedEgain
         )
-        let isNew = try await database.insertFrame(frame)
+        // Only raw frames are deduplicated by content signature, to prevent accidental
+        // double-import of the same physical observation. All other levels are pipeline
+        // outputs that must always be stored as independent records:
+        //   .calibrated — bias/dark/flat-corrected single frame
+        //   .stacked    — result of a stacking pipeline run
+        //   .stretched  — result of a destructive stretch pipeline (STRETCHD = T in FITS)
+        //                 Note: the non-destructive display stretch (Archive.updateStretchSettings)
+        //                 does NOT set this level; no pipeline currently writes STRETCHD = T.
+        let deduplicate = frame.processingLevel == .raw
+        let isNew = try await database.insertFrame(frame, deduplicate: deduplicate)
         if !isNew {
             try? FileManager.default.removeItem(at: dest)
             // Return the existing frame so the caller gets a valid, stored ID.

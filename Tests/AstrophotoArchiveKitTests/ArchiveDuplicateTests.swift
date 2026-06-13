@@ -296,3 +296,131 @@ func testFrameSignatureIsStable() {
     #expect(sig2 == sig3, "All-caps and mixed-case filter should produce identical signatures")
     #expect(sig3 != sig4, "Different filters must produce different signatures")
 }
+
+// MARK: - Processed/stacked frame deduplication bypass tests
+
+private extension ArchivedFrame {
+    func withNewID() -> ArchivedFrame {
+        ArchivedFrame(
+            id: UUID(),
+            filePath: "/tmp/mock-\(UUID().uuidString).fits",
+            objectName: objectName, ra: ra, dec: dec,
+            healpixPixel: healpixPixel, frameType: frameType,
+            filter: filter, camera: camera,
+            focalLength: focalLength, pixelScale: pixelScale, temperature: temperature,
+            timestamp: timestamp, exposureTime: exposureTime,
+            gain: gain, offset: offset,
+            width: width, height: height, bitpix: bitpix,
+            calibrated: calibrated, stacked: stacked, stretched: stretched,
+            processingLevel: processingLevel, addedAt: addedAt,
+            fileDate: fileDate
+        )
+    }
+
+    func withProcessingLevel(_ level: ProcessingLevel) -> ArchivedFrame {
+        ArchivedFrame(
+            id: id, filePath: filePath,
+            objectName: objectName, ra: ra, dec: dec,
+            healpixPixel: healpixPixel, frameType: frameType,
+            filter: filter, camera: camera,
+            focalLength: focalLength, pixelScale: pixelScale, temperature: temperature,
+            timestamp: timestamp, exposureTime: exposureTime,
+            gain: gain, offset: offset,
+            width: width, height: height, bitpix: bitpix,
+            calibrated: level == .calibrated,
+            stacked:    level == .stacked,
+            stretched:  level == .stretched,
+            processingLevel: level, addedAt: addedAt,
+            fileDate: fileDate
+        )
+    }
+}
+
+@Suite("Stacked and processed frames are never deduplicated")
+struct ProcessedFrameInsertTests {
+
+    @Test("Two stacked frames with identical signatures are both inserted")
+    func stackedFramesAreNeverDeduped() async throws {
+        let (db, url) = try makeTestDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let stacked = makeFrame().withProcessingLevel(.stacked)
+        let first  = try await db.insertFrame(stacked,           deduplicate: false)
+        let second = try await db.insertFrame(stacked.withNewID(), deduplicate: false)
+
+        #expect(first  == true, "First stacked insert should succeed")
+        #expect(second == true, "Second stacked insert with same signature must also succeed")
+
+        let all = try await db.queryFrames(FrameQuery(), healpixPixels: nil)
+        #expect(all.count == 2, "Both stacked records must be present in the archive")
+    }
+
+    @Test("Raw frame deduplication is unaffected")
+    func rawFrameDeduplicationStillWorks() async throws {
+        let (db, url) = try makeTestDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let raw    = makeFrame()   // processingLevel: .raw by default
+        let first  = try await db.insertFrame(raw,           deduplicate: true)
+        let second = try await db.insertFrame(raw.withNewID(), deduplicate: true)
+
+        #expect(first  == true,  "First raw insert should succeed")
+        #expect(second == false, "Identical raw observation must be rejected as a duplicate")
+    }
+
+    @Test("Archive.add creates a new record for each stacked FITS file")
+    func archiveAddNeverDedupesStackedFrames() async throws {
+        let (archive, root) = try makeTempArchive(prefix: "stacked-dedup")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // Two FITS files with identical signatures but STACKED = T.
+        let src1 = root.appendingPathComponent("stack1.fits")
+        let src2 = root.appendingPathComponent("stack2.fits")
+        try writeTinyFITS(to: src1, stacked: true)
+        try writeTinyFITS(to: src2, stacked: true)
+
+        let (first,  isNew1) = try await archive.add(fitsFile: src1)
+        let (second, isNew2) = try await archive.add(fitsFile: src2)
+
+        #expect(isNew1 == true, "First stacked frame must be inserted")
+        #expect(isNew2 == true, "Second stacked frame with identical signature must also be inserted")
+        #expect(first.id != second.id, "Each stacked result must get its own archive record")
+    }
+
+    @Test(
+        "Calibrated and stretched frames are never deduplicated",
+        arguments: [ProcessingLevel.calibrated, .stretched]
+    )
+    func nonRawFramesAreNeverDeduped(level: ProcessingLevel) async throws {
+        let (db, url) = try makeTestDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let frame  = makeFrame().withProcessingLevel(level)
+        let first  = try await db.insertFrame(frame,           deduplicate: false)
+        let second = try await db.insertFrame(frame.withNewID(), deduplicate: false)
+
+        #expect(first  == true, "First \(level) insert should succeed")
+        #expect(second == true, "Second \(level) frame with same signature must also be inserted")
+
+        let all = try await db.queryFrames(FrameQuery(), healpixPixels: nil)
+        #expect(all.count == 2, "Both \(level) records must be present in the archive")
+    }
+
+    @Test("Archive.add still deduplicates raw frames with identical signatures")
+    func archiveAddStillDedupesRawFrames() async throws {
+        let (archive, root) = try makeTempArchive(prefix: "raw-dedup")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let src1 = root.appendingPathComponent("raw1.fits")
+        let src2 = root.appendingPathComponent("raw2.fits")
+        try writeTinyFITS(to: src1)   // raw by default
+        try writeTinyFITS(to: src2)
+
+        let (first,  isNew1) = try await archive.add(fitsFile: src1)
+        let (second, isNew2) = try await archive.add(fitsFile: src2)
+
+        #expect(isNew1 == true)
+        #expect(isNew2 == false, "Identical raw frames must be deduplicated")
+        #expect(first.id == second.id, "Deduplication must return the existing record's ID")
+    }
+}

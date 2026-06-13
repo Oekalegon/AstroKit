@@ -8,7 +8,8 @@ func writeTinyFITS(
     to url: URL,
     imageType: String = "Light Frame",
     exptime: Double = 300,
-    dateObs: String = "2025-03-25T08:25:40"
+    dateObs: String = "2025-03-25T08:25:40",
+    stacked: Bool = false
 ) throws {
     var block = Data(repeating: 32, count: 2880)   // one header block, all spaces
 
@@ -25,7 +26,12 @@ func writeTinyFITS(
     card("IMAGETYP= '\(imageType)'", slot: 3)
     card("DATE-OBS= '\(dateObs)'", slot: 4)
     card(String(format: "EXPTIME = %24.1f / exposure in seconds", exptime), slot: 5)
-    card("END", slot: 6)
+    if stacked {
+        card("STACKED =                    T / frame is a stack of multiple exposures", slot: 6)
+        card("END", slot: 7)
+    } else {
+        card("END", slot: 6)
+    }
 
     try block.write(to: url)
 }
