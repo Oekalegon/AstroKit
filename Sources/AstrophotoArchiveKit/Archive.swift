@@ -147,7 +147,11 @@ public actor Archive {
             hotPixelCount: meta.hotPixelCount,
             egain: resolvedEgain
         )
-        let isNew = try await database.insertFrame(frame)
+        // Raw frames are deduplicated by content signature to prevent accidental double-import
+        // of the same physical observation. Processed/stacked results are always stored as new
+        // records — every pipeline run is intentional and should be independently recoverable.
+        let deduplicate = frame.processingLevel == .raw
+        let isNew = try await database.insertFrame(frame, deduplicate: deduplicate)
         if !isNew {
             try? FileManager.default.removeItem(at: dest)
             // Return the existing frame so the caller gets a valid, stored ID.

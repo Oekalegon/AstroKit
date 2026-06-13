@@ -384,12 +384,19 @@ actor ArchiveDatabase {
 
     // MARK: - Insert
 
-    /// Inserts a frame, ignoring duplicates by content signature (UNIQUE index, migration v4).
-    /// Returns `true` if the row was inserted, `false` if an identical observation already exists.
+    /// Inserts a frame record.
+    ///
+    /// - Parameter deduplicate: When `true` (default), uses `INSERT OR IGNORE` and stores a
+    ///   `frame_signature` so that re-importing the same raw observation is a no-op. Pass `false`
+    ///   for processed/stacked results, which should always produce a new archive record regardless
+    ///   of whether a frame with the same signature already exists. In that case `frame_signature`
+    ///   is stored as NULL so the UNIQUE index is not triggered.
+    /// - Returns: `true` if the row was inserted, `false` if a duplicate was ignored
+    ///   (only possible when `deduplicate` is `true`).
     @discardableResult
-    func insertFrame(_ frame: ArchivedFrame) throws -> Bool {
+    func insertFrame(_ frame: ArchivedFrame, deduplicate: Bool = true) throws -> Bool {
         let sql = """
-        INSERT OR IGNORE INTO frames
+        \(deduplicate ? "INSERT OR IGNORE" : "INSERT") INTO frames
         (id, file_path, object_name, ra, dec, healpix_pixel, frame_type,
          filter, camera, focal_length, pixel_scale, temperature, timestamp,
          exposure_time, gain, offset, width, height, bitpix,
@@ -430,12 +437,12 @@ actor ArchiveDatabase {
         bind(stmt, 23, frame.processingLevel.rawValue)
         bind(stmt, 24, iso.string(from: frame.addedAt))
         bind(stmt, 25, frame.thumbnail)
-        bind(stmt, 26, ArchiveDatabase.frameSignature(
+        bind(stmt, 26, deduplicate ? ArchiveDatabase.frameSignature(
             fileDate: frame.fileDate,
             frameType: frame.frameType,
             filter: frame.filter,
             exposureTime: frame.exposureTime
-        ))
+        ) : nil)
         sqlite3_bind_int(stmt, 27, frame.rejected ? 1 : 0)
         bind(stmt, 28, frame.rejectedReason)
         bind(stmt, 29, frame.positionAngle)
