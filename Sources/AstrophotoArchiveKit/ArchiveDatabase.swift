@@ -395,8 +395,9 @@ actor ArchiveDatabase {
     ///   (only possible when `deduplicate` is `true`).
     @discardableResult
     func insertFrame(_ frame: ArchivedFrame, deduplicate: Bool = true) throws -> Bool {
+        let verb = deduplicate ? "INSERT OR IGNORE" : "INSERT"
         let sql = """
-        \(deduplicate ? "INSERT OR IGNORE" : "INSERT") INTO frames
+        \(verb) INTO frames
         (id, file_path, object_name, ra, dec, healpix_pixel, frame_type,
          filter, camera, focal_length, pixel_scale, temperature, timestamp,
          exposure_time, gain, offset, width, height, bitpix,

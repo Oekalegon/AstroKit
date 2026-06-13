@@ -317,7 +317,7 @@ private extension ArchivedFrame {
         )
     }
 
-    func withProcessingLevel(_ level: ProcessingLevel, stacked: Bool = false) -> ArchivedFrame {
+    func withProcessingLevel(_ level: ProcessingLevel) -> ArchivedFrame {
         ArchivedFrame(
             id: id, filePath: filePath,
             objectName: objectName, ra: ra, dec: dec,
@@ -327,7 +327,9 @@ private extension ArchivedFrame {
             timestamp: timestamp, exposureTime: exposureTime,
             gain: gain, offset: offset,
             width: width, height: height, bitpix: bitpix,
-            calibrated: calibrated, stacked: stacked, stretched: stretched,
+            calibrated: level == .calibrated,
+            stacked:    level == .stacked,
+            stretched:  level == .stretched,
             processingLevel: level, addedAt: addedAt,
             fileDate: fileDate
         )
@@ -342,7 +344,7 @@ struct ProcessedFrameInsertTests {
         let (db, url) = try makeTestDatabase()
         defer { try? FileManager.default.removeItem(at: url) }
 
-        let stacked = makeFrame().withProcessingLevel(.stacked, stacked: true)
+        let stacked = makeFrame().withProcessingLevel(.stacked)
         let first  = try await db.insertFrame(stacked,           deduplicate: false)
         let second = try await db.insertFrame(stacked.withNewID(), deduplicate: false)
 
@@ -383,6 +385,25 @@ struct ProcessedFrameInsertTests {
         #expect(isNew1 == true, "First stacked frame must be inserted")
         #expect(isNew2 == true, "Second stacked frame with identical signature must also be inserted")
         #expect(first.id != second.id, "Each stacked result must get its own archive record")
+    }
+
+    @Test(
+        "Calibrated and stretched frames are never deduplicated",
+        arguments: [ProcessingLevel.calibrated, .stretched]
+    )
+    func nonRawFramesAreNeverDeduped(level: ProcessingLevel) async throws {
+        let (db, url) = try makeTestDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let frame  = makeFrame().withProcessingLevel(level)
+        let first  = try await db.insertFrame(frame,           deduplicate: false)
+        let second = try await db.insertFrame(frame.withNewID(), deduplicate: false)
+
+        #expect(first  == true, "First \(level) insert should succeed")
+        #expect(second == true, "Second \(level) frame with same signature must also be inserted")
+
+        let all = try await db.queryFrames(FrameQuery(), healpixPixels: nil)
+        #expect(all.count == 2, "Both \(level) records must be present in the archive")
     }
 
     @Test("Archive.add still deduplicates raw frames with identical signatures")
