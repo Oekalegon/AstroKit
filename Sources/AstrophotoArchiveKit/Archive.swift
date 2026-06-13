@@ -253,6 +253,16 @@ public actor Archive {
         return expandPaths(frames)
     }
 
+    /// Updates the lineage link on a frame.
+    ///
+    /// - Parameters:
+    ///   - frameID: The frame whose `supersedesID` should be updated.
+    ///   - supersedesID: The ID of the earlier result this frame replaces,
+    ///     or `nil` to detach the frame from its current predecessor.
+    public func updateSupersedesID(frameID: UUID, supersedesID: UUID?) async throws {
+        try await database.updateFrameSupersedesID(id: frameID, supersedesID: supersedesID)
+    }
+
     /// Adds all FITS files in a directory, copying each into the archive folder hierarchy.
     /// - Parameters:
     ///   - directory: Directory to scan.

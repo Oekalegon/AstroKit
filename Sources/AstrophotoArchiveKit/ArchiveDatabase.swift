@@ -1425,10 +1425,14 @@ actor ArchiveDatabase {
         }
     }
 
-    func updateFrameSupersedesID(id: UUID, supersedesID: UUID) throws {
+    func updateFrameSupersedesID(id: UUID, supersedesID: UUID?) throws {
         let stmt = try prepare("UPDATE frames SET supersedes_id = ? WHERE id = ?")
         defer { sqlite3_finalize(stmt) }
-        bind(stmt, 1, supersedesID.uuidString)
+        if let sid = supersedesID {
+            bind(stmt, 1, sid.uuidString)
+        } else {
+            sqlite3_bind_null(stmt, 1)
+        }
         bind(stmt, 2, id.uuidString)
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())

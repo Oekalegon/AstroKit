@@ -71,6 +71,24 @@ struct LineageTests {
         #expect(loaded?.supersedesID == v1.id)
     }
 
+    @Test("updateFrameSupersedesID with nil detaches the link")
+    func updateFrameSupersedesIDClearsLink() async throws {
+        let (db, url) = try makeTestDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let v1 = makeFrame()
+        var v2 = makeFrame().withNewID()
+        v2.supersedesID = v1.id
+
+        _ = try await db.insertFrame(v1, deduplicate: false)
+        _ = try await db.insertFrame(v2, deduplicate: false)
+
+        try await db.updateFrameSupersedesID(id: v2.id, supersedesID: nil)
+
+        let loaded = try await db.frameByID(v2.id)
+        #expect(loaded?.supersedesID == nil, "Passing nil must detach the lineage link")
+    }
+
     // MARK: - Archive-level
 
     @Test("Archive.add stores supersedesID on the new record")
@@ -127,6 +145,29 @@ struct LineageTests {
         let chain = try await archive.lineage(of: frame)
         #expect(chain.count == 1)
         #expect(chain[0].id == frame.id)
+    }
+
+    @Test("Archive.updateSupersedesID can set and clear the link")
+    func archiveUpdateSupersedesID() async throws {
+        let (archive, root) = try makeTempArchive(prefix: "lineage-update")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let src1 = root.appendingPathComponent("v1.fits")
+        let src2 = root.appendingPathComponent("v2.fits")
+        try writeTinyFITS(to: src1, stacked: true)
+        try writeTinyFITS(to: src2, stacked: true)
+
+        let (v1, _) = try await archive.add(fitsFile: src1)
+        let (v2, _) = try await archive.add(fitsFile: src2)
+        #expect(v2.supersedesID == nil)
+
+        // Set the link.
+        try await archive.updateSupersedesID(frameID: v2.id, supersedesID: v1.id)
+        #expect(try await archive.frame(id: v2.id)?.supersedesID == v1.id)
+
+        // Clear the link.
+        try await archive.updateSupersedesID(frameID: v2.id, supersedesID: nil)
+        #expect(try await archive.frame(id: v2.id)?.supersedesID == nil)
     }
 
     @Test("Archive.successors returns the direct successor")
