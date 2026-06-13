@@ -37,10 +37,14 @@ public actor Archive {
         return configuration.rootURL.path + "/" + relative
     }
 
-    private func expandPath(_ frame: ArchivedFrame?) -> ArchivedFrame? {
-        guard var f = frame else { return nil }
+    private func expandPath(_ frame: ArchivedFrame) -> ArchivedFrame {
+        var f = frame
         f.filePath = toAbsolutePath(f.filePath)
         return f
+    }
+
+    private func expandPath(_ frame: ArchivedFrame?) -> ArchivedFrame? {
+        frame.map { expandPath($0) }
     }
 
     private func expandPaths(_ frames: [ArchivedFrame]) -> [ArchivedFrame] {
@@ -240,7 +244,7 @@ public actor Archive {
         var current = frame
         while let predecessorID = current.supersedesID, chain.count < 1_000 {
             guard let predecessor = try await database.frameByID(predecessorID) else { break }
-            chain.append(expandPath(predecessor)!)
+            chain.append(expandPath(predecessor))
             current = predecessor
         }
         return chain
