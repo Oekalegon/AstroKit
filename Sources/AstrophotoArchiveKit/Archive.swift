@@ -841,11 +841,15 @@ public actor Archive {
 
         // Validate against the persisted creation criteria: the candidate must be in the
         // result of the same query the set was created with. Re-running the query reuses
-        // all SQL predicate logic (object, camera, dates, temperature, quality filters, …).
+        // all SQL predicate logic (object, camera, quality filters, …).
+        // dateRange is stripped: the common case is extending a set with newer frames
+        // that fall outside the original capture window. Type, level, and filter are
+        // still enforced by the invariant checks above.
         if !force, let criteria = set.criteria {
             var q = criteria.query
             q.rejectionFilter = .excludeRejected
             q.limit = nil
+            q.dateRange = nil
             q.maxFWHM = nil
             q.maxEccentricity = nil
             let matchingIDs = Set(try await frames(matching: q).map { $0.id })

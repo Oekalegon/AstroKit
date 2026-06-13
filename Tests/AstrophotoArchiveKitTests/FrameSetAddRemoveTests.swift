@@ -179,6 +179,32 @@ struct FrameSetAddRemoveTests {
         #expect(result.frameSet.filter == "Hɑ,OIII")
     }
 
+    @Test func addFrameOutsideDateRangeIsAllowedWithoutForce() async throws {
+        let (archive, db, root) = try makeArchive()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // Set created with a narrow date window; candidate was captured after it.
+        let t0 = Date(timeIntervalSince1970: 1_740_000_000)
+        let t1 = Date(timeIntervalSince1970: 1_740_001_000)
+        var q = FrameQuery()
+        q.objectName = "M42"
+        q.frameTypes = ["light"]
+        q.filters = ["Hɑ"]
+        q.dateRange = DateInterval(start: t0, end: t1)
+
+        let f1 = makeFrame(timestamp: 1_740_000_500)
+        _ = try await db.insertFrame(f1)
+        let (fs, _) = try await archive.createFrameSet(name: "dated set", query: q)
+        #expect(fs.criteria?.query.dateRange != nil)
+
+        let later = makeFrame(timestamp: 1_740_100_000)
+        _ = try await db.insertFrame(later)
+
+        // Must succeed without --force, because dateRange is not a membership invariant.
+        let result = try await archive.addFrames(toFrameSet: fs.id, frameIDs: [later.id])
+        #expect(result.addedIDs == [later.id])
+    }
+
     @Test func addFrameRejectsCriteriaMismatchUnlessForced() async throws {
         let (archive, db, root) = try makeArchive()
         defer { try? FileManager.default.removeItem(at: root) }
