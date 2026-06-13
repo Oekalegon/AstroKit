@@ -20,11 +20,6 @@ private func writeFITS(imageType: String, to url: URL) throws {
     )
 }
 
-private func tempFITSURL(_ label: String) -> URL {
-    URL(fileURLWithPath: NSTemporaryDirectory())
-        .appendingPathComponent("\(label)-\(UUID().uuidString).fits")
-}
-
 /// Executes SQL against the database file with a direct SQLite connection.
 private func exec(_ sql: String, on url: URL) throws {
     var db: OpaquePointer?
@@ -216,16 +211,9 @@ struct CalibrationMigrationTests {
 @Suite("backfillObservationMetadata — object only for light/diagnostic frames")
 struct CalibrationBackfillTests {
 
-    private func makeArchive() throws -> (Archive, URL) {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("cal-backfill-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return (try Archive(configuration: ArchiveConfiguration(rootURL: root)), root)
-    }
-
     @Test("backfill does not re-add OBJECT to a calibration frame whose FITS file carries one")
     func backfillSkipsCalibrationObject() async throws {
-        let (archive, root) = try makeArchive()
+        let (archive, root) = try makeTempArchive(prefix: "cal-backfill")
         defer { try? FileManager.default.removeItem(at: root) }
 
         let src = root.appendingPathComponent("dark.fits")
@@ -249,7 +237,7 @@ struct CalibrationBackfillTests {
         "Diagnostic",
     ])
     func backfillRestoresLightObject(imageType: String) async throws {
-        let (archive, root) = try makeArchive()
+        let (archive, root) = try makeTempArchive(prefix: "cal-backfill")
         defer { try? FileManager.default.removeItem(at: root) }
 
         let src = root.appendingPathComponent("frame.fits")
