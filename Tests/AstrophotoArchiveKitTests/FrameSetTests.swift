@@ -145,13 +145,6 @@ struct FrameSetTests {
 
     // MARK: - Archive-level API
 
-    private func makeArchive() throws -> (Archive, URL) {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("archive-\(UUID().uuidString)")
-        let config = ArchiveConfiguration(rootURL: root)
-        return (try Archive(configuration: config), root)
-    }
-
     @Test func createFrameSetComputesSharedProperties() async throws {
         let (db, url) = try makeTestDatabase()
         defer { try? FileManager.default.removeItem(at: url) }
@@ -193,7 +186,7 @@ struct FrameSetTests {
     }
 
     @Test func createFrameSetRejectsEmptyQuery() async throws {
-        let (archive, root) = try makeArchive()
+        let (archive, root) = try makeTempArchive()
         defer { try? FileManager.default.removeItem(at: root) }
 
         await #expect(throws: ArchiveError.self) {
@@ -359,7 +352,7 @@ struct FrameSetTests {
     }
 
     @Test func archiveCreateFrameSetWithQualityThresholdsExcludesHighFWHM() async throws {
-        let (_, root) = try makeArchive()
+        let (_, root) = try makeTempArchive()
         defer { try? FileManager.default.removeItem(at: root) }
 
         let db = try ArchiveDatabase(

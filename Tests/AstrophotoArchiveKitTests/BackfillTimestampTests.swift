@@ -22,11 +22,6 @@ private func utcCalendar() -> Calendar {
     return cal
 }
 
-private func tempFITSURL(_ label: String) -> URL {
-    URL(fileURLWithPath: NSTemporaryDirectory())
-        .appendingPathComponent("\(label)-\(UUID().uuidString).fits")
-}
-
 // MARK: - parseTimestamp (via FITSHeaderReader)
 
 @Suite("parseTimestamp — FITSHeaderReader timestamp parsing")
