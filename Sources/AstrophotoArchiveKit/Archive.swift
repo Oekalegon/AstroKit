@@ -121,6 +121,8 @@ public actor Archive {
             let frameIDs = Set(inputs.compactMap { $0.frameID })
             let singleInputFrameID: UUID? = (inputFramesetID == nil && frameIDs.count == 1) ? frameIDs.first : nil
 
+            // Canonicalize filter so the comparison matches the stored value.
+            let canonicalFilter = ArchiveDatabase.canonicalFilterName(meta.filter)
             resolvedSupersedesID = try await database.findPredecessorFrame(
                 pipelineID: pipelineID,
                 excludingRunID: runID,
@@ -128,7 +130,7 @@ public actor Archive {
                 singleInputFrameID: singleInputFrameID,
                 objectName: meta.objectName,
                 frameType: meta.frameType,
-                filter: meta.filter
+                filter: canonicalFilter
             )?.id
         } else {
             resolvedSupersedesID = nil
