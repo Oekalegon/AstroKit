@@ -137,6 +137,8 @@ struct CalibrationMigrationTests {
             -- v28 added this column and index; drop them so the replay can re-add them.
             DROP INDEX IF EXISTS idx_frames_supersedes;
             ALTER TABLE frames DROP COLUMN supersedes_id;
+            -- v29 added this column; drop it so the replay can re-add it.
+            ALTER TABLE processing_run_inputs DROP COLUMN frameset_id;
             PRAGMA user_version = 24;
             """, on: url)
 
@@ -190,6 +192,8 @@ struct CalibrationMigrationTests {
             -- v28 added this column and index; drop them so the replay can re-add them.
             DROP INDEX IF EXISTS idx_frames_supersedes;
             ALTER TABLE frames DROP COLUMN supersedes_id;
+            -- v29 added this column; drop it so the replay can re-add it.
+            ALTER TABLE processing_run_inputs DROP COLUMN frameset_id;
             PRAGMA user_version = 25;
             """, on: url)
 

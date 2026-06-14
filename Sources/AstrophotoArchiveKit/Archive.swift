@@ -104,19 +104,31 @@ public actor Archive {
         }()
 
         // Auto-detect predecessor when supersedesID isn't explicitly provided.
-        // Looks for the most recent non-raw frame produced by the same pipeline
-        // with an identical input frame set. Only attempted for non-raw results
-        // with a known processing run so we have the input set to match on.
+        // Strategy: FrameSet input → match by FrameSet; single input frame → match by frame ID;
+        // ad-hoc multi-frame run → match by result target (object/filter/frameType).
         let resolvedSupersedesID: UUID?
         if let explicitID = supersedesID {
             resolvedSupersedesID = explicitID
         } else if let runID = processingRunID, meta.processingLevel != .raw {
-            let inputs = try await database.inputsForRun(runID)
-            let inputIDs = Set(inputs.compactMap { $0.frameID })
+            let inputs   = try await database.inputsForRun(runID)
+            let pipelineID = (try? await database.processingRunByID(runID))?.pipelineID ?? ""
+
+            // Prefer a FrameSet reference if any input row carries one.
+            let framesetIDs = Set(inputs.compactMap { $0.framesetID })
+            let inputFramesetID = framesetIDs.count == 1 ? framesetIDs.first : nil
+
+            // Single-frame pipelines (calibration, registration) — exact source-frame match.
+            let frameIDs = Set(inputs.compactMap { $0.frameID })
+            let singleInputFrameID: UUID? = (inputFramesetID == nil && frameIDs.count == 1) ? frameIDs.first : nil
+
             resolvedSupersedesID = try await database.findPredecessorFrame(
-                pipelineID: (try? await database.processingRunByID(runID))?.pipelineID ?? "",
-                inputFrameIDs: inputIDs,
-                excludingRunID: runID
+                pipelineID: pipelineID,
+                excludingRunID: runID,
+                inputFramesetID: inputFramesetID,
+                singleInputFrameID: singleInputFrameID,
+                objectName: meta.objectName,
+                frameType: meta.frameType,
+                filter: meta.filter
             )?.id
         } else {
             resolvedSupersedesID = nil
