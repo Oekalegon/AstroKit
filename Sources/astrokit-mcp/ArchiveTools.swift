@@ -990,44 +990,12 @@ struct ArchiveTools {
 
             if !isCurrent {
                 let diff = try await archive.diff(lineage.current, predecessor: version)
-                lines.append(formatDiff(diff, otherVersion: versionNumber, currentVersion: currentV))
+                lines.append(diff.formatted(otherVersion: versionNumber, currentVersion: currentV))
             }
         }
 
         return lines.joined(separator: "\n")
     }
 
-    private func formatDiff(_ diff: FrameDiff, otherVersion: Int, currentVersion: Int) -> String {
-        var parts: [String] = []
 
-        if !diff.parameterChanges.isEmpty {
-            let changes = diff.parameterChanges.sorted { $0.key < $1.key }.map { change in
-                let from = change.from.map(\.description) ?? "(absent)"
-                let to   = change.to.map(\.description)   ?? "(removed)"
-                return "\(change.key): \(from) → \(to)"
-            }
-            parts.append("  params (v\(otherVersion) → v\(currentVersion)): " + changes.joined(separator: ", "))
-        }
-
-        if !diff.inputsAdded.isEmpty   { parts.append("  inputs added vs v\(otherVersion): \(diff.inputsAdded.count)") }
-        if !diff.inputsRemoved.isEmpty { parts.append("  inputs removed vs v\(otherVersion): \(diff.inputsRemoved.count)") }
-
-        let q = diff.quality
-        var qualParts: [String] = []
-        if let old = q.fwhm.from, let new = q.fwhm.to {
-            qualParts.append(String(format: "fwhm %.2f→%.2fpx", old, new))
-        }
-        if let old = q.starCount.from, let new = q.starCount.to {
-            qualParts.append("stars \(old)→\(new)")
-        }
-        if let old = q.eccentricity.from, let new = q.eccentricity.to {
-            qualParts.append(String(format: "ecc %.3f→%.3f", old, new))
-        }
-        if let old = q.backgroundNoiseElectrons.from, let new = q.backgroundNoiseElectrons.to {
-            qualParts.append(String(format: "bg %.1f→%.1fe⁻", old, new))
-        }
-        if !qualParts.isEmpty { parts.append("  quality (v\(otherVersion) → v\(currentVersion)): " + qualParts.joined(separator: "  ")) }
-
-        return parts.isEmpty ? "  (identical to v\(currentVersion))" : parts.joined(separator: "\n")
-    }
 }

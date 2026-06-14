@@ -80,6 +80,32 @@ struct ParameterValueTests {
         let d = FrameDiff.ParameterValue("3.0").description
         #expect(d.contains(".") || d.contains("e"))
     }
+
+    @Test("Int.max parses as integer and description contains no decimal point")
+    func intMaxDescription() {
+        let v = FrameDiff.ParameterValue("\(Int.max)")
+        #expect(v == .integer(Int.max))
+        #expect(v.description == "\(Int.max)")
+        #expect(!v.description.contains("."))
+    }
+
+    @Test("scientific notation string parses as double and description preserves the exponent")
+    func scientificNotationDescription() {
+        let v = FrameDiff.ParameterValue("1e-10")
+        #expect(v == .double(1e-10))
+        #expect(v.description.contains("e"), "exponent notation must be preserved")
+        #expect(!v.description.hasSuffix(".0"), "must not append .0 to a value already in exponent form")
+    }
+
+    @Test("'nan' and 'inf' strings parse as double and description omits spurious .0 suffix")
+    func nanAndInfDescription() {
+        // Swift's Double(_:) accepts "nan", "NaN", "inf", "-inf" — they become .double,
+        // not .string. The description must not append ".0" to these non-finite values.
+        #expect(FrameDiff.ParameterValue("nan").description  == "nan")
+        #expect(FrameDiff.ParameterValue("NaN").description  == "nan")
+        #expect(FrameDiff.ParameterValue("inf").description  == "inf")
+        #expect(FrameDiff.ParameterValue("-inf").description == "-inf")
+    }
 }
 
 // MARK: - Archive.diff

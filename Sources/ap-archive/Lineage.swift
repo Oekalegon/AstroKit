@@ -67,46 +67,8 @@ struct Lineage: AsyncParsableCommand {
     }
 
     private func printDiff(_ diff: FrameDiff, otherVersion: Int, currentVersion: Int) {
-        var lines: [String] = []
-
-        if !diff.parameterChanges.isEmpty {
-            lines.append("     Parameters (v\(otherVersion) → v\(currentVersion)):")
-            for change in diff.parameterChanges.sorted(by: { $0.key < $1.key }) {
-                let from = change.from.map(\.description) ?? "(absent)"
-                let to   = change.to.map(\.description)   ?? "(removed)"
-                lines.append("       \(change.key): \(from) → \(to)")
-            }
-        }
-
-        if !diff.inputsAdded.isEmpty {
-            lines.append("     Inputs added vs v\(otherVersion): \(diff.inputsAdded.count)")
-        }
-        if !diff.inputsRemoved.isEmpty {
-            lines.append("     Inputs removed vs v\(otherVersion): \(diff.inputsRemoved.count)")
-        }
-
-        let q = diff.quality
-        var qualityLines: [String] = []
-        if let old = q.fwhm.from, let new = q.fwhm.to {
-            qualityLines.append(String(format: "FWHM %.2f→%.2f px", old, new))
-        }
-        if let old = q.starCount.from, let new = q.starCount.to {
-            qualityLines.append("stars \(old)→\(new)")
-        }
-        if let old = q.eccentricity.from, let new = q.eccentricity.to {
-            qualityLines.append(String(format: "ecc %.3f→%.3f", old, new))
-        }
-        if let old = q.backgroundNoiseElectrons.from, let new = q.backgroundNoiseElectrons.to {
-            qualityLines.append(String(format: "bg %.1f→%.1f e⁻", old, new))
-        }
-        if !qualityLines.isEmpty {
-            lines.append("     Quality (v\(otherVersion) → v\(currentVersion)): " + qualityLines.joined(separator: "  "))
-        }
-
-        if lines.isEmpty {
-            lines.append("     (identical to v\(currentVersion))")
-        }
-
-        lines.forEach { print($0) }
+        diff.formatted(otherVersion: otherVersion, currentVersion: currentVersion)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .forEach { print("     \($0)") }
     }
 }

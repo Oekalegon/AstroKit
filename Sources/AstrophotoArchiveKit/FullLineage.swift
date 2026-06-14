@@ -10,7 +10,8 @@ public struct FullLineage: Sendable {
 
     public var current: ArchivedFrame { chain[currentIndex] }
 
-    /// 1-based version number of the current frame (1 = oldest in chain).
+    /// 1-based version number of the current frame within the full chain.
+    /// v1 is the oldest; v`chain.count` is the newest.
     public var currentVersionNumber: Int { chain.count - currentIndex }
 
     /// Total number of versions in the chain.

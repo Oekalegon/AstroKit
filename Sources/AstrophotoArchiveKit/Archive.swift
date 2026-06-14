@@ -249,8 +249,9 @@ public actor Archive {
         return run
     }
 
-    /// Filters `parameters` to only the keys declared as `from:` in the pipeline YAML,
-    /// and strips values that equal the YAML default (so diffs only show real overrides).
+    /// Normalises `parameters` against the pipeline YAML spec:
+    /// unknown keys are dropped (with a warning), and YAML defaults are filled
+    /// in for any omitted key so every run record has the same complete key set.
     /// If the pipeline is not found in the registry the dict is returned unchanged.
     private func canonicalizeParameters(
         _ parameters: [String: String],

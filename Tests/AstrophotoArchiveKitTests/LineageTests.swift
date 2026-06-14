@@ -258,6 +258,30 @@ struct LineageTests {
         #expect(lineage.current.id == frame.id)
     }
 
+    @Test("fullLineage terminates without hanging when supersedesID links form a cycle")
+    func fullLineageCycleGuard() async throws {
+        let (archive, root) = try makeTempArchive(prefix: "full-cycle")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let src1 = root.appendingPathComponent("cycle-v1.fits")
+        let src2 = root.appendingPathComponent("cycle-v2.fits")
+        try writeTinyFITS(to: src1, dateObs: "2025-07-01T10:00:00", stacked: true)
+        try writeTinyFITS(to: src2, dateObs: "2025-07-01T11:00:00", stacked: true)
+
+        let (v1, _) = try await archive.add(fitsFile: src1)
+        let (v2, _) = try await archive.add(fitsFile: src2, supersedesID: v1.id)
+
+        // Create a cycle: v1 now also supersedes v2, so v1 → v2 → v1 → …
+        // The seen-Set guard (successor walk) and the CTE depth cap (lineage walk)
+        // together must ensure fullLineage returns a finite result.
+        try await archive.updateSupersedesID(frameID: v1.id, supersedesID: v2.id)
+
+        let lineage = try await archive.fullLineage(containing: v1)
+
+        #expect(lineage.chain.count > 0)
+        #expect(lineage.currentIndex < lineage.chain.count)
+    }
+
     @Test("fullLineage chain is identical regardless of which frame is queried")
     func fullLineageChainIsConsistentAcrossQueryFrames() async throws {
         let (archive, root) = try makeTempArchive(prefix: "full-consistent")
