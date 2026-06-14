@@ -1,6 +1,7 @@
 import AstrophotoKit
 import Foundation
 import HEALPixKit
+import os
 
 /// The main archive actor. Thread-safe; all operations are async.
 public actor Archive {
@@ -226,8 +227,10 @@ public actor Archive {
     /// - Parameters:
     ///   - pipelineID: The pipeline ID that was executed (e.g. "frame_stacking").
     ///   - parameters: Pipeline parameters that were active for this run. Keys are normalized
-    ///     against the YAML spec: unknown keys are dropped, values equal to the YAML default
-    ///     are omitted. Only non-default overrides are persisted.
+    ///     against the YAML spec: unknown keys are dropped (with a warning) and the full
+    ///     effective parameter set — caller-supplied values plus YAML defaults for omitted
+    ///     params — is stored. This ensures every run record has the same complete key set
+    ///     so that diffs never show spurious "(absent)" entries.
     ///   - inputs: References to the input frames (archive IDs and/or file paths).
     /// - Returns: The persisted processing run record.
     @discardableResult
@@ -254,24 +257,38 @@ public actor Archive {
         forPipelineID pipelineID: String
     ) -> [String: String] {
         guard let pipeline = PipelineRegistry.shared.get(id: pipelineID) else {
+            Logger.archive.warning("recordProcessingRun: pipeline '\(pipelineID)' not found in registry — parameters stored as-is")
             return parameters
         }
+
+        // Collect the canonical set of pipeline-level parameter names (from: fields).
+        // Use only the first declaration when the same from-name appears in multiple steps.
         var result: [String: String] = [:]
         var seen = Set<String>()
+        var unknownKeys = Set(parameters.keys)
+
         for step in pipeline.steps {
             for paramSpec in step.parameters {
                 guard let fromName = paramSpec.from, !seen.contains(fromName) else { continue }
                 seen.insert(fromName)
-                guard let value = parameters[fromName] else { continue }
-                // Drop values that equal the YAML default — they add noise to diffs.
-                if let defaultVal = paramSpec.defaultValue {
-                    let callerTyped  = FrameDiff.ParameterValue(value)
-                    let defaultTyped = FrameDiff.ParameterValue(defaultVal.stringValue)
-                    if callerTyped == defaultTyped { continue }
+                unknownKeys.remove(fromName)
+
+                if let value = parameters[fromName] {
+                    // Caller supplied a value — store it.
+                    result[fromName] = value
+                } else if let defaultVal = paramSpec.defaultValue {
+                    // Caller omitted this param — fill in the YAML default so every run
+                    // has the same complete key set and diffs never show "(absent)".
+                    result[fromName] = defaultVal.stringValue
                 }
-                result[fromName] = value
             }
         }
+
+        if !unknownKeys.isEmpty {
+            let sorted = unknownKeys.sorted().joined(separator: ", ")
+            Logger.archive.warning("recordProcessingRun: unknown parameter keys for pipeline '\(pipelineID)' were dropped: \(sorted)")
+        }
+
         return result
     }
 
