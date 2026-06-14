@@ -103,6 +103,39 @@ public actor Archive {
             return healpix.pixel(at: coord)
         }()
 
+        // Auto-detect predecessor when supersedesID isn't explicitly provided.
+        // Strategy: FrameSet input → match by FrameSet; single input frame → match by frame ID;
+        // ad-hoc multi-frame run → match by result target (object/filter/frameType).
+        let resolvedSupersedesID: UUID?
+        if let explicitID = supersedesID {
+            resolvedSupersedesID = explicitID
+        } else if let runID = processingRunID, meta.processingLevel != .raw {
+            let inputs   = try await database.inputsForRun(runID)
+            let pipelineID = (try? await database.processingRunByID(runID))?.pipelineID ?? ""
+
+            // Prefer a FrameSet reference if any input row carries one.
+            let framesetIDs = Set(inputs.compactMap { $0.framesetID })
+            let inputFramesetID = framesetIDs.count == 1 ? framesetIDs.first : nil
+
+            // Single-frame pipelines (calibration, registration) — exact source-frame match.
+            let frameIDs = Set(inputs.compactMap { $0.frameID })
+            let singleInputFrameID: UUID? = (inputFramesetID == nil && frameIDs.count == 1) ? frameIDs.first : nil
+
+            // Canonicalize filter so the comparison matches the stored value.
+            let canonicalFilter = ArchiveDatabase.canonicalFilterName(meta.filter)
+            resolvedSupersedesID = try await database.findPredecessorFrame(
+                pipelineID: pipelineID,
+                excludingRunID: runID,
+                inputFramesetID: inputFramesetID,
+                singleInputFrameID: singleInputFrameID,
+                objectName: meta.objectName,
+                frameType: meta.frameType,
+                filter: canonicalFilter
+            )?.id
+        } else {
+            resolvedSupersedesID = nil
+        }
+
         let frameID = UUID()
         let dest = FolderOrganizer.destinationURL(
             for: meta, in: configuration.rootURL, filename: url.lastPathComponent, id: frameID
@@ -141,7 +174,7 @@ public actor Archive {
             addedAt: Date(),
             positionAngle: meta.positionAngle,
             processingRunID: processingRunID,
-            supersedesID: supersedesID,
+            supersedesID: resolvedSupersedesID,
             sessionBeg: meta.sessionBeg,
             sessionEnd: meta.sessionEnd,
             temperatureMin: meta.temperatureMin,

@@ -287,6 +287,18 @@ actor ArchiveDatabase {
         ALTER TABLE frames ADD COLUMN supersedes_id TEXT REFERENCES frames(id) ON DELETE SET NULL;
         CREATE INDEX IF NOT EXISTS idx_frames_supersedes ON frames(supersedes_id);
         """,
+        // v29: track which FrameSet each processing_run_inputs row came from. Populated when
+        // the pipeline is run with a named FrameSet as input. Allows predecessor matching to
+        // link on FrameSet identity (not frame membership), so dropping/adding frames between
+        // runs of the same FrameSet still resolves to the same lineage chain.
+        "ALTER TABLE processing_run_inputs ADD COLUMN frameset_id TEXT REFERENCES frame_sets(id) ON DELETE SET NULL;",
+        // v30: fix a typo in v29 that referenced `framesets` instead of `frame_sets`. With
+        // PRAGMA foreign_keys = ON, the wrong FK caused every INSERT into processing_run_inputs
+        // to fail with "no such table: main.framesets". DROP + re-ADD corrects the schema.
+        """
+        ALTER TABLE processing_run_inputs DROP COLUMN frameset_id;
+        ALTER TABLE processing_run_inputs ADD COLUMN frameset_id TEXT REFERENCES frame_sets(id) ON DELETE SET NULL;
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -1381,8 +1393,8 @@ actor ArchiveDatabase {
         }
 
         let inputSQL = """
-            INSERT INTO processing_run_inputs (run_id, input_name, frame_id, file_path, position)
-            VALUES (?,?,?,?,?)
+            INSERT INTO processing_run_inputs (run_id, input_name, frame_id, file_path, position, frameset_id)
+            VALUES (?,?,?,?,?,?)
             """
         for ref in inputs {
             let istmt = try prepare(inputSQL)
@@ -1392,6 +1404,7 @@ actor ArchiveDatabase {
             bind(istmt, 3, ref.frameID?.uuidString)
             bind(istmt, 4, ref.filePath)
             sqlite3_bind_int(istmt, 5, Int32(ref.position))
+            bind(istmt, 6, ref.framesetID?.uuidString)
             guard sqlite3_step(istmt) == SQLITE_DONE else {
                 sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
                 throw ArchiveError.databaseError(dbErrorMessage())
@@ -1413,6 +1426,88 @@ actor ArchiveDatabase {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, signature, -1, SQLITE_TRANSIENT)
         return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
+    }
+
+    /// Finds the most recent processed frame produced by a previous run of the same pipeline
+    /// that represents the "same work." Strategy chosen by input type:
+    ///
+    /// 1. **FrameSet input** (`inputFramesetID != nil`): match runs that used the same
+    ///    FrameSet. Dropping or adding members between runs is captured in `FrameDiff`;
+    ///    it does not break the lineage chain.
+    /// 2. **Single-frame input** (`singleInputFrameID != nil`): match runs that processed
+    ///    the exact same source frame (e.g., calibration pipelines where each raw frame
+    ///    has its own independent history).
+    /// 3. **Fallback — target match**: match on `object_name`, `frame_type`, and `filter`
+    ///    when the run had no FrameSet reference and more than one input frame (i.e., ad-hoc
+    ///    stacking runs not associated with a named FrameSet).
+    func findPredecessorFrame(
+        pipelineID: String,
+        excludingRunID: UUID,
+        inputFramesetID: UUID?,
+        singleInputFrameID: UUID?,
+        objectName: String?,
+        frameType: String,
+        filter: String?
+    ) throws -> ArchivedFrame? {
+        if let framesetID = inputFramesetID {
+            // Strategy 1: same FrameSet — any change in member count still links
+            let sql = """
+            SELECT f.* FROM frames f
+              JOIN processing_runs r ON f.processing_run_id = r.id
+              JOIN processing_run_inputs pri ON pri.run_id = r.id AND pri.frameset_id = ?
+             WHERE r.pipeline_id = ?
+               AND r.id != ?
+               AND f.processing_level != 'raw'
+             ORDER BY f.added_at DESC
+             LIMIT 1
+            """
+            let stmt = try prepare(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, framesetID.uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, pipelineID,            -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 3, excludingRunID.uuidString, -1, SQLITE_TRANSIENT)
+            return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
+        } else if let frameID = singleInputFrameID {
+            // Strategy 2: same source frame (calibration, registration of individual frames)
+            let sql = """
+            SELECT f.* FROM frames f
+              JOIN processing_runs r ON f.processing_run_id = r.id
+              JOIN processing_run_inputs pri ON pri.run_id = r.id AND pri.frame_id = ?
+             WHERE r.pipeline_id = ?
+               AND r.id != ?
+               AND f.processing_level != 'raw'
+             ORDER BY f.added_at DESC
+             LIMIT 1
+            """
+            let stmt = try prepare(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, frameID.uuidString,    -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, pipelineID,            -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 3, excludingRunID.uuidString, -1, SQLITE_TRANSIENT)
+            return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
+        } else {
+            // Strategy 3: ad-hoc multi-frame run — match on result frame target characteristics
+            let sql = """
+            SELECT f.* FROM frames f
+              JOIN processing_runs r ON f.processing_run_id = r.id
+             WHERE r.pipeline_id = ?
+               AND r.id != ?
+               AND f.processing_level != 'raw'
+               AND LOWER(COALESCE(f.object_name, '')) = LOWER(COALESCE(?, ''))
+               AND LOWER(f.frame_type) = LOWER(?)
+               AND LOWER(COALESCE(f.filter, '')) = LOWER(COALESCE(?, ''))
+             ORDER BY f.added_at DESC
+             LIMIT 1
+            """
+            let stmt = try prepare(sql)
+            defer { sqlite3_finalize(stmt) }
+            sqlite3_bind_text(stmt, 1, pipelineID,                -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 2, excludingRunID.uuidString, -1, SQLITE_TRANSIENT)
+            bind(stmt, 3, objectName)
+            sqlite3_bind_text(stmt, 4, frameType,                 -1, SQLITE_TRANSIENT)
+            bind(stmt, 5, filter)
+            return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
+        }
     }
 
     func updateFrameRunID(id: UUID, processingRunID: UUID) throws {
@@ -1492,19 +1587,20 @@ actor ArchiveDatabase {
 
     func inputsForRun(_ id: UUID) throws -> [ProcessingRunInputRef] {
         let stmt = try prepare("""
-            SELECT input_name, frame_id, file_path, position
+            SELECT input_name, frame_id, file_path, position, frameset_id
             FROM processing_run_inputs WHERE run_id = ? ORDER BY input_name, position
             """)
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
         var results: [ProcessingRunInputRef] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
-            let inputName = columnText(stmt, 0) ?? ""
-            let frameID   = columnText(stmt, 1).flatMap { UUID(uuidString: $0) }
-            let filePath  = columnText(stmt, 2)
-            let position  = Int(sqlite3_column_int(stmt, 3))
+            let inputName  = columnText(stmt, 0) ?? ""
+            let frameID    = columnText(stmt, 1).flatMap { UUID(uuidString: $0) }
+            let filePath   = columnText(stmt, 2)
+            let position   = Int(sqlite3_column_int(stmt, 3))
+            let framesetID = columnText(stmt, 4).flatMap { UUID(uuidString: $0) }
             results.append(ProcessingRunInputRef(
-                inputName: inputName, frameID: frameID, filePath: filePath, position: position
+                inputName: inputName, frameID: frameID, filePath: filePath, position: position, framesetID: framesetID
             ))
         }
         return results

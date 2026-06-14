@@ -24,11 +24,15 @@ public struct ProcessingRunInputRef: Sendable {
     public let filePath: String?
     /// Position within the named input (for multi-frame inputs).
     public let position: Int
+    /// The FrameSet this input came from, when the pipeline was run with a named FrameSet.
+    /// Used to link successive runs of the same frameset into a lineage chain.
+    public let framesetID: UUID?
 
-    public init(inputName: String, frameID: UUID?, filePath: String?, position: Int) {
-        self.inputName = inputName
-        self.frameID   = frameID
-        self.filePath  = filePath
-        self.position  = position
+    public init(inputName: String, frameID: UUID?, filePath: String?, position: Int, framesetID: UUID? = nil) {
+        self.inputName  = inputName
+        self.frameID    = frameID
+        self.filePath   = filePath
+        self.position   = position
+        self.framesetID = framesetID
     }
 }
