@@ -347,10 +347,10 @@ public struct FrameStackingProcessor: Processor {
         referenceStars: [(x: Double, y: Double)]
     ) -> [(frameIndex: Int, meanResidual: Double, matchedCount: Int, missingCount: Int)] {
         guard !referenceStars.isEmpty else {
-            print("[Alignment] No reference stars available — skipping alignment check")
+            Logger.processor.warning("[Alignment] No reference stars available — skipping alignment check")
             return (0..<warpedTextures.count).map { (frameIndex: $0, meanResidual: 0, matchedCount: 0, missingCount: 0) }
         }
-        print("[Alignment] \(warpedTextures.count) frames, reference=\(refIdx), \(referenceStars.count) reference stars")
+        Logger.processor.debug("[Alignment] \(warpedTextures.count) frames, reference=\(refIdx), \(referenceStars.count) reference stars")
         var results: [(frameIndex: Int, meanResidual: Double, matchedCount: Int, missingCount: Int)] = []
         for i in 0..<warpedTextures.count {
             if i == refIdx {
@@ -369,8 +369,9 @@ public struct FrameStackingProcessor: Processor {
             }
             let meanRes = matched > 0 ? totalResidual / Double(matched) : 0.0
             let ok = meanRes <= 2.0 && missing <= referenceStars.count / 4
-            print(String(format: "[Alignment] frame %2d: mean_residual=%.2fpx  matched=%d/%d  %@",
-                         i, meanRes, matched, referenceStars.count, ok ? "ok" : "MISALIGNED"))
+            let alignResult = String(format: "frame %2d: mean_residual=%.2fpx  matched=%d/%d  %@",
+                                     i, meanRes, matched, referenceStars.count, ok ? "ok" : "MISALIGNED")
+            Logger.processor.debug("[Alignment] \(alignResult)")
             results.append((frameIndex: i, meanResidual: meanRes, matchedCount: matched, missingCount: missing))
         }
         return results
