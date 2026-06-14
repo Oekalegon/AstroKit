@@ -350,7 +350,7 @@ public struct FrameStackingProcessor: Processor {
             Logger.processor.warning("[Alignment] No reference stars available — skipping alignment check")
             return (0..<warpedTextures.count).map { (frameIndex: $0, meanResidual: 0, matchedCount: 0, missingCount: 0) }
         }
-        Logger.processor.debug("[Alignment] \(warpedTextures.count) frames, reference=\(refIdx), \(referenceStars.count) reference stars")
+        Logger.processor.debug("[Alignment] \(warpedTextures.count, privacy: .public) frames, reference=\(refIdx, privacy: .public), \(referenceStars.count, privacy: .public) reference stars")
         var results: [(frameIndex: Int, meanResidual: Double, matchedCount: Int, missingCount: Int)] = []
         for i in 0..<warpedTextures.count {
             if i == refIdx {
@@ -371,7 +371,7 @@ public struct FrameStackingProcessor: Processor {
             let ok = meanRes <= 2.0 && missing <= referenceStars.count / 4
             let alignResult = String(format: "frame %2d: mean_residual=%.2fpx  matched=%d/%d  %@",
                                      i, meanRes, matched, referenceStars.count, ok ? "ok" : "MISALIGNED")
-            Logger.processor.debug("[Alignment] \(alignResult)")
+            Logger.processor.debug("[Alignment] \(alignResult, privacy: .public)")
             results.append((frameIndex: i, meanResidual: meanRes, matchedCount: matched, missingCount: missing))
         }
         return results
