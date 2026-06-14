@@ -103,6 +103,25 @@ public actor Archive {
             return healpix.pixel(at: coord)
         }()
 
+        // Auto-detect predecessor when supersedesID isn't explicitly provided.
+        // Looks for the most recent non-raw frame produced by the same pipeline
+        // with an identical input frame set. Only attempted for non-raw results
+        // with a known processing run so we have the input set to match on.
+        let resolvedSupersedesID: UUID?
+        if let explicitID = supersedesID {
+            resolvedSupersedesID = explicitID
+        } else if let runID = processingRunID, meta.processingLevel != .raw {
+            let inputs = try await database.inputsForRun(runID)
+            let inputIDs = Set(inputs.compactMap { $0.frameID })
+            resolvedSupersedesID = try await database.findPredecessorFrame(
+                pipelineID: (try? await database.processingRunByID(runID))?.pipelineID ?? "",
+                inputFrameIDs: inputIDs,
+                excludingRunID: runID
+            )?.id
+        } else {
+            resolvedSupersedesID = nil
+        }
+
         let frameID = UUID()
         let dest = FolderOrganizer.destinationURL(
             for: meta, in: configuration.rootURL, filename: url.lastPathComponent, id: frameID
@@ -141,7 +160,7 @@ public actor Archive {
             addedAt: Date(),
             positionAngle: meta.positionAngle,
             processingRunID: processingRunID,
-            supersedesID: supersedesID,
+            supersedesID: resolvedSupersedesID,
             sessionBeg: meta.sessionBeg,
             sessionEnd: meta.sessionEnd,
             temperatureMin: meta.temperatureMin,

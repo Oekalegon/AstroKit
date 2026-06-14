@@ -301,6 +301,17 @@ public enum ArchiveToolDefinitions {
             ] as [String: Any],
         ],
         [
+            "name": "archive_frame_lineage",
+            "description": "Show the full version history for a pipeline result frame. Returns the lineage chain from newest to oldest, with a diff between each consecutive pair showing which pipeline parameters changed, how many input frames were added or removed, and how quality metrics (FWHM, star count, eccentricity, background noise) changed.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "id": ["type": "string", "description": "Archive frame UUID to retrieve lineage for."],
+                ] as [String: Any],
+                "required": ["id"],
+            ] as [String: Any],
+        ],
+        [
             "name": "archive_set_pixel_scale",
             "description": "Bulk-set the pixel scale (arcsec/px) on all archived frames and framesets matching a telescope and/or camera (exact names as stored in the archive — check archive_search output). Use this for frames whose FITS headers carry neither a scale keyword nor the optics keywords needed to derive one. Pass arcsec_per_pixel directly, or focal_length_mm + pixel_size_um (+ optional binning) to compute it as 206.265 × pixel_size × binning / focal_length. By default only fills missing (nil) values; pass overwrite: true to replace existing ones. Stacked frames and framesets inherit equipment names from their inputs, so they are updated by the same call.",
             "inputSchema": [

@@ -11,7 +11,7 @@ struct APArchive: AsyncParsableCommand {
         abstract: "Manage an astrophotography FITS archive.",
         discussion: "Archive location is set via the ASTROARCHIVE_PATH environment variable or --archive-path.",
         version: Version.string,
-        subcommands: [Search.self, Add.self, Recent.self, Info.self, Headers.self, ListObjects.self, Stats.self, Remove.self, Reject.self, Copy.self, Frameset.self, Stretch.self, BackfillMetadata.self, SetPixelScale.self]
+        subcommands: [Search.self, Add.self, Recent.self, Info.self, Lineage.self, Headers.self, ListObjects.self, Stats.self, Remove.self, Reject.self, Copy.self, Frameset.self, Stretch.self, BackfillMetadata.self, SetPixelScale.self]
     )
 }
 

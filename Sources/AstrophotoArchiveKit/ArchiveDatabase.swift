@@ -1415,6 +1415,52 @@ actor ArchiveDatabase {
         return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
     }
 
+    /// Finds the most recent processed frame produced by a previous run of the same pipeline
+    /// with an identical set of input frames. Used to auto-wire `supersedes_id` when a new
+    /// result is archived without an explicit predecessor.
+    ///
+    /// Matching rules:
+    /// - Same `pipeline_id`
+    /// - Not the current run (`excludingRunID`)
+    /// - Identical input frame set (same archive UUIDs, order-independent)
+    /// - Result frame is non-raw
+    func findPredecessorFrame(
+        pipelineID: String,
+        inputFrameIDs: Set<UUID>,
+        excludingRunID: UUID
+    ) throws -> ArchivedFrame? {
+        guard !inputFrameIDs.isEmpty else { return nil }
+        let placeholders = Array(repeating: "?", count: inputFrameIDs.count).joined(separator: ",")
+        let sql = """
+        SELECT f.* FROM frames f
+          JOIN processing_runs r ON f.processing_run_id = r.id
+         WHERE r.pipeline_id = ?
+           AND r.id != ?
+           AND f.processing_level != 'raw'
+           AND (
+             SELECT COUNT(DISTINCT frame_id) FROM processing_run_inputs
+              WHERE run_id = r.id AND frame_id IS NOT NULL
+           ) = ?
+           AND (
+             SELECT COUNT(*) FROM processing_run_inputs
+              WHERE run_id = r.id AND frame_id IS NOT NULL
+                AND frame_id NOT IN (\(placeholders))
+           ) = 0
+         ORDER BY f.added_at DESC
+         LIMIT 1
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        var pos: Int32 = 1
+        sqlite3_bind_text(stmt, pos, pipelineID, -1, SQLITE_TRANSIENT); pos += 1
+        sqlite3_bind_text(stmt, pos, excludingRunID.uuidString, -1, SQLITE_TRANSIENT); pos += 1
+        sqlite3_bind_int(stmt, pos, Int32(inputFrameIDs.count)); pos += 1
+        for id in inputFrameIDs {
+            sqlite3_bind_text(stmt, pos, id.uuidString, -1, SQLITE_TRANSIENT); pos += 1
+        }
+        return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
+    }
+
     func updateFrameRunID(id: UUID, processingRunID: UUID) throws {
         let stmt = try prepare("UPDATE frames SET processing_run_id = ? WHERE id = ?")
         defer { sqlite3_finalize(stmt) }

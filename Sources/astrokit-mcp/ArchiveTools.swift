@@ -85,6 +85,7 @@ struct ArchiveTools {
         case "archive_frameset_delete":   return try await archiveFrameSetDelete(arguments)
         case "archive_backfill_metadata": return try await archiveBackfillMetadata(arguments)
         case "archive_set_pixel_scale":   return try await archiveSetPixelScale(arguments)
+        case "archive_frame_lineage":     return try await archiveFrameLineage(arguments)
         default: throw ToolError("Unknown archive tool: \(name)")
         }
     }
@@ -954,5 +955,77 @@ struct ArchiveTools {
         let archive = try makeArchive()
         try await archive.remove(id: uuid, deleteFile: deleteFile)
         return "Removed frame \(idStr) from archive.\(deleteFile ? " File deleted." : "")"
+    }
+
+    private func archiveFrameLineage(_ args: [String: Any]) async throws -> String {
+        guard let idStr = args["id"] as? String, let uuid = UUID(uuidString: idStr) else {
+            throw ToolError("archive_frame_lineage requires a valid 'id' UUID.")
+        }
+        let archive = try makeArchive()
+        guard let frame = try await archive.frame(id: uuid) else {
+            throw ToolError("No frame with id \(idStr) found.")
+        }
+        let chain = try await archive.lineage(of: frame)
+
+        if chain.count == 1 {
+            return "Frame \(idStr) has no recorded predecessors — it is the only version."
+        }
+
+        let iso = ISO8601DateFormatter()
+        var lines: [String] = ["Lineage chain (\(chain.count) versions, newest → oldest)"]
+
+        for (index, current) in chain.enumerated() {
+            let versionNumber = chain.count - index
+            var frameLine = "v\(versionNumber)  \(current.id.uuidString)"
+            frameLine += "  added: \(String(iso.string(from: current.addedAt).prefix(19)))"
+            if let fwhm = current.medianFWHM {
+                frameLine += String(format: "  fwhm: %.2fpx", fwhm)
+                if let arcsec = current.medianFWHMArcsec { frameLine += String(format: " (%.2f\")", arcsec) }
+            }
+            if let stars = current.starCount { frameLine += "  stars: \(stars)" }
+            lines.append(frameLine)
+
+            if index + 1 < chain.count {
+                let predecessor = chain[index + 1]
+                let diff = try await archive.diff(current, predecessor: predecessor)
+                lines.append(formatDiff(diff))
+            }
+        }
+
+        return lines.joined(separator: "\n")
+    }
+
+    private func formatDiff(_ diff: FrameDiff) -> String {
+        var parts: [String] = []
+
+        if !diff.parameterChanges.isEmpty {
+            let changes = diff.parameterChanges.sorted { $0.key < $1.key }.map { change in
+                let from = change.from ?? "(absent)"
+                let to   = change.to   ?? "(removed)"
+                return "\(change.key): \(from) → \(to)"
+            }
+            parts.append("  params: " + changes.joined(separator: ", "))
+        }
+
+        if !diff.inputsAdded.isEmpty   { parts.append("  inputs added: \(diff.inputsAdded.count)") }
+        if !diff.inputsRemoved.isEmpty { parts.append("  inputs removed: \(diff.inputsRemoved.count)") }
+
+        let q = diff.quality
+        var qualParts: [String] = []
+        if let old = q.fwhm.from, let new = q.fwhm.to {
+            qualParts.append(String(format: "fwhm %.2f→%.2fpx", old, new))
+        }
+        if let old = q.starCount.from, let new = q.starCount.to {
+            qualParts.append("stars \(old)→\(new)")
+        }
+        if let old = q.eccentricity.from, let new = q.eccentricity.to {
+            qualParts.append(String(format: "ecc %.3f→%.3f", old, new))
+        }
+        if let old = q.backgroundNoiseElectrons.from, let new = q.backgroundNoiseElectrons.to {
+            qualParts.append(String(format: "bg %.1f→%.1fe⁻", old, new))
+        }
+        if !qualParts.isEmpty { parts.append("  quality: " + qualParts.joined(separator: "  ")) }
+
+        return parts.isEmpty ? "  (no changes recorded)" : parts.joined(separator: "\n")
     }
 }
