@@ -292,6 +292,13 @@ actor ArchiveDatabase {
         // link on FrameSet identity (not frame membership), so dropping/adding frames between
         // runs of the same FrameSet still resolves to the same lineage chain.
         "ALTER TABLE processing_run_inputs ADD COLUMN frameset_id TEXT REFERENCES frame_sets(id) ON DELETE SET NULL;",
+        // v30: fix a typo in v29 that referenced `framesets` instead of `frame_sets`. With
+        // PRAGMA foreign_keys = ON, the wrong FK caused every INSERT into processing_run_inputs
+        // to fail with "no such table: main.framesets". DROP + re-ADD corrects the schema.
+        """
+        ALTER TABLE processing_run_inputs DROP COLUMN frameset_id;
+        ALTER TABLE processing_run_inputs ADD COLUMN frameset_id TEXT REFERENCES frame_sets(id) ON DELETE SET NULL;
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
