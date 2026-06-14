@@ -187,6 +187,95 @@ struct LineageTests {
         #expect(successors.count == 1)
         #expect(successors.first?.id == v2.id)
     }
+
+    // MARK: - fullLineage
+
+    @Test("fullLineage from the newest frame returns only predecessors")
+    func fullLineageFromNewest() async throws {
+        let (archive, root) = try makeTempArchive(prefix: "full-newest")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let (v1, v2, v3) = try await makeThreeVersionChain(archive: archive, root: root)
+
+        let lineage = try await archive.fullLineage(containing: v3)
+        #expect(lineage.count == 3)
+        #expect(lineage.chain[0].id == v3.id)
+        #expect(lineage.chain[1].id == v2.id)
+        #expect(lineage.chain[2].id == v1.id)
+        #expect(lineage.currentIndex == 0)
+        #expect(lineage.currentVersionNumber == 3)
+        #expect(lineage.current.id == v3.id)
+    }
+
+    @Test("fullLineage from the oldest frame walks forward to include all successors")
+    func fullLineageFromOldest() async throws {
+        let (archive, root) = try makeTempArchive(prefix: "full-oldest")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let (v1, v2, v3) = try await makeThreeVersionChain(archive: archive, root: root)
+
+        let lineage = try await archive.fullLineage(containing: v1)
+        #expect(lineage.count == 3)
+        #expect(lineage.chain[0].id == v3.id)
+        #expect(lineage.chain[1].id == v2.id)
+        #expect(lineage.chain[2].id == v1.id)
+        #expect(lineage.currentIndex == 2)
+        #expect(lineage.currentVersionNumber == 1)
+        #expect(lineage.current.id == v1.id)
+    }
+
+    @Test("fullLineage from a middle frame includes both predecessors and successors")
+    func fullLineageFromMiddle() async throws {
+        let (archive, root) = try makeTempArchive(prefix: "full-middle")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let (v1, v2, v3) = try await makeThreeVersionChain(archive: archive, root: root)
+
+        let lineage = try await archive.fullLineage(containing: v2)
+        #expect(lineage.count == 3)
+        #expect(lineage.chain[0].id == v3.id)
+        #expect(lineage.chain[1].id == v2.id)
+        #expect(lineage.chain[2].id == v1.id)
+        #expect(lineage.currentIndex == 1)
+        #expect(lineage.currentVersionNumber == 2)
+        #expect(lineage.current.id == v2.id)
+    }
+
+    @Test("fullLineage for an isolated frame returns a single-element chain")
+    func fullLineageSingleFrame() async throws {
+        let (archive, root) = try makeTempArchive(prefix: "full-single")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let src = root.appendingPathComponent("only.fits")
+        try writeTinyFITS(to: src, stacked: true)
+
+        let (frame, _) = try await archive.add(fitsFile: src)
+        let lineage = try await archive.fullLineage(containing: frame)
+
+        #expect(lineage.count == 1)
+        #expect(lineage.currentIndex == 0)
+        #expect(lineage.currentVersionNumber == 1)
+        #expect(lineage.current.id == frame.id)
+    }
+
+    @Test("fullLineage chain is identical regardless of which frame is queried")
+    func fullLineageChainIsConsistentAcrossQueryFrames() async throws {
+        let (archive, root) = try makeTempArchive(prefix: "full-consistent")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let (v1, v2, v3) = try await makeThreeVersionChain(archive: archive, root: root)
+
+        let fromV1 = try await archive.fullLineage(containing: v1)
+        let fromV2 = try await archive.fullLineage(containing: v2)
+        let fromV3 = try await archive.fullLineage(containing: v3)
+
+        let ids1 = fromV1.chain.map(\.id)
+        let ids2 = fromV2.chain.map(\.id)
+        let ids3 = fromV3.chain.map(\.id)
+
+        #expect(ids1 == ids2, "Chain from v1 and v2 must be identical")
+        #expect(ids2 == ids3, "Chain from v2 and v3 must be identical")
+    }
 }
 
 // MARK: - Helpers
@@ -240,4 +329,20 @@ private func makeTestDatabase() throws -> (ArchiveDatabase, URL) {
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent("lineagetest-\(UUID().uuidString).sqlite")
     return (try ArchiveDatabase(url: url, archiveRootPath: FileManager.default.temporaryDirectory.path), url)
+}
+
+/// Creates a v1 → v2 → v3 chain in `archive`, using distinct DATE-OBS values so each
+/// frame has a unique signature and is not deduplicated.
+private func makeThreeVersionChain(archive: Archive, root: URL) async throws -> (ArchivedFrame, ArchivedFrame, ArchivedFrame) {
+    let src1 = root.appendingPathComponent("chain-v1-\(UUID().uuidString).fits")
+    let src2 = root.appendingPathComponent("chain-v2-\(UUID().uuidString).fits")
+    let src3 = root.appendingPathComponent("chain-v3-\(UUID().uuidString).fits")
+    try writeTinyFITS(to: src1, dateObs: "2025-06-01T10:00:00", stacked: true)
+    try writeTinyFITS(to: src2, dateObs: "2025-06-01T11:00:00", stacked: true)
+    try writeTinyFITS(to: src3, dateObs: "2025-06-01T12:00:00", stacked: true)
+
+    let (v1, _) = try await archive.add(fitsFile: src1)
+    let (v2, _) = try await archive.add(fitsFile: src2, supersedesID: v1.id)
+    let (v3, _) = try await archive.add(fitsFile: src3, supersedesID: v2.id)
+    return (v1, v2, v3)
 }
