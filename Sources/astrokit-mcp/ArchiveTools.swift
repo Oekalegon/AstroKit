@@ -965,50 +965,52 @@ struct ArchiveTools {
         guard let frame = try await archive.frame(id: uuid) else {
             throw ToolError("No frame with id \(idStr) found.")
         }
-        let chain = try await archive.lineage(of: frame)
+        let lineage = try await archive.fullLineage(containing: frame)
 
-        if chain.count == 1 {
-            return "Frame \(idStr) has no recorded predecessors — it is the only version."
+        if lineage.count == 1 {
+            return "Frame \(idStr) has no recorded predecessors or successors — it is the only version."
         }
 
+        let currentV = lineage.currentVersionNumber
         let iso = ISO8601DateFormatter()
-        var lines: [String] = ["Lineage chain (\(chain.count) versions, newest → oldest)"]
+        var lines: [String] = ["Lineage chain (\(lineage.count) versions, newest → oldest) — current: v\(currentV)"]
 
-        for (index, current) in chain.enumerated() {
-            let versionNumber = chain.count - index
-            var frameLine = "v\(versionNumber)  \(current.id.uuidString)"
-            frameLine += "  added: \(String(iso.string(from: current.addedAt).prefix(19)))"
-            if let fwhm = current.medianFWHM {
+        for (index, version) in lineage.chain.enumerated() {
+            let versionNumber = lineage.count - index
+            let isCurrent = index == lineage.currentIndex
+            var frameLine = "v\(versionNumber)  \(version.id.uuidString)"
+            if isCurrent { frameLine += "  ← current" }
+            frameLine += "  added: \(String(iso.string(from: version.addedAt).prefix(19)))"
+            if let fwhm = version.medianFWHM {
                 frameLine += String(format: "  fwhm: %.2fpx", fwhm)
-                if let arcsec = current.medianFWHMArcsec { frameLine += String(format: " (%.2f\")", arcsec) }
+                if let arcsec = version.medianFWHMArcsec { frameLine += String(format: " (%.2f\")", arcsec) }
             }
-            if let stars = current.starCount { frameLine += "  stars: \(stars)" }
+            if let stars = version.starCount { frameLine += "  stars: \(stars)" }
             lines.append(frameLine)
 
-            if index + 1 < chain.count {
-                let predecessor = chain[index + 1]
-                let diff = try await archive.diff(current, predecessor: predecessor)
-                lines.append(formatDiff(diff))
+            if !isCurrent {
+                let diff = try await archive.diff(lineage.current, predecessor: version)
+                lines.append(formatDiff(diff, otherVersion: versionNumber, currentVersion: currentV))
             }
         }
 
         return lines.joined(separator: "\n")
     }
 
-    private func formatDiff(_ diff: FrameDiff) -> String {
+    private func formatDiff(_ diff: FrameDiff, otherVersion: Int, currentVersion: Int) -> String {
         var parts: [String] = []
 
         if !diff.parameterChanges.isEmpty {
             let changes = diff.parameterChanges.sorted { $0.key < $1.key }.map { change in
-                let from = change.from ?? "(absent)"
-                let to   = change.to   ?? "(removed)"
+                let from = change.from.map(\.description) ?? "(absent)"
+                let to   = change.to.map(\.description)   ?? "(removed)"
                 return "\(change.key): \(from) → \(to)"
             }
-            parts.append("  params: " + changes.joined(separator: ", "))
+            parts.append("  params (v\(otherVersion) → v\(currentVersion)): " + changes.joined(separator: ", "))
         }
 
-        if !diff.inputsAdded.isEmpty   { parts.append("  inputs added: \(diff.inputsAdded.count)") }
-        if !diff.inputsRemoved.isEmpty { parts.append("  inputs removed: \(diff.inputsRemoved.count)") }
+        if !diff.inputsAdded.isEmpty   { parts.append("  inputs added vs v\(otherVersion): \(diff.inputsAdded.count)") }
+        if !diff.inputsRemoved.isEmpty { parts.append("  inputs removed vs v\(otherVersion): \(diff.inputsRemoved.count)") }
 
         let q = diff.quality
         var qualParts: [String] = []
@@ -1024,8 +1026,8 @@ struct ArchiveTools {
         if let old = q.backgroundNoiseElectrons.from, let new = q.backgroundNoiseElectrons.to {
             qualParts.append(String(format: "bg %.1f→%.1fe⁻", old, new))
         }
-        if !qualParts.isEmpty { parts.append("  quality: " + qualParts.joined(separator: "  ")) }
+        if !qualParts.isEmpty { parts.append("  quality (v\(otherVersion) → v\(currentVersion)): " + qualParts.joined(separator: "  ")) }
 
-        return parts.isEmpty ? "  (no changes recorded)" : parts.joined(separator: "\n")
+        return parts.isEmpty ? "  (identical to v\(currentVersion))" : parts.joined(separator: "\n")
     }
 }
