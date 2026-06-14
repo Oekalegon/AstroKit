@@ -225,7 +225,9 @@ public actor Archive {
     /// Call this before archiving result frames so you have a run ID to link them to.
     /// - Parameters:
     ///   - pipelineID: The pipeline ID that was executed (e.g. "frame_stacking").
-    ///   - parameters: Pipeline parameters that were active for this run.
+    ///   - parameters: Pipeline parameters that were active for this run. Keys are normalized
+    ///     against the YAML spec: unknown keys are dropped, values equal to the YAML default
+    ///     are omitted. Only non-default overrides are persisted.
     ///   - inputs: References to the input frames (archive IDs and/or file paths).
     /// - Returns: The persisted processing run record.
     @discardableResult
@@ -237,11 +239,40 @@ public actor Archive {
         let run = ArchivedProcessingRun(
             id: UUID(),
             pipelineID: pipelineID,
-            parameters: parameters,
+            parameters: canonicalizeParameters(parameters, forPipelineID: pipelineID),
             createdAt: Date()
         )
         try await database.insertProcessingRun(run, inputs: inputs)
         return run
+    }
+
+    /// Filters `parameters` to only the keys declared as `from:` in the pipeline YAML,
+    /// and strips values that equal the YAML default (so diffs only show real overrides).
+    /// If the pipeline is not found in the registry the dict is returned unchanged.
+    private func canonicalizeParameters(
+        _ parameters: [String: String],
+        forPipelineID pipelineID: String
+    ) -> [String: String] {
+        guard let pipeline = PipelineRegistry.shared.get(id: pipelineID) else {
+            return parameters
+        }
+        var result: [String: String] = [:]
+        var seen = Set<String>()
+        for step in pipeline.steps {
+            for paramSpec in step.parameters {
+                guard let fromName = paramSpec.from, !seen.contains(fromName) else { continue }
+                seen.insert(fromName)
+                guard let value = parameters[fromName] else { continue }
+                // Drop values that equal the YAML default — they add noise to diffs.
+                if let defaultVal = paramSpec.defaultValue {
+                    let callerTyped  = FrameDiff.ParameterValue(value)
+                    let defaultTyped = FrameDiff.ParameterValue(defaultVal.stringValue)
+                    if callerTyped == defaultTyped { continue }
+                }
+                result[fromName] = value
+            }
+        }
+        return result
     }
 
     /// Returns a single frame by its absolute file path on disk.
