@@ -198,12 +198,10 @@ func testFitsStarCatalogWriterStepRunsInPipeline() async throws {
         return
     }
 
-    guard let bundle = findMainPackageBundle(),
-          let pipelineURL = bundle.url(forResource: "star-detection", withExtension: "yaml") else {
-        Issue.record("star-detection.yaml not found")
+    guard let pipeline = PipelineRegistry.shared.get(id: "star_detection") else {
+        Issue.record("star-detection pipeline not found in registry")
         return
     }
-    let pipeline = try Pipeline.load(from: pipelineURL)
 
     let fitsFileName = "CHI-1-CMOS_2025-03-25T08-25-40_LDN43TheCosmicBatNebula_Luminance_300s_ID493996_cal"
     var sourceURL: URL?
