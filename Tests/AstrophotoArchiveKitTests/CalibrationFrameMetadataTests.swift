@@ -134,6 +134,9 @@ struct CalibrationMigrationTests {
                    ('fs-light', 'Lights', 'light', 'M42', '2026-06-11');
             -- v27 added this column via ALTER TABLE; drop it so the replay can re-add it.
             ALTER TABLE frame_sets DROP COLUMN criteria;
+            -- v28 added this column and index; drop them so the replay can re-add them.
+            DROP INDEX IF EXISTS idx_frames_supersedes;
+            ALTER TABLE frames DROP COLUMN supersedes_id;
             PRAGMA user_version = 24;
             """, on: url)
 
@@ -184,6 +187,9 @@ struct CalibrationMigrationTests {
                    ('f-light', 'd.fits', 'M 101',     'light',      '2026-06-12', 'sig-light');
             -- v27 added this column via ALTER TABLE; drop it so the replay can re-add it.
             ALTER TABLE frame_sets DROP COLUMN criteria;
+            -- v28 added this column and index; drop them so the replay can re-add them.
+            DROP INDEX IF EXISTS idx_frames_supersedes;
+            ALTER TABLE frames DROP COLUMN supersedes_id;
             PRAGMA user_version = 25;
             """, on: url)
 

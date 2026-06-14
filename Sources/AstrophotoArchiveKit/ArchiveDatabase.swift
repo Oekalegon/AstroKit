@@ -278,6 +278,15 @@ actor ArchiveDatabase {
         // criteria so the set stays consistent with its original query. NULL for sets
         // created before this version — those only get the type/level/filter checks.
         "ALTER TABLE frame_sets ADD COLUMN criteria TEXT;",
+        // v28: pipeline result lineage — each processed frame can point to the earlier
+        // result it supersedes, forming a linked list from newest to oldest for a given
+        // frameset/pipeline combination. Applies to any pipeline output (stacking,
+        // calibration, registration, …), not just stacking. ON DELETE SET NULL so that
+        // deleting an old result does not cascade to its successor.
+        """
+        ALTER TABLE frames ADD COLUMN supersedes_id TEXT REFERENCES frames(id) ON DELETE SET NULL;
+        CREATE INDEX IF NOT EXISTS idx_frames_supersedes ON frames(supersedes_id);
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -406,8 +415,8 @@ actor ArchiveDatabase {
          session_beg, session_end, temperature_min, temperature_max,
          star_count, median_fwhm, background_noise, median_eccentricity,
          saturated_star_count, hot_pixel_count, egain, background_noise_electrons,
-         telescope, site)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         telescope, site, supersedes_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -462,6 +471,7 @@ actor ArchiveDatabase {
         bind(stmt, 42, frame.backgroundNoiseElectrons)
         bind(stmt, 43, frame.telescope)
         bind(stmt, 44, frame.site)
+        bind(stmt, 45, frame.supersedesID?.uuidString)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -1415,6 +1425,61 @@ actor ArchiveDatabase {
         }
     }
 
+    func updateFrameSupersedesID(id: UUID, supersedesID: UUID?) throws {
+        let stmt = try prepare("UPDATE frames SET supersedes_id = ? WHERE id = ?")
+        defer { sqlite3_finalize(stmt) }
+        if let sid = supersedesID {
+            bind(stmt, 1, sid.uuidString)
+        } else {
+            sqlite3_bind_null(stmt, 1)
+        }
+        bind(stmt, 2, id.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
+    /// Returns the full lineage chain starting from `id`, ordered newest-to-oldest.
+    ///
+    /// Uses a single recursive CTE so the entire chain is fetched in one SQLite query
+    /// regardless of depth — O(1) actor hops instead of O(N). The `_depth` counter
+    /// appended by the CTE lands at column 48, safely beyond the range `rowToFrame`
+    /// reads (0–47), so no mapper changes are needed. Depth is capped at 999 rows
+    /// (WHERE clause in the recursive term) as a cycle guard against corrupt data.
+    func lineageChain(startingAt id: UUID) throws -> [ArchivedFrame] {
+        let sql = """
+        WITH RECURSIVE chain AS (
+            SELECT *, 0 AS _depth FROM frames WHERE id = ?
+            UNION ALL
+            SELECT f.*, c._depth + 1 FROM frames f
+            JOIN chain c ON f.id = c.supersedes_id
+            WHERE c._depth < 999
+        )
+        SELECT * FROM chain ORDER BY _depth
+        """
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        var results: [ArchivedFrame] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let f = rowToFrame(stmt) { results.append(f) }
+        }
+        return results
+    }
+
+    /// Returns all frames that directly supersede the given frame ID (i.e. frames whose
+    /// `supersedes_id` equals `id`). Typically zero or one, but the schema allows multiple.
+    func successors(of id: UUID) throws -> [ArchivedFrame] {
+        let stmt = try prepare("SELECT * FROM frames WHERE supersedes_id = ?")
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        var results: [ArchivedFrame] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let f = rowToFrame(stmt) { results.append(f) }
+        }
+        return results
+    }
+
     func processingRunByID(_ id: UUID) throws -> ArchivedProcessingRun? {
         let stmt = try prepare(
             "SELECT id, pipeline_id, parameters, created_at FROM processing_runs WHERE id = ? LIMIT 1"
@@ -1634,8 +1699,10 @@ actor ArchiveDatabase {
             sliderWhiteNorm: columnDouble(stmt, 44).map { Float($0) }
         )
         // telescope (col 45) and site (col 46) added in migration v23.
-        frame.telescope = columnText(stmt, 45)
-        frame.site      = columnText(stmt, 46)
+        frame.telescope    = columnText(stmt, 45)
+        frame.site         = columnText(stmt, 46)
+        // supersedes_id (col 47) added in migration v28.
+        frame.supersedesID = columnText(stmt, 47).flatMap { UUID(uuidString: $0) }
         return frame
     }
 

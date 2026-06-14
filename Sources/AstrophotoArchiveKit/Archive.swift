@@ -37,10 +37,14 @@ public actor Archive {
         return configuration.rootURL.path + "/" + relative
     }
 
-    private func expandPath(_ frame: ArchivedFrame?) -> ArchivedFrame? {
-        guard var f = frame else { return nil }
+    private func expandPath(_ frame: ArchivedFrame) -> ArchivedFrame {
+        var f = frame
         f.filePath = toAbsolutePath(f.filePath)
         return f
+    }
+
+    private func expandPath(_ frame: ArchivedFrame?) -> ArchivedFrame? {
+        frame.map { expandPath($0) }
     }
 
     private func expandPaths(_ frames: [ArchivedFrame]) -> [ArchivedFrame] {
@@ -56,9 +60,12 @@ public actor Archive {
     ///     When the frame already exists in the archive (duplicate signature) and this
     ///     value is non-nil and differs from the stored run ID, the stored ID is updated
     ///     to reflect the most recent run. Pass `nil` to leave the existing run ID intact.
+    ///   - supersedesID: Optional ID of an earlier pipeline result that this frame replaces.
+    ///     Use this to link successive pipeline runs into a lineage chain (newest → oldest).
+    ///     Applies to any pipeline output — stacking, calibration, registration, etc.
     /// - Returns: The frame record and `isNew: true` if it was inserted, `false` if already in archive.
     @discardableResult
-    public func add(fitsFile url: URL, processingRunID: UUID? = nil) async throws -> (frame: ArchivedFrame, isNew: Bool) {
+    public func add(fitsFile url: URL, processingRunID: UUID? = nil, supersedesID: UUID? = nil) async throws -> (frame: ArchivedFrame, isNew: Bool) {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw ArchiveError.fileNotFound(url.path)
         }
@@ -134,6 +141,7 @@ public actor Archive {
             addedAt: Date(),
             positionAngle: meta.positionAngle,
             processingRunID: processingRunID,
+            supersedesID: supersedesID,
             sessionBeg: meta.sessionBeg,
             sessionEnd: meta.sessionEnd,
             temperatureMin: meta.temperatureMin,
@@ -218,6 +226,38 @@ public actor Archive {
         guard let run = try await database.processingRunByID(runID) else { return nil }
         let inputs = try await database.inputsForRun(runID)
         return (run, inputs)
+    }
+
+    // MARK: - Lineage
+
+    /// Returns the complete lineage chain for a frame, ordered from newest to oldest.
+    ///
+    /// Fetches the entire chain in a single recursive CTE query — one actor hop regardless
+    /// of depth. The chain starts with `frame` and follows `supersedesID` links until a
+    /// frame has no predecessor, or until the 1 000-row cycle guard fires.
+    ///
+    /// - Parameter frame: The frame to start the walk from (included as the first element).
+    /// - Returns: The frame followed by its ancestors in lineage order.
+    public func lineage(of frame: ArchivedFrame) async throws -> [ArchivedFrame] {
+        let chain = try await database.lineageChain(startingAt: frame.id)
+        return expandPaths(chain)
+    }
+
+    /// Returns all frames that directly supersede the given frame — i.e. results from a
+    /// later pipeline run that explicitly linked themselves to this frame as their predecessor.
+    public func successors(of frame: ArchivedFrame) async throws -> [ArchivedFrame] {
+        let frames = try await database.successors(of: frame.id)
+        return expandPaths(frames)
+    }
+
+    /// Updates the lineage link on a frame.
+    ///
+    /// - Parameters:
+    ///   - frameID: The frame whose `supersedesID` should be updated.
+    ///   - supersedesID: The ID of the earlier result this frame replaces,
+    ///     or `nil` to detach the frame from its current predecessor.
+    public func updateSupersedesID(frameID: UUID, supersedesID: UUID?) async throws {
+        try await database.updateFrameSupersedesID(id: frameID, supersedesID: supersedesID)
     }
 
     /// Adds all FITS files in a directory, copying each into the archive folder hierarchy.
