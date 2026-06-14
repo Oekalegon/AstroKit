@@ -1,6 +1,7 @@
 import AstrophotoKit
 import Foundation
 import HEALPixKit
+import os
 
 /// The main archive actor. Thread-safe; all operations are async.
 public actor Archive {
@@ -225,7 +226,11 @@ public actor Archive {
     /// Call this before archiving result frames so you have a run ID to link them to.
     /// - Parameters:
     ///   - pipelineID: The pipeline ID that was executed (e.g. "frame_stacking").
-    ///   - parameters: Pipeline parameters that were active for this run.
+    ///   - parameters: Pipeline parameters that were active for this run. Keys are normalized
+    ///     against the YAML spec: unknown keys are dropped (with a warning) and the full
+    ///     effective parameter set — caller-supplied values plus YAML defaults for omitted
+    ///     params — is stored. This ensures every run record has the same complete key set
+    ///     so that diffs never show spurious "(absent)" entries.
     ///   - inputs: References to the input frames (archive IDs and/or file paths).
     /// - Returns: The persisted processing run record.
     @discardableResult
@@ -237,11 +242,55 @@ public actor Archive {
         let run = ArchivedProcessingRun(
             id: UUID(),
             pipelineID: pipelineID,
-            parameters: parameters,
+            parameters: canonicalizeParameters(parameters, forPipelineID: pipelineID),
             createdAt: Date()
         )
         try await database.insertProcessingRun(run, inputs: inputs)
         return run
+    }
+
+    /// Normalises `parameters` against the pipeline YAML spec:
+    /// unknown keys are dropped (with a warning), and YAML defaults are filled
+    /// in for any omitted key so every run record has the same complete key set.
+    /// If the pipeline is not found in the registry the dict is returned unchanged.
+    private func canonicalizeParameters(
+        _ parameters: [String: String],
+        forPipelineID pipelineID: String
+    ) -> [String: String] {
+        guard let pipeline = PipelineRegistry.shared.get(id: pipelineID) else {
+            Logger.archive.warning("recordProcessingRun: pipeline '\(pipelineID)' not found in registry — parameters stored as-is")
+            return parameters
+        }
+
+        // Collect the canonical set of pipeline-level parameter names (from: fields).
+        // Use only the first declaration when the same from-name appears in multiple steps.
+        var result: [String: String] = [:]
+        var seen = Set<String>()
+        var unknownKeys = Set(parameters.keys)
+
+        for step in pipeline.steps {
+            for paramSpec in step.parameters {
+                guard let fromName = paramSpec.from, !seen.contains(fromName) else { continue }
+                seen.insert(fromName)
+                unknownKeys.remove(fromName)
+
+                if let value = parameters[fromName] {
+                    // Caller supplied a value — store it.
+                    result[fromName] = value
+                } else if let defaultVal = paramSpec.defaultValue {
+                    // Caller omitted this param — fill in the YAML default so every run
+                    // has the same complete key set and diffs never show "(absent)".
+                    result[fromName] = defaultVal.stringValue
+                }
+            }
+        }
+
+        if !unknownKeys.isEmpty {
+            let sorted = unknownKeys.sorted().joined(separator: ", ")
+            Logger.archive.warning("recordProcessingRun: unknown parameter keys for pipeline '\(pipelineID)' were dropped: \(sorted)")
+        }
+
+        return result
     }
 
     /// Returns a single frame by its absolute file path on disk.
