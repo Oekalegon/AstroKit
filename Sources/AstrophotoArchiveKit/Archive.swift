@@ -147,7 +147,7 @@ public actor Archive {
         try FileManager.default.copyItem(at: url, to: dest)
         let filePath = toRelativePath(dest)
 
-        let frame = ArchivedFrame(
+        var frame = ArchivedFrame(
             id: frameID,
             filePath: filePath,
             objectName: meta.objectName,
@@ -158,6 +158,8 @@ public actor Archive {
             camera: meta.camera,
             telescope: meta.telescope,
             site: meta.site,
+            siteLatitude: meta.siteLatitude,
+            siteLongitude: meta.siteLongitude,
             focalLength: meta.focalLength,
             pixelScale: meta.pixelScale,
             temperature: meta.temperature,
@@ -199,6 +201,14 @@ public actor Archive {
         //                 does NOT set this level; no pipeline currently writes STRETCHD = T.
         let deduplicate = frame.processingLevel == .raw
         let isNew = try await database.insertFrame(frame, deduplicate: deduplicate)
+        // Auto-assign to an observing session: new raw light frames with a timestamp and
+        // known site coordinates. Duplicates are skipped — backfillSessions() handles them.
+        if isNew, frame.processingLevel == .raw, frame.frameType == "light",
+           let lat = meta.siteLatitude, let lon = meta.siteLongitude, let ts = meta.timestamp {
+            let sid = try await database.findOrCreateSession(timestamp: ts, latDeg: lat, lonDeg: lon)
+            try await database.updateSessionID(frameID: frame.id, sessionID: sid)
+            frame.sessionID = sid
+        }
         if !isNew {
             try? FileManager.default.removeItem(at: dest)
             // Return the existing frame so the caller gets a valid, stored ID.
@@ -476,6 +486,7 @@ public actor Archive {
                             || frame.offset == nil || frame.temperature == nil
                             || frame.egain == nil || frame.focalLength == nil
                             || frame.pixelScale == nil || frame.positionAngle == nil
+                            || frame.siteLatitude == nil || frame.siteLongitude == nil
 
             guard needsMeta || needsDate || needsNumeric else { skipped += 1; continue }
 
@@ -516,8 +527,11 @@ public actor Archive {
                 let newFL    = frame.focalLength   == nil ? meta.focalLength   : nil
                 let newPS    = frame.pixelScale    == nil ? meta.pixelScale    : nil
                 let newPA    = frame.positionAngle == nil ? meta.positionAngle : nil
+                let newLat   = frame.siteLatitude  == nil ? meta.siteLatitude  : nil
+                let newLon   = frame.siteLongitude == nil ? meta.siteLongitude : nil
                 if newExp != nil || newGain != nil || newOff != nil || newTemp != nil
-                    || newEgain != nil || newFL != nil || newPS != nil || newPA != nil {
+                    || newEgain != nil || newFL != nil || newPS != nil || newPA != nil
+                    || newLat != nil || newLon != nil {
                     // If exposureTime is being written, recompute frame_signature so the
                     // deduplication index stays consistent with the corrected value.
                     let newSig: String? = newExp.map { exp in
@@ -538,6 +552,8 @@ public actor Archive {
                         focalLength: newFL,
                         pixelScale: newPS,
                         positionAngle: newPA,
+                        siteLatitude: newLat,
+                        siteLongitude: newLon,
                         newFrameSignature: newSig
                     )
                     wroteAnything = true
@@ -1319,6 +1335,50 @@ public actor Archive {
         guard nonNil.count == values.count else { return nil }
         let unique = Set(nonNil)
         return unique.count == 1 ? unique.first : nil
+    }
+
+    // MARK: - Observing sessions
+
+    /// Returns all observing sessions, most recent first.
+    /// - Parameter isNight: `true` for night sessions only, `false` for day only, `nil` for both.
+    public func sessions(isNight: Bool? = nil) async throws -> [ObservingSession] {
+        try await database.sessions(isNight: isNight)
+    }
+
+    /// Returns sessions that fall on the given calendar date (in local time).
+    /// - Parameter isNight: `true` for night sessions only, `false` for day only, `nil` for both.
+    public func sessions(on date: Date, isNight: Bool? = nil) async throws -> [ObservingSession] {
+        try await database.sessions(on: date, isNight: isNight)
+    }
+
+    /// Returns the most recent sessions, newest first.
+    /// - Parameters:
+    ///   - limit: Maximum number of sessions to return (default: 1).
+    ///   - isNight: `true` for night sessions only, `false` for day only, `nil` for both.
+    public func latestSessions(limit: Int = 1, isNight: Bool? = nil) async throws -> [ObservingSession] {
+        try await database.latestSessions(limit: limit, isNight: isNight)
+    }
+
+    /// Returns a single observing session by ID, or `nil` if not found.
+    public func session(id: UUID) async throws -> ObservingSession? {
+        try await database.session(id: id)
+    }
+
+    /// Returns all raw light frames belonging to a session, ordered by timestamp.
+    public func frames(inSession id: UUID) async throws -> [ArchivedFrame] {
+        expandPaths(try await database.frames(inSession: id))
+    }
+
+    /// Returns the observing session this raw light frame belongs to, or `nil` if unassigned
+    /// or if the frame is not a raw light frame.
+    public func session(forFrame frameID: UUID) async throws -> ObservingSession? {
+        try await database.session(forFrame: frameID)
+    }
+
+    /// Assigns sessions to all raw light frames that have site coordinates and a timestamp
+    /// but have not yet been assigned to a session. Safe to call multiple times.
+    public func backfillSessions() async throws {
+        try await database.backfillSessions()
     }
 
     // MARK: - Removal

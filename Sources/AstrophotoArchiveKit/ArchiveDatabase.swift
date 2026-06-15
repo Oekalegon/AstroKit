@@ -1,3 +1,4 @@
+import AstroKit
 import AstrophotoKit
 import Foundation
 import SQLite3
@@ -299,6 +300,30 @@ actor ArchiveDatabase {
         ALTER TABLE processing_run_inputs DROP COLUMN frameset_id;
         ALTER TABLE processing_run_inputs ADD COLUMN frameset_id TEXT REFERENCES frame_sets(id) ON DELETE SET NULL;
         """,
+        // v31: observing sessions. Each session represents one night (or day, for solar)
+        // of imaging from a single geographic location. Sessions are auto-created when raw
+        // frames with a timestamp and site coordinates are archived, and frames are linked
+        // to their session via session_id. site_latitude and site_longitude store the
+        // observer's geographic position parsed from FITS headers (SITELAT/SITELONG etc.).
+        """
+        ALTER TABLE frames ADD COLUMN site_latitude REAL;
+        ALTER TABLE frames ADD COLUMN site_longitude REAL;
+        ALTER TABLE frames ADD COLUMN session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL;
+        CREATE TABLE IF NOT EXISTS sessions (
+            id          TEXT PRIMARY KEY,
+            name        TEXT NOT NULL,
+            date        TEXT NOT NULL,
+            is_night    INTEGER NOT NULL DEFAULT 1,
+            latitude    REAL NOT NULL,
+            longitude   REAL NOT NULL,
+            frame_count INTEGER NOT NULL DEFAULT 0,
+            start_time  TEXT,
+            end_time    TEXT,
+            added_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date);
+        CREATE INDEX IF NOT EXISTS idx_frames_session ON frames(session_id);
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -427,8 +452,8 @@ actor ArchiveDatabase {
          session_beg, session_end, temperature_min, temperature_max,
          star_count, median_fwhm, background_noise, median_eccentricity,
          saturated_star_count, hot_pixel_count, egain, background_noise_electrons,
-         telescope, site, supersedes_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         telescope, site, supersedes_id, site_latitude, site_longitude, session_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -484,6 +509,9 @@ actor ArchiveDatabase {
         bind(stmt, 43, frame.telescope)
         bind(stmt, 44, frame.site)
         bind(stmt, 45, frame.supersedesID?.uuidString)
+        bind(stmt, 46, frame.siteLatitude)
+        bind(stmt, 47, frame.siteLongitude)
+        bind(stmt, 48, frame.sessionID?.uuidString)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
@@ -715,6 +743,8 @@ actor ArchiveDatabase {
         focalLength: Double?,
         pixelScale: Double?,
         positionAngle: Double?,
+        siteLatitude: Double? = nil,
+        siteLongitude: Double? = nil,
         newFrameSignature: String? = nil
     ) throws {
         var setClauses: [String] = []
@@ -728,6 +758,8 @@ actor ArchiveDatabase {
         if let v = focalLength   { setClauses.append("focal_length = ?");    doubles.append(("focal_length",   v)) }
         if let v = pixelScale    { setClauses.append("pixel_scale = ?");     doubles.append(("pixel_scale",    v)) }
         if let v = positionAngle { setClauses.append("position_angle = ?");  doubles.append(("position_angle", v)) }
+        if let v = siteLatitude  { setClauses.append("site_latitude = ?");   doubles.append(("site_latitude",  v)) }
+        if let v = siteLongitude { setClauses.append("site_longitude = ?");  doubles.append(("site_longitude", v)) }
         if let v = newFrameSignature { setClauses.append("frame_signature = ?"); strings.append(("frame_signature", v)) }
         guard !setClauses.isEmpty else { return }
 
@@ -1799,7 +1831,293 @@ actor ArchiveDatabase {
         frame.site         = columnText(stmt, 46)
         // supersedes_id (col 47) added in migration v28.
         frame.supersedesID = columnText(stmt, 47).flatMap { UUID(uuidString: $0) }
+        // site_latitude (col 48), site_longitude (col 49), session_id (col 50) added in migration v31.
+        frame.siteLatitude  = columnDouble(stmt, 48)
+        frame.siteLongitude = columnDouble(stmt, 49)
+        frame.sessionID     = columnText(stmt, 50).flatMap { UUID(uuidString: $0) }
         return frame
+    }
+
+    // MARK: - Sessions
+
+    /// Finds an existing session for the given timestamp and location, or creates one.
+    ///
+    /// Only call this for raw light frames that have both site coordinates and a timestamp.
+    /// Searches sessions within a 3 km haversine radius for the same date/night flag.
+    func findOrCreateSession(timestamp: Date, latDeg: Double, lonDeg: Double) throws -> UUID {
+        let observer = Observatory(longitude: lonDeg * .pi / 180, latitude: latDeg * .pi / 180)
+        // Shift back 12 h so that early-morning frames (e.g. 01:30 on Jun 16) anchor to the
+        // preceding noon-to-noon window (Jun 15 noon – Jun 16 noon), not the current day's.
+        let anchoredDate = timestamp.addingTimeInterval(-43200)
+        let rts = Sun().riseTransitSet(on: anchoredDate,
+                                       at: observer, window: .night, altitude: .standardAltitudeSun)
+        let isNight: Bool
+        let sessionDateString: String
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd"
+
+        if let sunset = rts.set, let sunrise = rts.rise,
+           timestamp >= sunset && timestamp <= sunrise {
+            isNight = true
+            sessionDateString = df.string(from: sunset)
+        } else {
+            isNight = false
+            sessionDateString = df.string(from: timestamp)
+        }
+
+        // Search for an existing session on the same date at the same location.
+        let selectSQL = """
+            SELECT id, latitude, longitude FROM sessions WHERE date = ? AND is_night = ?
+            """
+        let selectStmt = try prepare(selectSQL)
+        defer { sqlite3_finalize(selectStmt) }
+        sqlite3_bind_text(selectStmt, 1, sessionDateString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_int(selectStmt, 2, isNight ? 1 : 0)
+
+        var matchedID: String?
+        while sqlite3_step(selectStmt) == SQLITE_ROW {
+            guard let idStr = columnText(selectStmt, 0),
+                  let existingLat = columnDouble(selectStmt, 1),
+                  let existingLon = columnDouble(selectStmt, 2) else { continue }
+            if Self.haversineKm(lat1: latDeg, lon1: lonDeg, lat2: existingLat, lon2: existingLon) < 3.0 {
+                matchedID = idStr
+                break
+            }
+        }
+
+        let sessionIDString: String
+        let iso = ISO8601DateFormatter()
+        if let existing = matchedID {
+            sessionIDString = existing
+        } else {
+            let newID = UUID()
+            let insertSQL = """
+                INSERT INTO sessions (id, name, date, is_night, latitude, longitude, frame_count, added_at)
+                VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                """
+            let insertStmt = try prepare(insertSQL)
+            defer { sqlite3_finalize(insertStmt) }
+            bind(insertStmt, 1, newID.uuidString)
+            bind(insertStmt, 2, Self.sessionName(for: sessionDateString))
+            bind(insertStmt, 3, sessionDateString)
+            sqlite3_bind_int(insertStmt, 4, isNight ? 1 : 0)
+            sqlite3_bind_double(insertStmt, 5, latDeg)
+            sqlite3_bind_double(insertStmt, 6, lonDeg)
+            bind(insertStmt, 7, iso.string(from: Date()))
+            guard sqlite3_step(insertStmt) == SQLITE_DONE else {
+                throw ArchiveError.databaseError(dbErrorMessage())
+            }
+            sessionIDString = newID.uuidString
+        }
+
+        // Increment frame_count and update time bounds.
+        let ts = iso.string(from: timestamp)
+        let updateSQL = """
+            UPDATE sessions SET
+                frame_count = frame_count + 1,
+                start_time  = CASE WHEN start_time IS NULL OR ? < start_time THEN ? ELSE start_time END,
+                end_time    = CASE WHEN end_time   IS NULL OR ? > end_time   THEN ? ELSE end_time   END
+            WHERE id = ?
+            """
+        let updateStmt = try prepare(updateSQL)
+        defer { sqlite3_finalize(updateStmt) }
+        bind(updateStmt, 1, ts); bind(updateStmt, 2, ts)
+        bind(updateStmt, 3, ts); bind(updateStmt, 4, ts)
+        bind(updateStmt, 5, sessionIDString)
+        guard sqlite3_step(updateStmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+
+        return UUID(uuidString: sessionIDString)!
+    }
+
+    func updateSessionID(frameID: UUID, sessionID: UUID) throws {
+        let stmt = try prepare("UPDATE frames SET session_id = ? WHERE id = ?")
+        defer { sqlite3_finalize(stmt) }
+        bind(stmt, 1, sessionID.uuidString)
+        bind(stmt, 2, frameID.uuidString)
+        guard sqlite3_step(stmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+    }
+
+    func sessions(isNight: Bool? = nil) throws -> [ObservingSession] {
+        var sql = """
+            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
+            FROM sessions
+            """
+        if let isNight { sql += " WHERE is_night = \(isNight ? 1 : 0)" }
+        sql += " ORDER BY date DESC"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        var results: [ObservingSession] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let s = rowToSession(stmt) { results.append(s) }
+        }
+        return results
+    }
+
+    func session(id: UUID) throws -> ObservingSession? {
+        let stmt = try prepare("""
+            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
+            FROM sessions WHERE id = ?
+            """)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        return sqlite3_step(stmt) == SQLITE_ROW ? rowToSession(stmt) : nil
+    }
+
+    func sessions(on date: Date, isNight: Bool? = nil) throws -> [ObservingSession] {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd"
+        let dateString = df.string(from: date)
+        var sql = """
+            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
+            FROM sessions WHERE date = ?
+            """
+        if let isNight { sql += " AND is_night = \(isNight ? 1 : 0)" }
+        sql += " ORDER BY is_night DESC"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, dateString, -1, SQLITE_TRANSIENT)
+        var results: [ObservingSession] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let s = rowToSession(stmt) { results.append(s) }
+        }
+        return results
+    }
+
+    func latestSessions(limit: Int, isNight: Bool?) throws -> [ObservingSession] {
+        var sql = """
+            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
+            FROM sessions
+            """
+        if let isNight { sql += " WHERE is_night = \(isNight ? 1 : 0)" }
+        sql += " ORDER BY date DESC, added_at DESC LIMIT \(limit)"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        var results: [ObservingSession] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let s = rowToSession(stmt) { results.append(s) }
+        }
+        return results
+    }
+
+    func frames(inSession id: UUID) throws -> [ArchivedFrame] {
+        let stmt = try prepare("""
+            SELECT * FROM frames
+            WHERE session_id = ?
+              AND LOWER(frame_type) = 'light'
+              AND processing_level = 'raw'
+            ORDER BY timestamp
+            """)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        var results: [ArchivedFrame] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let f = rowToFrame(stmt) { results.append(f) }
+        }
+        return results
+    }
+
+    func session(forFrame frameID: UUID) throws -> ObservingSession? {
+        let stmt = try prepare("""
+            SELECT s.id, s.name, s.date, s.is_night, s.latitude, s.longitude,
+                   s.frame_count, s.start_time, s.end_time, s.added_at
+            FROM sessions s
+            JOIN frames f ON f.session_id = s.id
+            WHERE f.id = ?
+              AND LOWER(f.frame_type) = 'light'
+              AND f.processing_level = 'raw'
+            """)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, frameID.uuidString, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return rowToSession(stmt)
+    }
+
+    /// Assigns sessions to all raw light frames that have site coordinates and a timestamp
+    /// but no session yet. Safe to call multiple times — already-assigned frames are skipped.
+    func backfillSessions() throws {
+        let selectSQL = """
+            SELECT id, timestamp, site_latitude, site_longitude FROM frames
+            WHERE session_id IS NULL
+              AND site_latitude IS NOT NULL AND site_longitude IS NOT NULL
+              AND timestamp IS NOT NULL
+              AND LOWER(frame_type) = 'light'
+              AND processing_level = 'raw'
+            """
+        let stmt = try prepare(selectSQL)
+        let iso = ISO8601DateFormatter()
+        var assignments: [(frameID: String, sessionID: UUID)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let frameID   = columnText(stmt, 0),
+                  let tsStr     = columnText(stmt, 1),
+                  let timestamp = iso.date(from: tsStr),
+                  let lat       = columnDouble(stmt, 2),
+                  let lon       = columnDouble(stmt, 3) else { continue }
+            let sid = try findOrCreateSession(timestamp: timestamp, latDeg: lat, lonDeg: lon)
+            assignments.append((frameID, sid))
+        }
+        sqlite3_finalize(stmt)
+
+        let updateStmt = try prepare("UPDATE frames SET session_id = ? WHERE id = ?")
+        defer { sqlite3_finalize(updateStmt) }
+        for (frameID, sessionID) in assignments {
+            sqlite3_reset(updateStmt)
+            sqlite3_clear_bindings(updateStmt)
+            bind(updateStmt, 1, sessionID.uuidString)
+            bind(updateStmt, 2, frameID)
+            guard sqlite3_step(updateStmt) == SQLITE_DONE else {
+                throw ArchiveError.databaseError(dbErrorMessage())
+            }
+        }
+    }
+
+    private func rowToSession(_ stmt: OpaquePointer?) -> ObservingSession? {
+        guard let stmt,
+              let idStr = columnText(stmt, 0), let id = UUID(uuidString: idStr),
+              let name  = columnText(stmt, 1),
+              let dateStr = columnText(stmt, 2) else { return nil }
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd"
+        guard let date = df.date(from: dateStr) else { return nil }
+        let isNight    = sqlite3_column_int(stmt, 3) != 0
+        let latitude   = sqlite3_column_double(stmt, 4)
+        let longitude  = sqlite3_column_double(stmt, 5)
+        let frameCount = Int(sqlite3_column_int(stmt, 6))
+        let iso = ISO8601DateFormatter()
+        let startTime  = columnText(stmt, 7).flatMap { iso.date(from: $0) }
+        let endTime    = columnText(stmt, 8).flatMap { iso.date(from: $0) }
+        let addedAt    = columnText(stmt, 9).flatMap { iso.date(from: $0) } ?? Date()
+        return ObservingSession(
+            id: id, name: name, date: date, isNight: isNight,
+            latitude: latitude, longitude: longitude,
+            frameCount: frameCount, startTime: startTime, endTime: endTime, addedAt: addedAt
+        )
+    }
+
+    private static func sessionName(for dateString: String) -> String {
+        let parse = DateFormatter()
+        parse.locale = Locale(identifier: "en_US_POSIX")
+        parse.dateFormat = "yyyy-MM-dd"
+        guard let date = parse.date(from: dateString) else { return dateString }
+        let display = DateFormatter()
+        display.locale = Locale.current
+        display.dateFormat = "d MMMM yyyy"
+        return display.string(from: date)
+    }
+
+    private static func haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double) -> Double {
+        let r = 6371.0
+        let dLat = (lat2 - lat1) * .pi / 180
+        let dLon = (lon2 - lon1) * .pi / 180
+        let a = sin(dLat / 2) * sin(dLat / 2)
+                + cos(lat1 * .pi / 180) * cos(lat2 * .pi / 180) * sin(dLon / 2) * sin(dLon / 2)
+        return r * 2 * atan2(sqrt(a), sqrt(1 - a))
     }
 
     // MARK: - Frame set member helpers

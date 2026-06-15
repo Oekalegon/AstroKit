@@ -4,12 +4,18 @@
 import PackageDescription
 
 let package = Package(
-    name: "AstrophotoKit",
+    name: "AstroKit",
     platforms: [
         .macOS("26.0")  // macOS 26.0 and higher
     ],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
+        .library(
+            name: "AstroKit",
+            targets: ["AstroKit"]),
+        .library(
+            name: "VSOP",
+            targets: ["VSOP"]),
         .library(
             name: "AstrophotoKit",
             targets: ["AstrophotoKit"]),
@@ -30,6 +36,32 @@ let package = Package(
         .package(url: "https://github.com/Oekalegon/HEALPixKit.git", from: "1.0.0"),
     ],
     targets: [
+        // MARK: - AstroKit (vendored ERFA C lib + Swift astronomy algorithms)
+
+        .target(
+            name: "CERFA",
+            path: "Sources/CERFA",
+            publicHeadersPath: "include"
+        ),
+        .target(
+            name: "AstroKit",
+            dependencies: ["CERFA"],
+            path: "Sources/AstroKit",
+            swiftSettings: [
+                // Swift's cross-module optimization (CMO) incorrectly constant-propagates
+                // nonisolated(unsafe) globals (Planet.positionProvider, SphericalPosition.ephemeris)
+                // across module boundaries, producing wrong rise/transit/set results in release builds.
+                .unsafeFlags(["-disable-default-cmo"], .when(configuration: .release))
+            ]
+        ),
+        .target(
+            name: "VSOP",
+            dependencies: ["AstroKit"],
+            path: "Sources/VSOP"
+        ),
+
+        // MARK: - AstrophotoKit (image processing)
+
         // Build tool that generates Version.generated.swift at every build.
         .executableTarget(
             name: "version-tool",
@@ -81,10 +113,14 @@ let package = Package(
             ],
             path: "Sources/ap"
         ),
+
+        // MARK: - AstrophotoArchiveKit
+
         .target(
             name: "AstrophotoArchiveKit",
             dependencies: [
                 "AstrophotoKit",
+                "AstroKit",
                 .product(name: "HEALPixKit", package: "HEALPixKit"),
             ],
             path: "Sources/AstrophotoArchiveKit"
@@ -105,6 +141,17 @@ let package = Package(
             name: "astrokit-mcp",
             dependencies: ["AstrophotoKit", "AstrophotoArchiveKit", "AstrophotoToolDefinitions"],
             path: "Sources/astrokit-mcp"
+        ),
+
+        // MARK: - Tests
+
+        .testTarget(
+            name: "AstroKitTests",
+            dependencies: ["AstroKit"]
+        ),
+        .testTarget(
+            name: "VSOPTests",
+            dependencies: ["VSOP"]
         ),
         .testTarget(
             name: "AstrophotoKitTests",
