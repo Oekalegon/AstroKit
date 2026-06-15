@@ -1859,9 +1859,17 @@ actor ArchiveDatabase {
 
         if let sunset = rts.set, let sunrise = rts.rise,
            timestamp >= sunset && timestamp <= sunrise {
+            // Normal night: frame falls between tonight's sunset and tomorrow's sunrise.
             isNight = true
             sessionDateString = df.string(from: sunset)
+        } else if rts.isAlwaysBelow {
+            // Polar night: the sun never rises above the horizon during this window.
+            // All frames belong to a night session, named after the date of the frame itself.
+            isNight = true
+            sessionDateString = df.string(from: timestamp)
         } else {
+            // Day session: either the sun never sets (midnight sun) or the frame falls
+            // outside the night window (shot during daytime / twilight).
             isNight = false
             sessionDateString = df.string(from: timestamp)
         }
