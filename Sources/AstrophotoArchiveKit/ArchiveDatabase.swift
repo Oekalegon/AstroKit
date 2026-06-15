@@ -2041,38 +2041,49 @@ actor ArchiveDatabase {
     /// Assigns sessions to all raw light frames that have site coordinates and a timestamp
     /// but no session yet. Safe to call multiple times — already-assigned frames are skipped.
     func backfillSessions() throws {
-        let selectSQL = """
-            SELECT id, timestamp, site_latitude, site_longitude FROM frames
-            WHERE session_id IS NULL
-              AND site_latitude IS NOT NULL AND site_longitude IS NOT NULL
-              AND timestamp IS NOT NULL
-              AND LOWER(frame_type) = 'light'
-              AND processing_level = 'raw'
-            """
-        let stmt = try prepare(selectSQL)
-        let iso = ISO8601DateFormatter()
-        var assignments: [(frameID: String, sessionID: UUID)] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let frameID   = columnText(stmt, 0),
-                  let tsStr     = columnText(stmt, 1),
-                  let timestamp = iso.date(from: tsStr),
-                  let lat       = columnDouble(stmt, 2),
-                  let lon       = columnDouble(stmt, 3) else { continue }
-            let sid = try findOrCreateSession(timestamp: timestamp, latDeg: lat, lonDeg: lon)
-            assignments.append((frameID, sid))
-        }
-        sqlite3_finalize(stmt)
-
-        let updateStmt = try prepare("UPDATE frames SET session_id = ? WHERE id = ?")
-        defer { sqlite3_finalize(updateStmt) }
-        for (frameID, sessionID) in assignments {
-            sqlite3_reset(updateStmt)
-            sqlite3_clear_bindings(updateStmt)
-            bind(updateStmt, 1, sessionID.uuidString)
-            bind(updateStmt, 2, frameID)
-            guard sqlite3_step(updateStmt) == SQLITE_DONE else {
-                throw ArchiveError.databaseError(dbErrorMessage())
+        // Wrap in a transaction so the frame_count increments inside findOrCreateSession
+        // and the frames.session_id assignments are atomic. Without this, an interrupted
+        // backfill would leave some frames unassigned while their session's frame_count
+        // was already incremented, causing over-counting on the next retry.
+        try exec("BEGIN")
+        do {
+            let selectSQL = """
+                SELECT id, timestamp, site_latitude, site_longitude FROM frames
+                WHERE session_id IS NULL
+                  AND site_latitude IS NOT NULL AND site_longitude IS NOT NULL
+                  AND timestamp IS NOT NULL
+                  AND LOWER(frame_type) = 'light'
+                  AND processing_level = 'raw'
+                """
+            let stmt = try prepare(selectSQL)
+            let iso = ISO8601DateFormatter()
+            var assignments: [(frameID: String, sessionID: UUID)] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let frameID   = columnText(stmt, 0),
+                      let tsStr     = columnText(stmt, 1),
+                      let timestamp = iso.date(from: tsStr),
+                      let lat       = columnDouble(stmt, 2),
+                      let lon       = columnDouble(stmt, 3) else { continue }
+                let sid = try findOrCreateSession(timestamp: timestamp, latDeg: lat, lonDeg: lon)
+                assignments.append((frameID, sid))
             }
+            sqlite3_finalize(stmt)
+
+            let updateStmt = try prepare("UPDATE frames SET session_id = ? WHERE id = ?")
+            defer { sqlite3_finalize(updateStmt) }
+            for (frameID, sessionID) in assignments {
+                sqlite3_reset(updateStmt)
+                sqlite3_clear_bindings(updateStmt)
+                bind(updateStmt, 1, sessionID.uuidString)
+                bind(updateStmt, 2, frameID)
+                guard sqlite3_step(updateStmt) == SQLITE_DONE else {
+                    throw ArchiveError.databaseError(dbErrorMessage())
+                }
+            }
+            try exec("COMMIT")
+        } catch {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            throw error
         }
     }
 
