@@ -559,6 +559,21 @@ public actor Archive {
                     wroteAnything = true
                 }
 
+                // Auto-assign a session if this raw light frame now has both site
+                // coordinates and a timestamp but was never grouped. This covers frames
+                // archived before SITELAT/SITELONG parsing existed; without this, the
+                // user would have to run `sessions backfill` after every metadata backfill.
+                if frame.sessionID == nil,
+                   frame.processingLevel == .raw, frame.frameType == "light",
+                   let lat = newLat ?? frame.siteLatitude,
+                   let lon = newLon ?? frame.siteLongitude,
+                   let ts  = meta.timestamp ?? frame.timestamp {
+                    let sid = try await database.findOrCreateSession(
+                        timestamp: ts, latDeg: lat, lonDeg: lon)
+                    try await database.updateSessionID(frameID: frame.id, sessionID: sid)
+                    wroteAnything = true
+                }
+
                 if wroteAnything { updated += 1 } else { skipped += 1 }
             } catch {
                 failed += 1
