@@ -1937,7 +1937,10 @@ actor ArchiveDatabase {
             throw ArchiveError.databaseError(dbErrorMessage())
         }
 
-        return UUID(uuidString: sessionIDString)!
+        guard let uuid = UUID(uuidString: sessionIDString) else {
+            throw ArchiveError.databaseError("Malformed session UUID in database: \(sessionIDString)")
+        }
+        return uuid
     }
 
     func updateSessionID(frameID: UUID, sessionID: UUID) throws {
