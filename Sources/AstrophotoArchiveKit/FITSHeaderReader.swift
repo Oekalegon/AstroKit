@@ -99,10 +99,13 @@ enum FITSHeaderReader {
         let camera    = stringValue(headers, keys: ["INSTRUME"])?.nilIfBlank
         let telescope = stringValue(headers, keys: ["TELESCOP"])?.nilIfBlank
         let site         = stringValue(headers, keys: ["OBSERVAT"])?.nilIfBlank
-        // SITELAT/SITELONG: NINA, KStars/INDI, SGP. LAT-OBS/LONG-OBS: older convention.
-        // OBSGEO-B/OBSGEO-L: formal FITS standard (degrees east/north).
-        let siteLatitude  = doubleValue(headers, keys: ["SITELAT",  "LAT-OBS",  "OBSLAT",  "OBSGEO-B"])
-        let siteLongitude = doubleValue(headers, keys: ["SITELONG", "LONG-OBS", "OBSLONG", "OBSGEO-L"])
+        // All keywords store degrees, north-positive latitude, east-positive longitude.
+        // SITELAT/SITELONG: KStars/EKOS (INDI), N.I.N.A., Sequence Generator Pro.
+        // GPS-LAT/GPS-LON:  QHY cameras with built-in GPS (confirmed east-positive).
+        // LAT-OBS/LONG-OBS: older convention used by some legacy software.
+        // OBSGEO-B/OBSGEO-L: formal FITS/WCS standard (geodetic lat/lon).
+        let siteLatitude  = doubleValue(headers, keys: ["SITELAT", "GPS-LAT", "LAT-OBS", "OBSGEO-B"])
+        let siteLongitude = doubleValue(headers, keys: ["SITELONG", "GPS-LON", "LONG-OBS", "OBSGEO-L"])
 
         let focalLength   = doubleValue(headers, keys: ["FOCALLEN"])
 
