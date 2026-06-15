@@ -2006,7 +2006,13 @@ actor ArchiveDatabase {
     }
 
     func frames(inSession id: UUID) throws -> [ArchivedFrame] {
-        let stmt = try prepare("SELECT * FROM frames WHERE session_id = ? ORDER BY timestamp")
+        let stmt = try prepare("""
+            SELECT * FROM frames
+            WHERE session_id = ?
+              AND LOWER(frame_type) = 'light'
+              AND processing_level = 'raw'
+            ORDER BY timestamp
+            """)
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
         var results: [ArchivedFrame] = []
@@ -2014,6 +2020,22 @@ actor ArchiveDatabase {
             if let f = rowToFrame(stmt) { results.append(f) }
         }
         return results
+    }
+
+    func session(forFrame frameID: UUID) throws -> ObservingSession? {
+        let stmt = try prepare("""
+            SELECT s.id, s.name, s.date, s.is_night, s.latitude, s.longitude,
+                   s.frame_count, s.start_time, s.end_time, s.added_at
+            FROM sessions s
+            JOIN frames f ON f.session_id = s.id
+            WHERE f.id = ?
+              AND LOWER(f.frame_type) = 'light'
+              AND f.processing_level = 'raw'
+            """)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, frameID.uuidString, -1, SQLITE_TRANSIENT)
+        guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
+        return rowToSession(stmt)
     }
 
     /// Assigns sessions to all raw light frames that have site coordinates and a timestamp

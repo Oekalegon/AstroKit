@@ -1369,6 +1369,12 @@ public actor Archive {
         expandPaths(try await database.frames(inSession: id))
     }
 
+    /// Returns the observing session this raw light frame belongs to, or `nil` if unassigned
+    /// or if the frame is not a raw light frame.
+    public func session(forFrame frameID: UUID) async throws -> ObservingSession? {
+        try await database.session(forFrame: frameID)
+    }
+
     /// Assigns sessions to all raw light frames that have site coordinates and a timestamp
     /// but have not yet been assigned to a session. Safe to call multiple times.
     public func backfillSessions() async throws {

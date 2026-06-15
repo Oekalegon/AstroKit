@@ -334,6 +334,28 @@ public enum ArchiveToolDefinitions {
             ] as [String: Any],
         ],
         [
+            "name": "archive_session_frames",
+            "description": "List the raw light frames that belong to an observing session, ordered by timestamp.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "session_id": ["type": "string", "description": "UUID of the observing session."],
+                ] as [String: Any],
+                "required": ["session_id"],
+            ] as [String: Any],
+        ],
+        [
+            "name": "archive_frame_session",
+            "description": "Return the observing session a raw light frame belongs to. Returns null if the frame has no session assigned or is not a raw light frame.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "frame_id": ["type": "string", "description": "UUID of the frame."],
+                ] as [String: Any],
+                "required": ["frame_id"],
+            ] as [String: Any],
+        ],
+        [
             "name": "archive_set_pixel_scale",
             "description": "Bulk-set the pixel scale (arcsec/px) on all archived frames and framesets matching a telescope and/or camera (exact names as stored in the archive — check archive_search output). Use this for frames whose FITS headers carry neither a scale keyword nor the optics keywords needed to derive one. Pass arcsec_per_pixel directly, or focal_length_mm + pixel_size_um (+ optional binning) to compute it as 206.265 × pixel_size × binning / focal_length. By default only fills missing (nil) values; pass overwrite: true to replace existing ones. Stacked frames and framesets inherit equipment names from their inputs, so they are updated by the same call.",
             "inputSchema": [

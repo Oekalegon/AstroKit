@@ -86,6 +86,8 @@ struct ArchiveTools {
         case "archive_backfill_metadata":  return try await archiveBackfillMetadata(arguments)
         case "archive_sessions":           return try await archiveSessions(arguments)
         case "archive_backfill_sessions":  return try await archiveBackfillSessions()
+        case "archive_session_frames":     return try await archiveSessionFrames(arguments)
+        case "archive_frame_session":      return try await archiveFrameSession(arguments)
         case "archive_set_pixel_scale":    return try await archiveSetPixelScale(arguments)
         case "archive_frame_lineage":     return try await archiveFrameLineage(arguments)
         default: throw ToolError("Unknown archive tool: \(name)")
@@ -464,6 +466,38 @@ struct ArchiveTools {
         let archive = try makeArchive()
         try await archive.backfillSessions()
         return "Session backfill complete."
+    }
+
+    private func archiveSessionFrames(_ args: [String: Any]) async throws -> String {
+        guard let idStr = args["session_id"] as? String, let id = UUID(uuidString: idStr) else {
+            throw ToolError("session_id must be a valid UUID string.")
+        }
+        let archive = try makeArchive()
+        guard let session = try await archive.session(id: id) else {
+            throw ToolError("Session \(idStr) not found.")
+        }
+        let frames = try await archive.frames(inSession: id)
+        let iso = ISO8601DateFormatter()
+        var lines = ["\(session.name) (\(session.isNight ? "night" : "day")) — \(frames.count) raw light frame(s):"]
+        for f in frames {
+            let ts  = f.timestamp.map { String(iso.string(from: $0).prefix(19)).replacingOccurrences(of: "T", with: " ") } ?? "-"
+            let obj = f.objectName ?? "-"
+            let flt = f.filter ?? "-"
+            let exp = f.exposureTime.map { String(format: "%.1f s", $0) } ?? "-"
+            lines.append("  [\(f.id.uuidString)]  \(ts)  \(obj)  \(flt)  \(exp)  \(f.filePath)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func archiveFrameSession(_ args: [String: Any]) async throws -> String {
+        guard let idStr = args["frame_id"] as? String, let id = UUID(uuidString: idStr) else {
+            throw ToolError("frame_id must be a valid UUID string.")
+        }
+        let archive = try makeArchive()
+        guard let session = try await archive.session(forFrame: id) else {
+            return "Frame \(idStr) has no observing session assigned (or is not a raw light frame)."
+        }
+        return formatSession(session)
     }
 
     private func formatSession(_ s: ObservingSession) -> String {

@@ -6,7 +6,7 @@ struct Sessions: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "sessions",
         abstract: "List and manage observing sessions.",
-        subcommands: [List.self, Backfill.self]
+        subcommands: [List.self, Frames.self, Backfill.self]
     )
 
     // MARK: - List
@@ -115,6 +115,88 @@ struct Sessions: AsyncParsableCommand {
                let str = String(data: data, encoding: .utf8) {
                 print(str)
             }
+        }
+    }
+
+    // MARK: - Frames
+
+    struct Frames: AsyncParsableCommand {
+        static let configuration = CommandConfiguration(
+            commandName: "frames",
+            abstract: "List the raw light frames in an observing session.",
+            discussion: "Prints each frame's timestamp, object, filter, exposure, and file path."
+        )
+
+        @OptionGroup var archiveOptions: ArchivePathOption
+
+        @Argument(help: "Session UUID.")
+        var sessionID: String
+
+        @Flag(name: .shortAndLong, help: "Output as JSON.")
+        var json: Bool = false
+
+        func run() async throws {
+            guard let id = UUID(uuidString: sessionID) else {
+                printError("Invalid session UUID '\(sessionID)'.")
+                throw ExitCode.failure
+            }
+            let archive = try Archive(configuration: try archiveOptions.makeConfiguration())
+            guard let session = try await archive.session(id: id) else {
+                printError("Session \(sessionID) not found.")
+                throw ExitCode.failure
+            }
+            let frames = try await archive.frames(inSession: id)
+
+            if json {
+                printJSON(session: session, frames: frames)
+            } else {
+                printTable(session: session, frames: frames)
+            }
+        }
+
+        private func printTable(session: ObservingSession, frames: [ArchivedFrame]) {
+            let iso = ISO8601DateFormatter()
+            func shortTime(_ date: Date) -> String {
+                String(iso.string(from: date).prefix(16)).replacingOccurrences(of: "T", with: " ")
+            }
+            print("\(session.name) (\(session.isNight ? "night" : "day")) — \(frames.count) frame(s)\n")
+            var table = TextTable(columns: [
+                .init("Timestamp (UTC)"),
+                .init("Object"),
+                .init("Filter"),
+                .init("Exp (s)", .right),
+                .init("File"),
+            ])
+            for f in frames {
+                table.addRow([
+                    f.timestamp.map { shortTime($0) } ?? "-",
+                    f.objectName ?? "-",
+                    f.filter ?? "-",
+                    f.exposureTime.map { String(format: "%.1f", $0) } ?? "-",
+                    f.filePath,
+                ])
+            }
+            print(table.render())
+        }
+
+        private func printJSON(session: ObservingSession, frames: [ArchivedFrame]) {
+            let iso = ISO8601DateFormatter()
+            let frameDicts: [[String: Any]] = frames.map { f in
+                var d: [String: Any] = ["id": f.id.uuidString, "file_path": f.filePath]
+                if let t  = f.timestamp    { d["timestamp"]    = iso.string(from: t) }
+                if let v  = f.objectName   { d["object"]       = v }
+                if let v  = f.filter       { d["filter"]       = v }
+                if let v  = f.exposureTime { d["exposure_s"]   = v }
+                return d
+            }
+            let root: [String: Any] = [
+                "session_id": session.id.uuidString,
+                "session_name": session.name,
+                "is_night": session.isNight,
+                "frames": frameDicts,
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: root, options: .prettyPrinted),
+               let str = String(data: data, encoding: .utf8) { print(str) }
         }
     }
 
