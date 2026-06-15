@@ -743,6 +743,8 @@ actor ArchiveDatabase {
         focalLength: Double?,
         pixelScale: Double?,
         positionAngle: Double?,
+        siteLatitude: Double? = nil,
+        siteLongitude: Double? = nil,
         newFrameSignature: String? = nil
     ) throws {
         var setClauses: [String] = []
@@ -756,6 +758,8 @@ actor ArchiveDatabase {
         if let v = focalLength   { setClauses.append("focal_length = ?");    doubles.append(("focal_length",   v)) }
         if let v = pixelScale    { setClauses.append("pixel_scale = ?");     doubles.append(("pixel_scale",    v)) }
         if let v = positionAngle { setClauses.append("position_angle = ?");  doubles.append(("position_angle", v)) }
+        if let v = siteLatitude  { setClauses.append("site_latitude = ?");   doubles.append(("site_latitude",  v)) }
+        if let v = siteLongitude { setClauses.append("site_longitude = ?");  doubles.append(("site_longitude", v)) }
         if let v = newFrameSignature { setClauses.append("frame_signature = ?"); strings.append(("frame_signature", v)) }
         guard !setClauses.isEmpty else { return }
 
@@ -1844,7 +1848,8 @@ actor ArchiveDatabase {
         let observer = Observatory(longitude: lonDeg * .pi / 180, latitude: latDeg * .pi / 180)
         // Shift back 12 h so that early-morning frames (e.g. 01:30 on Jun 16) anchor to the
         // preceding noon-to-noon window (Jun 15 noon – Jun 16 noon), not the current day's.
-        let rts = Sun().riseTransitSet(on: timestamp.addingTimeInterval(-43200),
+        let anchoredDate = timestamp.addingTimeInterval(-43200)
+        let rts = Sun().riseTransitSet(on: anchoredDate,
                                        at: observer, window: .night, altitude: .standardAltitudeSun)
         let isNight: Bool
         let sessionDateString: String

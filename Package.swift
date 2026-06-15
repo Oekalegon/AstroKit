@@ -46,7 +46,13 @@ let package = Package(
         .target(
             name: "AstroKit",
             dependencies: ["CERFA"],
-            path: "Sources/AstroKit"
+            path: "Sources/AstroKit",
+            swiftSettings: [
+                // Swift's cross-module optimization (CMO) incorrectly constant-propagates
+                // nonisolated(unsafe) globals (Planet.positionProvider, SphericalPosition.ephemeris)
+                // across module boundaries, producing wrong rise/transit/set results in release builds.
+                .unsafeFlags(["-disable-default-cmo"], .when(configuration: .release))
+            ]
         ),
         .target(
             name: "VSOP",

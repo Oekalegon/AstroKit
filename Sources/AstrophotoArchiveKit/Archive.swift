@@ -486,6 +486,7 @@ public actor Archive {
                             || frame.offset == nil || frame.temperature == nil
                             || frame.egain == nil || frame.focalLength == nil
                             || frame.pixelScale == nil || frame.positionAngle == nil
+                            || frame.siteLatitude == nil || frame.siteLongitude == nil
 
             guard needsMeta || needsDate || needsNumeric else { skipped += 1; continue }
 
@@ -526,8 +527,11 @@ public actor Archive {
                 let newFL    = frame.focalLength   == nil ? meta.focalLength   : nil
                 let newPS    = frame.pixelScale    == nil ? meta.pixelScale    : nil
                 let newPA    = frame.positionAngle == nil ? meta.positionAngle : nil
+                let newLat   = frame.siteLatitude  == nil ? meta.siteLatitude  : nil
+                let newLon   = frame.siteLongitude == nil ? meta.siteLongitude : nil
                 if newExp != nil || newGain != nil || newOff != nil || newTemp != nil
-                    || newEgain != nil || newFL != nil || newPS != nil || newPA != nil {
+                    || newEgain != nil || newFL != nil || newPS != nil || newPA != nil
+                    || newLat != nil || newLon != nil {
                     // If exposureTime is being written, recompute frame_signature so the
                     // deduplication index stays consistent with the corrected value.
                     let newSig: String? = newExp.map { exp in
@@ -548,6 +552,8 @@ public actor Archive {
                         focalLength: newFL,
                         pixelScale: newPS,
                         positionAngle: newPA,
+                        siteLatitude: newLat,
+                        siteLongitude: newLon,
                         newFrameSignature: newSig
                     )
                     wroteAnything = true
