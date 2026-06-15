@@ -18,17 +18,17 @@
 # You can create any custom variable you would like, and they will be accessible
 # in the templates via {{ site.myvariable }}.
 
-title: AstrophotoKit
+title: AstroKit
 email: your-email@example.com
 description: >- # this means to ignore newlines until "baseurl:"
   A Swift package for astronomical image processing, including FITS file support and Metal shader integration.
-baseurl: "/AstrophotoKit"   # Repo name, important for GitHub Pages
+baseurl: "/AstroKit"   # Repo name, important for GitHub Pages
 url: "https://oekalegon.github.io"  # GitHub username (lowercase)
 github_username:  Oekalegon
 
 # Author settings (required by jekyll-klise theme)
 author:
-  name: AstrophotoKit
+  name: AstroKit
   bio: A Swift package for astronomical image processing
   avatar: /assets/images/astrophotokit.png
 
