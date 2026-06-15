@@ -139,6 +139,13 @@ struct CalibrationMigrationTests {
             ALTER TABLE frames DROP COLUMN supersedes_id;
             -- v29/v30 added and corrected this column; drop it so the replay can re-add it.
             ALTER TABLE processing_run_inputs DROP COLUMN frameset_id;
+            -- v31 added sessions table and three columns; drop them so the replay can re-add them.
+            DROP INDEX IF EXISTS idx_sessions_date;
+            DROP INDEX IF EXISTS idx_frames_session;
+            DROP TABLE IF EXISTS sessions;
+            ALTER TABLE frames DROP COLUMN site_latitude;
+            ALTER TABLE frames DROP COLUMN site_longitude;
+            ALTER TABLE frames DROP COLUMN session_id;
             PRAGMA user_version = 24;
             """, on: url)
 
@@ -194,6 +201,13 @@ struct CalibrationMigrationTests {
             ALTER TABLE frames DROP COLUMN supersedes_id;
             -- v29/v30 added and corrected this column; drop it so the replay can re-add it.
             ALTER TABLE processing_run_inputs DROP COLUMN frameset_id;
+            -- v31 added sessions table and three columns; drop them so the replay can re-add them.
+            DROP INDEX IF EXISTS idx_sessions_date;
+            DROP INDEX IF EXISTS idx_frames_session;
+            DROP TABLE IF EXISTS sessions;
+            ALTER TABLE frames DROP COLUMN site_latitude;
+            ALTER TABLE frames DROP COLUMN site_longitude;
+            ALTER TABLE frames DROP COLUMN session_id;
             PRAGMA user_version = 25;
             """, on: url)
 

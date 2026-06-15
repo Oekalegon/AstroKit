@@ -147,7 +147,7 @@ public actor Archive {
         try FileManager.default.copyItem(at: url, to: dest)
         let filePath = toRelativePath(dest)
 
-        let frame = ArchivedFrame(
+        var frame = ArchivedFrame(
             id: frameID,
             filePath: filePath,
             objectName: meta.objectName,
@@ -158,6 +158,8 @@ public actor Archive {
             camera: meta.camera,
             telescope: meta.telescope,
             site: meta.site,
+            siteLatitude: meta.siteLatitude,
+            siteLongitude: meta.siteLongitude,
             focalLength: meta.focalLength,
             pixelScale: meta.pixelScale,
             temperature: meta.temperature,
@@ -199,6 +201,14 @@ public actor Archive {
         //                 does NOT set this level; no pipeline currently writes STRETCHD = T.
         let deduplicate = frame.processingLevel == .raw
         let isNew = try await database.insertFrame(frame, deduplicate: deduplicate)
+        // Auto-assign to an observing session: new raw light frames with a timestamp and
+        // known site coordinates. Duplicates are skipped — backfillSessions() handles them.
+        if isNew, frame.processingLevel == .raw, frame.frameType == "light",
+           let lat = meta.siteLatitude, let lon = meta.siteLongitude, let ts = meta.timestamp {
+            let sid = try await database.findOrCreateSession(timestamp: ts, latDeg: lat, lonDeg: lon)
+            try await database.updateSessionID(frameID: frame.id, sessionID: sid)
+            frame.sessionID = sid
+        }
         if !isNew {
             try? FileManager.default.removeItem(at: dest)
             // Return the existing frame so the caller gets a valid, stored ID.
@@ -1319,6 +1329,29 @@ public actor Archive {
         guard nonNil.count == values.count else { return nil }
         let unique = Set(nonNil)
         return unique.count == 1 ? unique.first : nil
+    }
+
+    // MARK: - Observing sessions
+
+    /// Returns all observing sessions, most recent first.
+    public func sessions() async throws -> [ObservingSession] {
+        try await database.sessions()
+    }
+
+    /// Returns a single observing session by ID, or `nil` if not found.
+    public func session(id: UUID) async throws -> ObservingSession? {
+        try await database.session(id: id)
+    }
+
+    /// Returns all raw light frames belonging to a session, ordered by timestamp.
+    public func frames(inSession id: UUID) async throws -> [ArchivedFrame] {
+        expandPaths(try await database.frames(inSession: id))
+    }
+
+    /// Assigns sessions to all raw light frames that have site coordinates and a timestamp
+    /// but have not yet been assigned to a session. Safe to call multiple times.
+    public func backfillSessions() async throws {
+        try await database.backfillSessions()
     }
 
     // MARK: - Removal

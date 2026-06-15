@@ -14,6 +14,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var camera: String?
     public var telescope: String?
     public var site: String?
+    public var siteLatitude: Double?    // degrees, north positive
+    public var siteLongitude: Double?   // degrees, east positive
     public var focalLength: Double?     // mm
     public var pixelScale: Double?      // arcsec/pixel
     public var temperature: Double?     // sensor °C
@@ -47,6 +49,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
     /// ID of the earlier pipeline result that this frame supersedes, if any.
     /// Follows the lineage chain from newest to oldest result for the same frameset/pipeline.
     public var supersedesID: UUID?
+    /// Observing session this frame belongs to. Nil for calibration frames or frames
+    /// without a known timestamp and geographic location.
+    public var sessionID: UUID?
     /// Earliest input-frame timestamp for stacked frames (DATE-BEG).
     public var sessionBeg: Date?
     /// Latest input-frame timestamp for stacked frames (DATE-END).
@@ -103,6 +108,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         id: UUID, filePath: String, objectName: String?, ra: Double?, dec: Double?,
         healpixPixel: Int64?, frameType: String, filter: String?, camera: String?,
         telescope: String? = nil, site: String? = nil,
+        siteLatitude: Double? = nil, siteLongitude: Double? = nil,
         focalLength: Double?, pixelScale: Double?, temperature: Double?, timestamp: Date?,
         exposureTime: Double?, gain: Double?, offset: Double?,
         width: Int?, height: Int?, bitpix: Int?,
@@ -113,6 +119,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         positionAngle: Double? = nil,
         processingRunID: UUID? = nil,
         supersedesID: UUID? = nil,
+        sessionID: UUID? = nil,
         sessionBeg: Date? = nil,
         sessionEnd: Date? = nil,
         temperatureMin: Double? = nil,
@@ -141,6 +148,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.camera = camera
         self.telescope = telescope
         self.site = site
+        self.siteLatitude = siteLatitude
+        self.siteLongitude = siteLongitude
         self.focalLength = focalLength
         self.pixelScale = pixelScale
         self.temperature = temperature
@@ -163,6 +172,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.positionAngle = positionAngle
         self.processingRunID = processingRunID
         self.supersedesID = supersedesID
+        self.sessionID = sessionID
         self.sessionBeg = sessionBeg
         self.sessionEnd = sessionEnd
         self.temperatureMin = temperatureMin

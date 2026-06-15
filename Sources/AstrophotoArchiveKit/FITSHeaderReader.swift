@@ -11,6 +11,8 @@ struct FrameArchiveMetadata {
     var camera: String?
     var telescope: String?
     var site: String?
+    var siteLatitude: Double?   // degrees, north positive
+    var siteLongitude: Double?  // degrees, east positive
     var focalLength: Double?
     var pixelScale: Double?
     var temperature: Double?
@@ -96,7 +98,11 @@ enum FITSHeaderReader {
         let filter    = stringValue(headers, keys: ["FILTER"])?.nilIfBlank
         let camera    = stringValue(headers, keys: ["INSTRUME"])?.nilIfBlank
         let telescope = stringValue(headers, keys: ["TELESCOP"])?.nilIfBlank
-        let site      = stringValue(headers, keys: ["OBSERVAT"])?.nilIfBlank
+        let site         = stringValue(headers, keys: ["OBSERVAT"])?.nilIfBlank
+        // SITELAT/SITELONG: NINA, KStars/INDI, SGP. LAT-OBS/LONG-OBS: older convention.
+        // OBSGEO-B/OBSGEO-L: formal FITS standard (degrees east/north).
+        let siteLatitude  = doubleValue(headers, keys: ["SITELAT",  "LAT-OBS",  "OBSLAT",  "OBSGEO-B"])
+        let siteLongitude = doubleValue(headers, keys: ["SITELONG", "LONG-OBS", "OBSLONG", "OBSGEO-L"])
 
         let focalLength   = doubleValue(headers, keys: ["FOCALLEN"])
 
@@ -166,6 +172,8 @@ enum FITSHeaderReader {
             camera: camera,
             telescope: telescope,
             site: site,
+            siteLatitude: siteLatitude,
+            siteLongitude: siteLongitude,
             focalLength: focalLength,
             pixelScale: pixelScale,
             temperature: temperature,
