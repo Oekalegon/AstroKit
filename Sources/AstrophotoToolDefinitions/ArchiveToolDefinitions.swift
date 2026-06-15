@@ -312,6 +312,28 @@ public enum ArchiveToolDefinitions {
             ] as [String: Any],
         ],
         [
+            "name": "archive_sessions",
+            "description": "List observing sessions, newest first. Without arguments returns all sessions. Use date to filter to one night, latest_count to get the N most recent, and kind to restrict to night or day sessions.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "date":         ["type": "string",  "description": "Calendar date YYYY-MM-DD. Returns sessions whose night started on this date."],
+                    "latest_count": ["type": "integer", "description": "Return only the N most recent sessions. Omit for all."],
+                    "kind":         ["type": "string",  "enum": ["all", "night", "day"], "description": "Filter by session type: night (default: all)."],
+                ] as [String: Any],
+                "required": [],
+            ] as [String: Any],
+        ],
+        [
+            "name": "archive_backfill_sessions",
+            "description": "Assign observing sessions to raw light frames that already have site coordinates and a timestamp but have not been grouped into a session yet. Safe to run multiple times — already-assigned frames are skipped.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [String: Any](),
+                "required": [],
+            ] as [String: Any],
+        ],
+        [
             "name": "archive_set_pixel_scale",
             "description": "Bulk-set the pixel scale (arcsec/px) on all archived frames and framesets matching a telescope and/or camera (exact names as stored in the archive — check archive_search output). Use this for frames whose FITS headers carry neither a scale keyword nor the optics keywords needed to derive one. Pass arcsec_per_pixel directly, or focal_length_mm + pixel_size_um (+ optional binning) to compute it as 206.265 × pixel_size × binning / focal_length. By default only fills missing (nil) values; pass overwrite: true to replace existing ones. Stacked frames and framesets inherit equipment names from their inputs, so they are updated by the same call.",
             "inputSchema": [

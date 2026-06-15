@@ -1936,11 +1936,14 @@ actor ArchiveDatabase {
         }
     }
 
-    func sessions() throws -> [ObservingSession] {
-        let stmt = try prepare("""
+    func sessions(isNight: Bool? = nil) throws -> [ObservingSession] {
+        var sql = """
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
-            FROM sessions ORDER BY date DESC
-            """)
+            FROM sessions
+            """
+        if let isNight { sql += " WHERE is_night = \(isNight ? 1 : 0)" }
+        sql += " ORDER BY date DESC"
+        let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
         var results: [ObservingSession] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -1957,6 +1960,43 @@ actor ArchiveDatabase {
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
         return sqlite3_step(stmt) == SQLITE_ROW ? rowToSession(stmt) : nil
+    }
+
+    func sessions(on date: Date, isNight: Bool? = nil) throws -> [ObservingSession] {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd"
+        let dateString = df.string(from: date)
+        var sql = """
+            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
+            FROM sessions WHERE date = ?
+            """
+        if let isNight { sql += " AND is_night = \(isNight ? 1 : 0)" }
+        sql += " ORDER BY is_night DESC"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        sqlite3_bind_text(stmt, 1, dateString, -1, SQLITE_TRANSIENT)
+        var results: [ObservingSession] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let s = rowToSession(stmt) { results.append(s) }
+        }
+        return results
+    }
+
+    func latestSessions(limit: Int, isNight: Bool?) throws -> [ObservingSession] {
+        var sql = """
+            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
+            FROM sessions
+            """
+        if let isNight { sql += " WHERE is_night = \(isNight ? 1 : 0)" }
+        sql += " ORDER BY date DESC, added_at DESC LIMIT \(limit)"
+        let stmt = try prepare(sql)
+        defer { sqlite3_finalize(stmt) }
+        var results: [ObservingSession] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let s = rowToSession(stmt) { results.append(s) }
+        }
+        return results
     }
 
     func frames(inSession id: UUID) throws -> [ArchivedFrame] {

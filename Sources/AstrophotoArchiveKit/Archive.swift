@@ -1334,8 +1334,23 @@ public actor Archive {
     // MARK: - Observing sessions
 
     /// Returns all observing sessions, most recent first.
-    public func sessions() async throws -> [ObservingSession] {
-        try await database.sessions()
+    /// - Parameter isNight: `true` for night sessions only, `false` for day only, `nil` for both.
+    public func sessions(isNight: Bool? = nil) async throws -> [ObservingSession] {
+        try await database.sessions(isNight: isNight)
+    }
+
+    /// Returns sessions that fall on the given calendar date (in local time).
+    /// - Parameter isNight: `true` for night sessions only, `false` for day only, `nil` for both.
+    public func sessions(on date: Date, isNight: Bool? = nil) async throws -> [ObservingSession] {
+        try await database.sessions(on: date, isNight: isNight)
+    }
+
+    /// Returns the most recent sessions, newest first.
+    /// - Parameters:
+    ///   - limit: Maximum number of sessions to return (default: 1).
+    ///   - isNight: `true` for night sessions only, `false` for day only, `nil` for both.
+    public func latestSessions(limit: Int = 1, isNight: Bool? = nil) async throws -> [ObservingSession] {
+        try await database.latestSessions(limit: limit, isNight: isNight)
     }
 
     /// Returns a single observing session by ID, or `nil` if not found.
