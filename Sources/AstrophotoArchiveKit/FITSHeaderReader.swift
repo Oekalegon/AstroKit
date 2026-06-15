@@ -101,7 +101,7 @@ enum FITSHeaderReader {
         let site         = stringValue(headers, keys: ["OBSERVAT"])?.nilIfBlank
         // All keywords store degrees, north-positive latitude, east-positive longitude.
         // SITELAT/SITELONG: KStars/EKOS (INDI), N.I.N.A., Sequence Generator Pro.
-        // GPS-LAT/GPS-LON:  QHY cameras with built-in GPS (confirmed east-positive).
+        // GPS-LAT/GPS-LON:  Telescope Live remote data (QHY cameras, east-positive confirmed).
         // LAT-OBS/LONG-OBS: older convention used by some legacy software.
         // OBSGEO-B/OBSGEO-L: formal FITS/WCS standard (geodetic lat/lon).
         let siteLatitude  = doubleValue(headers, keys: ["SITELAT", "GPS-LAT", "LAT-OBS", "OBSGEO-B"])
