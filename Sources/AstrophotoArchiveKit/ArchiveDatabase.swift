@@ -1970,10 +1970,11 @@ actor ArchiveDatabase {
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
             FROM sessions
             """
-        if let isNight { sql += " WHERE is_night = \(isNight ? 1 : 0)" }
+        if isNight != nil { sql += " WHERE is_night = ?" }
         sql += " ORDER BY date DESC"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
+        if let isNight { sqlite3_bind_int(stmt, 1, isNight ? 1 : 0) }
         var results: [ObservingSession] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let s = rowToSession(stmt) { results.append(s) }
@@ -1997,11 +1998,12 @@ actor ArchiveDatabase {
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
             FROM sessions WHERE date = ?
             """
-        if let isNight { sql += " AND is_night = \(isNight ? 1 : 0)" }
+        if isNight != nil { sql += " AND is_night = ?" }
         sql += " ORDER BY is_night DESC"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, dateString, -1, SQLITE_TRANSIENT)
+        if let isNight { sqlite3_bind_int(stmt, 2, isNight ? 1 : 0) }
         var results: [ObservingSession] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let s = rowToSession(stmt) { results.append(s) }
@@ -2014,10 +2016,16 @@ actor ArchiveDatabase {
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
             FROM sessions
             """
-        if let isNight { sql += " WHERE is_night = \(isNight ? 1 : 0)" }
-        sql += " ORDER BY date DESC, added_at DESC LIMIT \(limit)"
+        if isNight != nil { sql += " WHERE is_night = ?" }
+        sql += " ORDER BY date DESC, added_at DESC LIMIT ?"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
+        if let isNight {
+            sqlite3_bind_int(stmt, 1, isNight ? 1 : 0)
+            sqlite3_bind_int(stmt, 2, Int32(limit))
+        } else {
+            sqlite3_bind_int(stmt, 1, Int32(limit))
+        }
         var results: [ObservingSession] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let s = rowToSession(stmt) { results.append(s) }
