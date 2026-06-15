@@ -88,6 +88,53 @@ struct ERFAPlanetProviderTests {
 
     // MARK: - Night window session classification (regression for ASTR-60)
 
+    @Test("Night window: Tromsø January 2026 polar night — isAlwaysBelow is true")
+    func nightWindowTromsoJanuary2026() {
+        let saved = Planet.positionProvider
+        defer { Planet.positionProvider = saved }
+        Planet.positionProvider = ERFAPlanetProvider()
+
+        // Tromsø (69.65°N) is in polar night from late November through ~January 15.
+        // December 21 (winter solstice) is firmly within polar night; the sun never
+        // rises above the standard solar altitude during the noon-to-noon window.
+        let tromso = Observatory(longitude: 18.96 * .pi / 180, latitude: 69.65 * .pi / 180)
+        let iso    = ISO8601DateFormatter()
+
+        // Frame at midnight UTC on Dec 21, anchored back 12 h → noon on Dec 20.
+        let timestamp    = iso.date(from: "2025-12-21T00:00:00Z")!
+        let anchoredDate = timestamp.addingTimeInterval(-43200)
+
+        let rts = Sun().riseTransitSet(on: anchoredDate, at: tromso,
+                                       window: .night, altitude: .standardAltitudeSun)
+
+        #expect(rts.isAlwaysBelow,
+                "Expected isAlwaysBelow=true during Tromsø polar night, got rise=\(String(describing: rts.rise)) set=\(String(describing: rts.set))")
+        #expect(!rts.isAlwaysAbove, "isAlwaysAbove should be false during polar night")
+        #expect(rts.rise == nil, "rise should be nil during polar night")
+        #expect(rts.set  == nil, "set should be nil during polar night")
+    }
+
+    @Test("Night window: Tromsø July 2026 midnight sun — isAlwaysAbove is true")
+    func nightWindowTromsoJuly2026() {
+        let saved = Planet.positionProvider
+        defer { Planet.positionProvider = saved }
+        Planet.positionProvider = ERFAPlanetProvider()
+
+        // Tromsø in July: the sun never dips below the standard solar altitude.
+        let tromso = Observatory(longitude: 18.96 * .pi / 180, latitude: 69.65 * .pi / 180)
+        let iso    = ISO8601DateFormatter()
+
+        let timestamp    = iso.date(from: "2026-07-01T12:00:00Z")!
+        let anchoredDate = timestamp.addingTimeInterval(-43200)
+
+        let rts = Sun().riseTransitSet(on: anchoredDate, at: tromso,
+                                       window: .night, altitude: .standardAltitudeSun)
+
+        #expect(rts.isAlwaysAbove,
+                "Expected isAlwaysAbove=true during Tromsø midnight sun, got rise=\(String(describing: rts.rise)) set=\(String(describing: rts.set))")
+        #expect(!rts.isAlwaysBelow, "isAlwaysBelow should be false during midnight sun")
+    }
+
     @Test("Night window: Oslo April 6 2026 sunset and sunrise bracket the observing night")
     func nightWindowOsloApril2026() {
         let saved = Planet.positionProvider

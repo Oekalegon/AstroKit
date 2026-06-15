@@ -1840,6 +1840,20 @@ actor ArchiveDatabase {
 
     // MARK: - Sessions
 
+    private static let sessionDateParser: DateFormatter = {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd"
+        return df
+    }()
+    private static let sessionDisplayFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.locale = Locale.current
+        df.dateFormat = "d MMMM yyyy"
+        return df
+    }()
+    private static let sessionISO = ISO8601DateFormatter()
+
     /// Finds an existing session for the given timestamp and location, or creates one.
     ///
     /// Only call this for raw light frames that have both site coordinates and a timestamp.
@@ -1853,15 +1867,21 @@ actor ArchiveDatabase {
                                        at: observer, window: .night, altitude: .standardAltitudeSun)
         let isNight: Bool
         let sessionDateString: String
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.dateFormat = "yyyy-MM-dd"
+        let df = Self.sessionDateParser
 
         if let sunset = rts.set, let sunrise = rts.rise,
            timestamp >= sunset && timestamp <= sunrise {
+            // Normal night: frame falls between tonight's sunset and tomorrow's sunrise.
             isNight = true
             sessionDateString = df.string(from: sunset)
+        } else if rts.isAlwaysBelow {
+            // Polar night: the sun never rises above the horizon during this window.
+            // All frames belong to a night session, named after the date of the frame itself.
+            isNight = true
+            sessionDateString = df.string(from: timestamp)
         } else {
+            // Day session: either the sun never sets (midnight sun) or the frame falls
+            // outside the night window (shot during daytime / twilight).
             isNight = false
             sessionDateString = df.string(from: timestamp)
         }
@@ -1887,7 +1907,7 @@ actor ArchiveDatabase {
         }
 
         let sessionIDString: String
-        let iso = ISO8601DateFormatter()
+        let iso = Self.sessionISO
         if let existing = matchedID {
             sessionIDString = existing
         } else {
@@ -1929,7 +1949,10 @@ actor ArchiveDatabase {
             throw ArchiveError.databaseError(dbErrorMessage())
         }
 
-        return UUID(uuidString: sessionIDString)!
+        guard let uuid = UUID(uuidString: sessionIDString) else {
+            throw ArchiveError.databaseError("Malformed session UUID in database: \(sessionIDString)")
+        }
+        return uuid
     }
 
     func updateSessionID(frameID: UUID, sessionID: UUID) throws {
@@ -1947,10 +1970,11 @@ actor ArchiveDatabase {
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
             FROM sessions
             """
-        if let isNight { sql += " WHERE is_night = \(isNight ? 1 : 0)" }
+        if isNight != nil { sql += " WHERE is_night = ?" }
         sql += " ORDER BY date DESC"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
+        if let isNight { sqlite3_bind_int(stmt, 1, isNight ? 1 : 0) }
         var results: [ObservingSession] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let s = rowToSession(stmt) { results.append(s) }
@@ -1969,19 +1993,17 @@ actor ArchiveDatabase {
     }
 
     func sessions(on date: Date, isNight: Bool? = nil) throws -> [ObservingSession] {
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.dateFormat = "yyyy-MM-dd"
-        let dateString = df.string(from: date)
+        let dateString = Self.sessionDateParser.string(from: date)
         var sql = """
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
             FROM sessions WHERE date = ?
             """
-        if let isNight { sql += " AND is_night = \(isNight ? 1 : 0)" }
+        if isNight != nil { sql += " AND is_night = ?" }
         sql += " ORDER BY is_night DESC"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
         sqlite3_bind_text(stmt, 1, dateString, -1, SQLITE_TRANSIENT)
+        if let isNight { sqlite3_bind_int(stmt, 2, isNight ? 1 : 0) }
         var results: [ObservingSession] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let s = rowToSession(stmt) { results.append(s) }
@@ -1994,10 +2016,16 @@ actor ArchiveDatabase {
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
             FROM sessions
             """
-        if let isNight { sql += " WHERE is_night = \(isNight ? 1 : 0)" }
-        sql += " ORDER BY date DESC, added_at DESC LIMIT \(limit)"
+        if isNight != nil { sql += " WHERE is_night = ?" }
+        sql += " ORDER BY date DESC, added_at DESC LIMIT ?"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
+        if let isNight {
+            sqlite3_bind_int(stmt, 1, isNight ? 1 : 0)
+            sqlite3_bind_int(stmt, 2, Int32(limit))
+        } else {
+            sqlite3_bind_int(stmt, 1, Int32(limit))
+        }
         var results: [ObservingSession] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let s = rowToSession(stmt) { results.append(s) }
@@ -2041,38 +2069,49 @@ actor ArchiveDatabase {
     /// Assigns sessions to all raw light frames that have site coordinates and a timestamp
     /// but no session yet. Safe to call multiple times — already-assigned frames are skipped.
     func backfillSessions() throws {
-        let selectSQL = """
-            SELECT id, timestamp, site_latitude, site_longitude FROM frames
-            WHERE session_id IS NULL
-              AND site_latitude IS NOT NULL AND site_longitude IS NOT NULL
-              AND timestamp IS NOT NULL
-              AND LOWER(frame_type) = 'light'
-              AND processing_level = 'raw'
-            """
-        let stmt = try prepare(selectSQL)
-        let iso = ISO8601DateFormatter()
-        var assignments: [(frameID: String, sessionID: UUID)] = []
-        while sqlite3_step(stmt) == SQLITE_ROW {
-            guard let frameID   = columnText(stmt, 0),
-                  let tsStr     = columnText(stmt, 1),
-                  let timestamp = iso.date(from: tsStr),
-                  let lat       = columnDouble(stmt, 2),
-                  let lon       = columnDouble(stmt, 3) else { continue }
-            let sid = try findOrCreateSession(timestamp: timestamp, latDeg: lat, lonDeg: lon)
-            assignments.append((frameID, sid))
-        }
-        sqlite3_finalize(stmt)
-
-        let updateStmt = try prepare("UPDATE frames SET session_id = ? WHERE id = ?")
-        defer { sqlite3_finalize(updateStmt) }
-        for (frameID, sessionID) in assignments {
-            sqlite3_reset(updateStmt)
-            sqlite3_clear_bindings(updateStmt)
-            bind(updateStmt, 1, sessionID.uuidString)
-            bind(updateStmt, 2, frameID)
-            guard sqlite3_step(updateStmt) == SQLITE_DONE else {
-                throw ArchiveError.databaseError(dbErrorMessage())
+        // Wrap in a transaction so the frame_count increments inside findOrCreateSession
+        // and the frames.session_id assignments are atomic. Without this, an interrupted
+        // backfill would leave some frames unassigned while their session's frame_count
+        // was already incremented, causing over-counting on the next retry.
+        try exec("BEGIN")
+        do {
+            let selectSQL = """
+                SELECT id, timestamp, site_latitude, site_longitude FROM frames
+                WHERE session_id IS NULL
+                  AND site_latitude IS NOT NULL AND site_longitude IS NOT NULL
+                  AND timestamp IS NOT NULL
+                  AND LOWER(frame_type) = 'light'
+                  AND processing_level = 'raw'
+                """
+            let stmt = try prepare(selectSQL)
+            let iso = Self.sessionISO
+            var assignments: [(frameID: String, sessionID: UUID)] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let frameID   = columnText(stmt, 0),
+                      let tsStr     = columnText(stmt, 1),
+                      let timestamp = iso.date(from: tsStr),
+                      let lat       = columnDouble(stmt, 2),
+                      let lon       = columnDouble(stmt, 3) else { continue }
+                let sid = try findOrCreateSession(timestamp: timestamp, latDeg: lat, lonDeg: lon)
+                assignments.append((frameID, sid))
             }
+            sqlite3_finalize(stmt)
+
+            let updateStmt = try prepare("UPDATE frames SET session_id = ? WHERE id = ?")
+            defer { sqlite3_finalize(updateStmt) }
+            for (frameID, sessionID) in assignments {
+                sqlite3_reset(updateStmt)
+                sqlite3_clear_bindings(updateStmt)
+                bind(updateStmt, 1, sessionID.uuidString)
+                bind(updateStmt, 2, frameID)
+                guard sqlite3_step(updateStmt) == SQLITE_DONE else {
+                    throw ArchiveError.databaseError(dbErrorMessage())
+                }
+            }
+            try exec("COMMIT")
+        } catch {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            throw error
         }
     }
 
@@ -2081,18 +2120,14 @@ actor ArchiveDatabase {
               let idStr = columnText(stmt, 0), let id = UUID(uuidString: idStr),
               let name  = columnText(stmt, 1),
               let dateStr = columnText(stmt, 2) else { return nil }
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.dateFormat = "yyyy-MM-dd"
-        guard let date = df.date(from: dateStr) else { return nil }
+        guard let date = Self.sessionDateParser.date(from: dateStr) else { return nil }
         let isNight    = sqlite3_column_int(stmt, 3) != 0
         let latitude   = sqlite3_column_double(stmt, 4)
         let longitude  = sqlite3_column_double(stmt, 5)
         let frameCount = Int(sqlite3_column_int(stmt, 6))
-        let iso = ISO8601DateFormatter()
-        let startTime  = columnText(stmt, 7).flatMap { iso.date(from: $0) }
-        let endTime    = columnText(stmt, 8).flatMap { iso.date(from: $0) }
-        let addedAt    = columnText(stmt, 9).flatMap { iso.date(from: $0) } ?? Date()
+        let startTime  = columnText(stmt, 7).flatMap { Self.sessionISO.date(from: $0) }
+        let endTime    = columnText(stmt, 8).flatMap { Self.sessionISO.date(from: $0) }
+        let addedAt    = columnText(stmt, 9).flatMap { Self.sessionISO.date(from: $0) } ?? Date()
         return ObservingSession(
             id: id, name: name, date: date, isNight: isNight,
             latitude: latitude, longitude: longitude,
@@ -2101,14 +2136,8 @@ actor ArchiveDatabase {
     }
 
     private static func sessionName(for dateString: String) -> String {
-        let parse = DateFormatter()
-        parse.locale = Locale(identifier: "en_US_POSIX")
-        parse.dateFormat = "yyyy-MM-dd"
-        guard let date = parse.date(from: dateString) else { return dateString }
-        let display = DateFormatter()
-        display.locale = Locale.current
-        display.dateFormat = "d MMMM yyyy"
-        return display.string(from: date)
+        guard let date = sessionDateParser.date(from: dateString) else { return dateString }
+        return sessionDisplayFormatter.string(from: date)
     }
 
     private static func haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double) -> Double {
