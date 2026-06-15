@@ -1839,12 +1839,13 @@ actor ArchiveDatabase {
     /// Finds an existing session for the given timestamp and location, or creates one.
     ///
     /// Only call this for raw light frames that have both site coordinates and a timestamp.
-    /// Uses `SolarCalculator` to classify the frame as night or day, derives the session date,
-    /// then searches sessions within a 3 km haversine radius for the same date/night flag.
+    /// Searches sessions within a 3 km haversine radius for the same date/night flag.
     func findOrCreateSession(timestamp: Date, latDeg: Double, lonDeg: Double) throws -> UUID {
         let observer = Observatory(longitude: lonDeg * .pi / 180, latitude: latDeg * .pi / 180)
-        let rts = Sun().riseTransitSet(on: timestamp, at: observer,
-                                       window: .night, altitude: .standardAltitudeSun)
+        // Shift back 12 h so that early-morning frames (e.g. 01:30 on Jun 16) anchor to the
+        // preceding noon-to-noon window (Jun 15 noon – Jun 16 noon), not the current day's.
+        let rts = Sun().riseTransitSet(on: timestamp.addingTimeInterval(-43200),
+                                       at: observer, window: .night, altitude: .standardAltitudeSun)
         let isNight: Bool
         let sessionDateString: String
         let df = DateFormatter()
