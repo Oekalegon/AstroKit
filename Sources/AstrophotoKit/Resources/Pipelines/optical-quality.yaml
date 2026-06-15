@@ -1,0 +1,238 @@
+id: optical_quality
+name: Optical Quality Analysis Pipeline
+description: Detects stars, measures their eccentricity and position angle, then analyses
+  the spatial variation across the image to diagnose sensor tilt, coma, or backfocus
+  errors. Accepted quality-threshold parameters (applied to any frame sets the input
+  belongs to) -- max_fwhm (pixels), max_eccentricity (0-1).
+
+steps:
+  - id: grayscale
+    type: grayscale
+    name: Grayscale
+    description: Converts the input frame to grayscale
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+        description: The input light frame
+    parameters: []
+    outputs:
+      - name: grayscale_frame
+        type: frame
+        description: Grayscale version of the input frame
+        metadata:
+          processing_stage: "color_conversion"
+          image_type: "grayscale"
+
+  - id: blur
+    type: gaussian_blur
+    name: Gaussian Blur
+    description: Applies Gaussian blur to reduce noise
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: background.background_subtracted_frame
+        description: Background-subtracted grayscale frame
+    parameters:
+      - name: radius
+        from: blur_radius
+        default_value: 1.5
+        description: Blur radius in pixels
+    outputs:
+      - name: blurred_frame
+        type: frame
+        description: Blurred grayscale frame
+        metadata:
+          processing_stage: "noise_reduction"
+          image_type: "grayscale"
+
+  - id: background
+    type: background_estimation
+    name: Background Estimation
+    description: Estimates and subtracts the sky background
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Grayscale frame for background estimation (mesh median is robust to noise)
+    parameters:
+      - name: cell_size
+        from: cell_size
+        default_value: 64
+        description: Mesh cell size in pixels; increase for large galaxies or nebulae
+    outputs:
+      - name: background_frame
+        type: frame
+        description: Estimated background
+        metadata:
+          processing_stage: "background_estimation"
+          image_type: "grayscale"
+      - name: background_subtracted_frame
+        type: frame
+        description: Background-subtracted frame
+        metadata:
+          processing_stage: "background_subtraction"
+          image_type: "grayscale"
+      - name: background_level
+        type: table
+        description: Background level (background_level normalised 0–1; background_level_adu in ADU when FITS scale available)
+
+  - id: threshold
+    type: threshold
+    name: Threshold
+    description: Creates a binary star mask
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: blur.blurred_frame
+        description: Blurred background-subtracted frame
+    parameters:
+      - name: threshold_value
+        from: threshold_value
+        default_value: 3.0
+        description: Sigma multiplier threshold
+      - name: method
+        default_value: "sigma"
+    outputs:
+      - name: thresholded_frame
+        type: frame
+        description: Binary star mask
+        metadata:
+          processing_stage: "thresholding"
+          image_type: "binary"
+
+  - id: erosion
+    type: erosion
+    name: Binary Erosion
+    description: Removes noise from binary mask
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: threshold.thresholded_frame
+        description: Thresholded frame
+    parameters:
+      - name: kernel_size
+        from: erosion_kernel_size
+        default_value: 3
+    outputs:
+      - name: eroded_frame
+        type: frame
+        description: Eroded binary mask
+        metadata:
+          processing_stage: "morphological_processing"
+          image_type: "binary"
+
+  - id: dilation
+    type: dilation
+    name: Binary Dilation
+    description: Restores star shapes after erosion
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: erosion.eroded_frame
+        description: Eroded frame
+    parameters:
+      - name: kernel_size
+        from: dilation_kernel_size
+        default_value: 3
+    outputs:
+      - name: dilated_frame
+        type: frame
+        description: Dilated binary mask
+        metadata:
+          processing_stage: "morphological_processing"
+          image_type: "binary"
+
+  - id: local_maxima
+    type: local_maxima
+    name: Local Maxima Detection
+    description: Finds peak pixels in the background-subtracted frame within the binary mask — one peak per star, immune to large extended objects that would merge into a single connected blob
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: blur.blurred_frame
+        description: Blurred background-subtracted frame for intensity comparison
+      - name: mask_frame
+        type: frame
+        from: dilation.dilated_frame
+        description: Binary mask restricting the search to candidate star regions
+    parameters:
+      - name: min_distance
+        from: lm_min_distance
+        default_value: 5
+        description: Minimum pixel distance between accepted peaks (NMS radius)
+    outputs:
+      - name: pixel_coordinates
+        type: table
+        description: Per-star table with centroid, placeholder axes, eccentricity, rotation_angle
+        metadata:
+          processing_stage: "star_detection"
+          table_type: "star_catalog"
+
+  - id: fwhm
+    type: fwhm
+    name: FWHM Calculation
+    description: Refines star measurements using image moments on the original image
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: background.background_subtracted_frame
+        description: Background-subtracted frame for moment calculation
+      - name: pixel_coordinates
+        type: table
+        from: local_maxima.pixel_coordinates
+        description: Star positions from local maxima detection
+    parameters: []
+    outputs:
+      - name: pixel_coordinates
+        type: table
+        description: Star table updated with fwhm_major, fwhm_minor, flux, saturated
+        metadata:
+          processing_stage: "fwhm_calculation"
+          table_type: "star_catalog"
+      - name: median_fwhm
+        type: table
+        description: Median FWHM statistics
+
+  - id: optical_quality
+    type: optical_quality
+    name: Optical Quality Analysis
+    description: Analyses spatial variation of star shapes to diagnose tilt, coma, or backfocus
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        description: Original input frame (used for image dimensions)
+      - name: pixel_coordinates
+        type: table
+        from: fwhm.pixel_coordinates
+        description: Per-star table with eccentricity, rotation_angle, fwhm_major, fwhm_minor
+    parameters:
+      - name: grid_cols
+        from: oq_grid_cols
+        default_value: 5
+        description: Number of grid columns
+      - name: grid_rows
+        from: oq_grid_rows
+        default_value: 4
+        description: Number of grid rows
+      - name: min_stars_per_cell
+        from: oq_min_stars_per_cell
+        default_value: 3
+        description: Minimum stars required per cell to compute statistics
+    outputs:
+      - name: optical_quality_map
+        type: table
+        description: Per-cell optical quality statistics (eccentricity, position angle, FWHM)
+        metadata:
+          processing_stage: "optical_quality_analysis"
+          table_type: "spatial_map"
+      - name: optical_quality_summary
+        type: table
+        description: Overall diagnosis (sensor_tilt, coma, backfocus, well_collimated)
+        metadata:
+          processing_stage: "optical_quality_analysis"
+          table_type: "statistics"

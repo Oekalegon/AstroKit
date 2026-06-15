@@ -1,0 +1,156 @@
+id: collimation_reflector_wavelet
+name: Reflector Collimation Analysis Pipeline (Wavelet DoG)
+description: Analyses an out-of-focus image from a reflector telescope to measure the
+  collimation error using a Difference-of-Gaussians scale-space approach. The DoG
+  acts as a Mexican-hat wavelet that responds maximally to bright rings at each tested
+  radius — no connected-components pre-detection needed. Scale-space NMS finds all
+  donut centres and radii simultaneously; the inner shadow centre is then refined via
+  intensity-weighted centroid for a precise collimation offset vector.
+
+steps:
+  - id: grayscale
+    type: grayscale
+    name: Grayscale
+    description: Converts the input frame to grayscale
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+        description: Out-of-focus light frame from the reflector
+    parameters: []
+    outputs:
+      - name: grayscale_frame
+        type: frame
+        description: Grayscale version of the input frame
+        metadata:
+          processing_stage: "color_conversion"
+          image_type: "grayscale"
+
+  - id: wavelet_donut
+    type: wavelet_donut
+    name: Wavelet DoG Donut Detection
+    description: Detects donut-shaped out-of-focus stars via Difference-of-Gaussians
+      scale-space analysis on the GPU
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Greyscale out-of-focus image
+    parameters:
+      - name: r_min
+        from: wavelet_r_min
+        default_value: 20
+        description: Minimum ring radius to test (pixels)
+      - name: r_max
+        from: wavelet_r_max
+        default_value: 150
+        description: Maximum ring radius to test (pixels)
+      - name: scale_step
+        from: wavelet_scale_step
+        default_value: 10
+        description: Step between tested radii — smaller = more precise but slower
+      - name: sigma_ratio_inner
+        from: wavelet_sigma_ratio_inner
+        default_value: 0.8
+        description: Inner Gaussian sigma = r × ratio (narrower, responds to ring interior)
+      - name: sigma_ratio_outer
+        from: wavelet_sigma_ratio_outer
+        default_value: 1.2
+        description: Outer Gaussian sigma = r × ratio (wider, responds to ring exterior)
+      - name: min_response
+        from: wavelet_min_response
+        default_value: 0.002
+        description: Minimum DoG peak value — decrease to detect fainter donuts
+      - name: nms_radius
+        from: wavelet_nms_radius
+        default_value: 20
+        description: Spatial non-maximum suppression radius (pixels)
+      - name: nms_scale_radius
+        from: wavelet_nms_scale_radius
+        default_value: 4
+        description: Cross-scale NMS radius in scale steps — suppresses duplicate detections
+          at nearby radii (e.g. 4 steps × step_size=10 = ±40px radius suppression)
+      - name: max_donuts
+        from: wavelet_max_donuts
+        default_value: 50
+        description: Maximum number of donuts to return
+      - name: inner_center_search_r
+        from: wavelet_inner_center_search_r
+        default_value: 0.5
+        description: Inner shadow search radius as fraction of estimated inner_r
+    outputs:
+      - name: donuts
+        type: table
+        description: Per-donut table with outer/inner circle centres, radii, and offsets
+        metadata:
+          processing_stage: "circle_detection"
+          table_type: "donut_catalog"
+
+  - id: collimation
+    type: collimation_analysis
+    name: Collimation Analysis
+    description: Analyses donut offsets spatially to produce a collimation error vector and diagnosis
+    dataInputs:
+      - name: donuts
+        type: table
+        from: wavelet_donut.donuts
+        description: Detected donuts from wavelet DoG detection
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Greyscale frame (used for image dimensions only)
+    parameters:
+      - name: grid_cols
+        from: col_grid_cols
+        default_value: 3
+        description: Number of spatial grid columns
+      - name: grid_rows
+        from: col_grid_rows
+        default_value: 3
+        description: Number of spatial grid rows
+    outputs:
+      - name: collimation_map
+        type: table
+        description: Per-cell mean offset vectors
+        metadata:
+          processing_stage: "collimation_analysis"
+          table_type: "spatial_map"
+      - name: collimation_summary
+        type: table
+        description: Global collimation error vector and diagnosis
+        metadata:
+          processing_stage: "collimation_analysis"
+          table_type: "statistics"
+
+  - id: overlay
+    type: hough_circle_overlay
+    name: Circle Overlay
+    description: Draws detected outer (green) and inner (red) circles onto the image
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Greyscale frame to annotate
+      - name: donuts
+        type: table
+        from: wavelet_donut.donuts
+        description: Detected donuts from wavelet DoG detection
+    parameters:
+      - name: line_width
+        from: overlay_line_width
+        default_value: 2.0
+        description: Circle stroke width in pixels
+      - name: crosshair_ratio
+        from: overlay_crosshair_ratio
+        default_value: 0.3
+        description: Crosshair arm length as fraction of outer radius
+    outputs:
+      - name: annotated_frame
+        type: frame
+        description: RGBA image with detected circles drawn
+        metadata:
+          processing_stage: "overlay"
+          image_type: "rgba"

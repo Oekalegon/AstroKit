@@ -4,6 +4,7 @@ using namespace metal;
 /// Compute shader for binary erosion
 /// Erosion shrinks objects by removing pixels from boundaries
 /// A pixel is set to 1 only if ALL pixels in the structuring element are 1
+/// Optimized for grayscale textures (r32Float) - works on R channel only
 kernel void binary_erosion(texture2d<float> inputTexture [[texture(0)]],
                            texture2d<float, access::write> outputTexture [[texture(1)]],
                            constant int& kernelSize [[buffer(0)]],
@@ -40,12 +41,14 @@ kernel void binary_erosion(texture2d<float> inputTexture [[texture(0)]],
         }
     }
     
-    // Write result
+    // Write result (grayscale - only R channel is used)
+    // Using float4(result) broadcasts the value, which is more efficient than explicit zeros
     outputTexture.write(float4(result), gid);
 }
 
 /// Compute shader for grayscale erosion
 /// Works on continuous values, takes the minimum value in the kernel
+/// Optimized for grayscale textures (r32Float) - works on R channel only
 kernel void grayscale_erosion(texture2d<float> inputTexture [[texture(0)]],
                               texture2d<float, access::write> outputTexture [[texture(1)]],
                               constant int& kernelSize [[buffer(0)]],
@@ -75,7 +78,8 @@ kernel void grayscale_erosion(texture2d<float> inputTexture [[texture(0)]],
         }
     }
     
-    // Write result
+    // Write result (grayscale - only R channel is used)
+    // Using float4(minValue) broadcasts the value, which is more efficient than explicit zeros
     outputTexture.write(float4(minValue), gid);
 }
 

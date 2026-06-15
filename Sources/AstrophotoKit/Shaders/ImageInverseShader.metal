@@ -8,11 +8,13 @@ struct VertexOut {
 };
 
 struct Uniforms {
-    float2 scale;      // Zoom scale (x, y)
-    float2 offset;     // Pan offset (x, y)
-    float2 aspectRatio; // Aspect ratio correction (image aspect / view aspect)
-    float blackPoint;  // Black point (normalized 0-1)
-    float whitePoint;  // White point (normalized 0-1)
+    float2 scale;      // Zoom scale (x, y) - 8 bytes, offset 0
+    float2 offset;     // Pan offset (x, y) - 8 bytes, offset 8
+    float2 aspectRatio; // Aspect ratio correction (image aspect / view aspect) - 8 bytes, offset 16
+    float _padding;     // Padding to align to 8-byte boundary - 4 bytes, offset 24
+    float blackPoint;  // Black point (normalized 0-1) - 4 bytes, offset 28
+    float whitePoint;  // White point (normalized 0-1) - 4 bytes, offset 32
+    float isGrayscale; // 1.0 if texture is grayscale (r32Float), 0.0 if RGB (rgba32Float) - 4 bytes, offset 36
 };
 
 fragment float4 fragment_inverse(VertexOut in [[stage_in]],

@@ -1,0 +1,197 @@
+id: collimation_reflector_twophase
+name: Reflector Collimation Analysis Pipeline (Two-Phase)
+description: Two-phase collimation pipeline. Phase 1 uses Hough (max_donuts=1) to find
+  the single brightest donut and learn its outer radius and r_ratio. Phase 2 runs a
+  single-scale DoG over the full image at that exact radius to detect all donuts including
+  very faint ones missed by per-crop Hough.
+
+steps:
+  - id: grayscale
+    type: grayscale
+    name: Grayscale
+    description: Converts the input frame to grayscale
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+        description: Out-of-focus light frame from the reflector
+    parameters: []
+    outputs:
+      - name: grayscale_frame
+        type: frame
+        description: Grayscale version of the input frame
+        metadata:
+          processing_stage: "color_conversion"
+          image_type: "grayscale"
+
+  - id: hough_circles
+    type: hough_circles
+    name: Hough Circle Detection (Phase 1 - brightest donut only)
+    description: Uses built-in blob scan to find the single brightest donut and learn its geometry
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Greyscale out-of-focus image
+    parameters:
+      - name: r_min
+        from: hough_r_min
+        default_value: 20
+        description: Minimum circle radius in pixels
+      - name: r_max
+        from: hough_r_max
+        default_value: 150
+        description: Maximum circle radius in pixels
+      - name: edge_threshold
+        from: hough_edge_threshold
+        default_value: 0.5
+        description: Adaptive edge threshold sigma multiplier
+      - name: nms_radius
+        from: hough_nms_radius
+        default_value: 8
+        description: Non-maximum suppression radius in accumulator
+      - name: min_votes
+        from: hough_min_votes
+        default_value: 8
+        description: Minimum accumulator votes
+      - name: max_donuts
+        default_value: 1
+        description: Phase 1 only needs the single brightest donut
+      - name: margin
+        from: hough_margin
+        default_value: 20
+        description: Extra pixels beyond r_max added to each crop
+      - name: max_crop_memory_mb
+        default_value: 256
+      - name: blob_threshold_k
+        default_value: 5.0
+        description: Blob scan threshold - high to select only the brightest candidates
+    outputs:
+      - name: donuts
+        type: table
+        description: Reference donut providing outer_r and r_ratio for Phase 2
+        metadata:
+          processing_stage: "circle_detection"
+          table_type: "donut_catalog"
+      - name: hough_summary
+        type: table
+        description: Summary for the reference donut
+        metadata:
+          processing_stage: "circle_detection"
+          table_type: "statistics"
+
+  - id: ring_search
+    type: ring_search
+    name: Ring Search (Phase 2 - full image at known scale)
+    description: Uses reference outer_r and r_ratio from Phase 1 to run a single-scale
+      DoG across the full image, detecting all donuts including very faint ones
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Greyscale out-of-focus image
+      - name: reference_donut
+        type: table
+        from: hough_circles.donuts
+        description: Reference donut table providing outer_r and r_ratio
+    parameters:
+      - name: min_response
+        from: ring_min_response
+        default_value: 0.0002
+        description: Minimum DoG peak value - decrease for very faint donuts
+      - name: nms_radius
+        from: ring_nms_radius
+        default_value: 20
+        description: Spatial NMS radius in pixels
+      - name: max_donuts
+        from: ring_max_donuts
+        default_value: 50
+        description: Maximum number of donuts to return
+      - name: sigma_ratio_inner
+        from: ring_sigma_ratio_inner
+        default_value: 0.8
+        description: Inner Gaussian sigma = outer_r x ratio
+      - name: sigma_ratio_outer
+        from: ring_sigma_ratio_outer
+        default_value: 1.2
+        description: Outer Gaussian sigma = outer_r x ratio
+      - name: inner_center_search_r
+        from: ring_inner_center_search_r
+        default_value: 0.5
+        description: Inner shadow search radius as fraction of inner_r
+    outputs:
+      - name: donuts
+        type: table
+        description: Per-donut table with outer/inner circle centres, radii, and offsets
+        metadata:
+          processing_stage: "circle_detection"
+          table_type: "donut_catalog"
+
+  - id: collimation
+    type: collimation_analysis
+    name: Collimation Analysis
+    description: Analyses donut offsets spatially to produce a collimation error vector
+    dataInputs:
+      - name: donuts
+        type: table
+        from: ring_search.donuts
+        description: Detected donuts from ring search
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Greyscale frame used for image dimensions
+    parameters:
+      - name: grid_cols
+        from: col_grid_cols
+        default_value: 3
+        description: Number of spatial grid columns
+      - name: grid_rows
+        from: col_grid_rows
+        default_value: 3
+        description: Number of spatial grid rows
+    outputs:
+      - name: collimation_map
+        type: table
+        description: Per-cell mean offset vectors
+        metadata:
+          processing_stage: "collimation_analysis"
+          table_type: "spatial_map"
+      - name: collimation_summary
+        type: table
+        description: Global collimation error vector and diagnosis
+        metadata:
+          processing_stage: "collimation_analysis"
+          table_type: "statistics"
+
+  - id: overlay
+    type: hough_circle_overlay
+    name: Circle Overlay
+    description: Draws detected outer and inner circles onto the image
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Greyscale frame to annotate
+      - name: donuts
+        type: table
+        from: ring_search.donuts
+        description: Detected donuts from ring search
+    parameters:
+      - name: line_width
+        from: overlay_line_width
+        default_value: 2.0
+        description: Circle stroke width in pixels
+      - name: crosshair_ratio
+        from: overlay_crosshair_ratio
+        default_value: 0.3
+        description: Crosshair arm length as fraction of outer radius
+    outputs:
+      - name: annotated_frame
+        type: frame
+        description: RGBA image with detected circles drawn
+        metadata:
+          processing_stage: "overlay"
+          image_type: "rgba"

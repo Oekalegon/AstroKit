@@ -1,0 +1,85 @@
+id: test_collection_pipeline
+name: Test Collection Pipeline
+description: Test pipeline for collection inputs
+
+steps:
+  # Step 1: Process collection together (stack)
+  - id: stack_step
+    type: mock_stack
+    name: Stack Step
+    description: Processes all items in a collection together
+    dataInputs:
+      - name: input_frames
+        from: input_frames
+        is_collection: true
+        collection_mode: together
+        description: Collection of frames to stack
+    parameters: []
+    outputs:
+      - name: stacked_output
+        description: Stacked result
+
+  # Step 2: Process collection individually
+  - id: process_individual
+    type: mock_processor
+    name: Process Individual
+    description: Processes each item in a collection individually
+    dataInputs:
+      - name: input_frame
+        from: input_frames
+        is_collection: true
+        collection_mode: individually
+        description: Individual frame to process
+    parameters: []
+    outputs:
+      - name: processed_output
+        description: Processed result
+
+  # Step 3: Process each individually processed frame again (chained individual processing)
+  - id: process_individual_again
+    type: mock_processor
+    name: Process Individual Again
+    description: Processes each individually processed frame again, creating new individual outputs
+    dataInputs:
+      - name: input_frame
+        from: process_individual.processed_output
+        is_collection: true
+        collection_mode: individually
+        description: Individual processed frame to process again
+    parameters: []
+    outputs:
+      - name: reprocessed_output
+        description: Reprocessed result (one per input)
+
+  # Step 4: Stack the individually processed items
+  - id: stack_processed
+    type: mock_stack
+    name: Stack Processed
+    description: Stacks the individually processed items
+    dataInputs:
+      - name: input_frames
+        from: process_individual.processed_output
+        is_collection: true
+        collection_mode: together
+        description: Collection of processed frames to stack
+    parameters: []
+    outputs:
+      - name: final_output
+        description: Final stacked result
+
+  # Step 5: Stack the reprocessed items (to verify correct number of outputs)
+  - id: stack_reprocessed
+    type: mock_stack
+    name: Stack Reprocessed
+    description: Stacks the reprocessed items to verify correct count
+    dataInputs:
+      - name: input_frames
+        from: process_individual_again.reprocessed_output
+        is_collection: true
+        collection_mode: together
+        description: Collection of reprocessed frames to stack
+    parameters: []
+    outputs:
+      - name: reprocessed_final_output
+        description: Final stacked result from reprocessed frames
+

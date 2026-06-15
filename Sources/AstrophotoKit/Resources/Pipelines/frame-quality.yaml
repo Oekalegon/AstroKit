@@ -1,0 +1,267 @@
+id: frame_quality
+name: Frame Quality Pipeline
+description: Evaluates quality of a light frame by detecting stars and measuring FWHM,
+  eccentricity, saturated star count, and background level. All metrics are automatically
+  persisted to the archive after the pipeline completes. Run this pipeline on any
+  archived light frame to populate its quality metrics. Accepted quality-threshold
+  parameters (applied to any frame sets the input belongs to) -- max_fwhm (pixels),
+  max_eccentricity (0-1).
+
+steps:
+  - id: grayscale
+    type: grayscale
+    name: Grayscale
+    description: Converts the input light frame to grayscale for analysis
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+        description: The input light frame
+    parameters: []
+    outputs:
+      - name: grayscale_frame
+        type: frame
+        description: Grayscale version of the input frame
+        metadata:
+          processing_stage: "color_conversion"
+          image_type: "grayscale"
+
+  - id: blur
+    type: gaussian_blur
+    name: Gaussian Blur
+    description: Applies Gaussian blur to reduce noise before thresholding — detection only;
+      FWHM is measured on the unblurred background-subtracted frame
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: background.background_subtracted_frame
+        description: Background-subtracted grayscale frame
+    parameters:
+      - name: radius
+        from: blur_radius
+        default_value: 1.5
+        description: Blur radius in pixels
+    outputs:
+      - name: blurred_frame
+        type: frame
+        description: Blurred grayscale frame
+        metadata:
+          processing_stage: "noise_reduction"
+          image_type: "grayscale"
+
+  - id: background
+    type: background_estimation
+    name: Background Estimation
+    description: Estimates and subtracts the sky background
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: grayscale.grayscale_frame
+        description: Grayscale frame for background estimation (mesh median is robust to noise)
+    parameters:
+      - name: cell_size
+        from: cell_size
+        default_value: 64
+        description: Mesh cell size in pixels; increase for large galaxies or nebulae
+    outputs:
+      - name: background_frame
+        type: frame
+        description: Estimated background frame
+        metadata:
+          processing_stage: "background_estimation"
+          image_type: "grayscale"
+      - name: background_subtracted_frame
+        type: frame
+        description: Background-subtracted frame
+        metadata:
+          processing_stage: "background_subtraction"
+          image_type: "grayscale"
+      - name: background_level
+        type: table
+        description: Mean background level (normalised 0–1)
+
+  - id: threshold
+    type: threshold
+    name: Threshold
+    description: Creates a binary star mask from the blurred background-subtracted frame
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: blur.blurred_frame
+        description: Blurred background-subtracted frame
+    parameters:
+      - name: threshold_value
+        from: threshold_value
+        default_value: 3.0
+        description: Sigma multiplier threshold
+      - name: method
+        default_value: "sigma"
+    outputs:
+      - name: thresholded_frame
+        type: frame
+        description: Binary star mask
+        metadata:
+          processing_stage: "thresholding"
+          image_type: "binary"
+
+  - id: erosion
+    type: erosion
+    name: Binary Erosion
+    description: Removes isolated noise pixels from the binary mask
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: threshold.thresholded_frame
+        description: Thresholded frame
+    parameters:
+      - name: kernel_size
+        from: erosion_kernel_size
+        default_value: 3
+    outputs:
+      - name: eroded_frame
+        type: frame
+        description: Eroded binary mask
+        metadata:
+          processing_stage: "morphological_processing"
+          image_type: "binary"
+
+  - id: dilation
+    type: dilation
+    name: Binary Dilation
+    description: Restores star shapes after erosion
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: erosion.eroded_frame
+        description: Eroded frame
+    parameters:
+      - name: kernel_size
+        from: dilation_kernel_size
+        default_value: 3
+    outputs:
+      - name: dilated_frame
+        type: frame
+        description: Dilated binary mask
+        metadata:
+          processing_stage: "morphological_processing"
+          image_type: "binary"
+
+  - id: local_maxima
+    type: local_maxima
+    name: Local Maxima Detection
+    description: Finds peak pixels in the background-subtracted frame within the binary mask — one peak per star, immune to large extended objects that would merge into a single connected blob
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: blur.blurred_frame
+        description: Blurred background-subtracted frame for intensity comparison
+      - name: mask_frame
+        type: frame
+        from: dilation.dilated_frame
+        description: Binary mask restricting the search to candidate star regions
+    parameters:
+      - name: min_distance
+        from: lm_min_distance
+        default_value: 5
+        description: Minimum pixel distance between accepted peaks (NMS radius)
+    outputs:
+      - name: pixel_coordinates
+        type: table
+        description: Per-star table with centroid, placeholder axes, eccentricity, rotation_angle
+        metadata:
+          processing_stage: "star_detection"
+          table_type: "star_catalog"
+
+  - id: fwhm
+    type: fwhm
+    name: FWHM Calculation
+    description: Refines star measurements using image moments on the background-subtracted frame
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: background.background_subtracted_frame
+        description: Background-subtracted frame for moment calculation
+      - name: pixel_coordinates
+        type: table
+        from: local_maxima.pixel_coordinates
+        description: Star positions from local maxima detection
+    parameters: []
+    outputs:
+      - name: pixel_coordinates
+        type: table
+        description: Star table updated with fwhm_major, fwhm_minor, flux, saturated
+        metadata:
+          processing_stage: "fwhm_calculation"
+          table_type: "star_catalog"
+      - name: median_fwhm
+        type: table
+        description: Sigma-clipped mean and median FWHM statistics
+
+  - id: quality
+    type: frame_quality
+    name: Frame Quality
+    description: Aggregates star and background metrics into a single quality summary row
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        description: Original input frame (used for ADU conversion via FITS scale info)
+      - name: pixel_coordinates
+        type: table
+        from: fwhm.pixel_coordinates
+        description: FWHM-refined star catalogue
+      - name: background_level
+        type: table
+        from: background.background_level
+        description: Mean background level from background estimation
+    parameters:
+      - name: max_fwhm_arcsec
+        from: max_fwhm_arcsec
+        default_value: 8.0
+        description: Exclude sources with FWHM above this value (arcseconds) from quality statistics; requires PIXSCALE in FITS header
+      - name: max_eccentricity
+        from: max_eccentricity
+        default_value: 0.9
+        description: Exclude sources with eccentricity above this value (0=circular, 1=line) from quality statistics
+      - name: min_fwhm_pixels
+        from: min_fwhm_pixels
+        default_value: 1.0
+        description: Exclude sources with FWHM below this value (pixels) — hot/warm pixels, not stars
+      - name: threshold_sigma
+        from: threshold_value
+        default_value: 3.0
+        description: Detection threshold sigma used in the threshold step; carried through to compute effective_detection_threshold_adu
+      - name: low_snr_threshold
+        from: low_snr_threshold
+        default_value: 5.0
+        description: Sources with peak SNR below this value are counted in low_snr_count
+    outputs:
+      - name: frame_quality
+        type: table
+        description: Quality summary — star_count, saturated_star_count, median_fwhm,
+          median_eccentricity, background_level, background_level_adu (when available)
+        metadata:
+          processing_stage: "quality_assessment"
+          table_type: "quality_summary"
+
+  - id: write_quality
+    type: fits_quality_writer
+    name: FITS Quality Writer
+    description: Writes the quality summary (NSTARS, SATSTARS, MEDFWHM, MEDECC, BACKNOIS) to the primary HDU header of the source FITS file
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+        description: The original source frame (provides the FITS file path to update)
+      - name: frame_quality
+        type: table
+        from: quality.frame_quality
+        description: Quality summary table to persist into the FITS header
+    parameters: []
+    outputs: []
