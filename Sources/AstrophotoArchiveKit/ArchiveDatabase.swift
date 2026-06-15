@@ -1840,6 +1840,20 @@ actor ArchiveDatabase {
 
     // MARK: - Sessions
 
+    private static let sessionDateParser: DateFormatter = {
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.dateFormat = "yyyy-MM-dd"
+        return df
+    }()
+    private static let sessionDisplayFormatter: DateFormatter = {
+        let df = DateFormatter()
+        df.locale = Locale.current
+        df.dateFormat = "d MMMM yyyy"
+        return df
+    }()
+    private static let sessionISO = ISO8601DateFormatter()
+
     /// Finds an existing session for the given timestamp and location, or creates one.
     ///
     /// Only call this for raw light frames that have both site coordinates and a timestamp.
@@ -1853,9 +1867,7 @@ actor ArchiveDatabase {
                                        at: observer, window: .night, altitude: .standardAltitudeSun)
         let isNight: Bool
         let sessionDateString: String
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.dateFormat = "yyyy-MM-dd"
+        let df = Self.sessionDateParser
 
         if let sunset = rts.set, let sunrise = rts.rise,
            timestamp >= sunset && timestamp <= sunrise {
@@ -1895,7 +1907,7 @@ actor ArchiveDatabase {
         }
 
         let sessionIDString: String
-        let iso = ISO8601DateFormatter()
+        let iso = Self.sessionISO
         if let existing = matchedID {
             sessionIDString = existing
         } else {
@@ -1980,10 +1992,7 @@ actor ArchiveDatabase {
     }
 
     func sessions(on date: Date, isNight: Bool? = nil) throws -> [ObservingSession] {
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.dateFormat = "yyyy-MM-dd"
-        let dateString = df.string(from: date)
+        let dateString = Self.sessionDateParser.string(from: date)
         var sql = """
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
             FROM sessions WHERE date = ?
@@ -2067,7 +2076,7 @@ actor ArchiveDatabase {
                   AND processing_level = 'raw'
                 """
             let stmt = try prepare(selectSQL)
-            let iso = ISO8601DateFormatter()
+            let iso = Self.sessionISO
             var assignments: [(frameID: String, sessionID: UUID)] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
                 guard let frameID   = columnText(stmt, 0),
@@ -2103,18 +2112,14 @@ actor ArchiveDatabase {
               let idStr = columnText(stmt, 0), let id = UUID(uuidString: idStr),
               let name  = columnText(stmt, 1),
               let dateStr = columnText(stmt, 2) else { return nil }
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.dateFormat = "yyyy-MM-dd"
-        guard let date = df.date(from: dateStr) else { return nil }
+        guard let date = Self.sessionDateParser.date(from: dateStr) else { return nil }
         let isNight    = sqlite3_column_int(stmt, 3) != 0
         let latitude   = sqlite3_column_double(stmt, 4)
         let longitude  = sqlite3_column_double(stmt, 5)
         let frameCount = Int(sqlite3_column_int(stmt, 6))
-        let iso = ISO8601DateFormatter()
-        let startTime  = columnText(stmt, 7).flatMap { iso.date(from: $0) }
-        let endTime    = columnText(stmt, 8).flatMap { iso.date(from: $0) }
-        let addedAt    = columnText(stmt, 9).flatMap { iso.date(from: $0) } ?? Date()
+        let startTime  = columnText(stmt, 7).flatMap { Self.sessionISO.date(from: $0) }
+        let endTime    = columnText(stmt, 8).flatMap { Self.sessionISO.date(from: $0) }
+        let addedAt    = columnText(stmt, 9).flatMap { Self.sessionISO.date(from: $0) } ?? Date()
         return ObservingSession(
             id: id, name: name, date: date, isNight: isNight,
             latitude: latitude, longitude: longitude,
@@ -2123,14 +2128,8 @@ actor ArchiveDatabase {
     }
 
     private static func sessionName(for dateString: String) -> String {
-        let parse = DateFormatter()
-        parse.locale = Locale(identifier: "en_US_POSIX")
-        parse.dateFormat = "yyyy-MM-dd"
-        guard let date = parse.date(from: dateString) else { return dateString }
-        let display = DateFormatter()
-        display.locale = Locale.current
-        display.dateFormat = "d MMMM yyyy"
-        return display.string(from: date)
+        guard let date = sessionDateParser.date(from: dateString) else { return dateString }
+        return sessionDisplayFormatter.string(from: date)
     }
 
     private static func haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double) -> Double {
