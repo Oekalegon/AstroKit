@@ -2,6 +2,15 @@ import Foundation
 import Yams
 import Metal
 
+/// Declares what a pipeline produces when it finishes.
+/// - `.default`: pipeline emits output frames and/or tables that may be archived or saved to disk.
+/// - `.metadata`: pipeline only updates metadata on its input frames (e.g. quality metrics); it
+///   produces no new files and nothing should be archived or written to an output path.
+public enum PipelineResultType: String, Codable {
+    case `default` = "default"
+    case metadata  = "metadata"
+}
+
 /// Pipeline loaded from YAML configuration
 public struct Pipeline: Codable {
     /// Unique identifier for this pipeline
@@ -15,6 +24,23 @@ public struct Pipeline: Codable {
 
     /// The steps in this pipeline
     public let steps: [PipelineStep]
+
+    /// Declares what this pipeline produces. Defaults to `.default` when omitted from YAML.
+    public let resultType: PipelineResultType
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, description, steps
+        case resultType = "result_type"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id          = try c.decode(String.self,         forKey: .id)
+        name        = try c.decode(String.self,         forKey: .name)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        steps       = try c.decode([PipelineStep].self, forKey: .steps)
+        resultType  = try c.decodeIfPresent(PipelineResultType.self, forKey: .resultType) ?? .default
+    }
 
     /// Load a pipeline from a YAML file
     public static func load(from url: URL) throws -> Pipeline {
@@ -69,11 +95,13 @@ public struct Pipeline: Codable {
         id: String,
         name: String,
         description: String? = nil,
-        steps: [PipelineStep]
+        steps: [PipelineStep],
+        resultType: PipelineResultType = .default
     ) {
         self.id = id
         self.name = name
         self.description = description
         self.steps = steps
+        self.resultType = resultType
     }
 }

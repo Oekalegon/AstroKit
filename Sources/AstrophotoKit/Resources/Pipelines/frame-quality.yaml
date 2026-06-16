@@ -6,6 +6,7 @@ description: Evaluates quality of a light frame by detecting stars and measuring
   archived light frame to populate its quality metrics. Accepted quality-threshold
   parameters (applied to any frame sets the input belongs to) -- max_fwhm (pixels),
   max_eccentricity (0-1).
+result_type: metadata
 
 steps:
   - id: grayscale

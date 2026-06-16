@@ -27,7 +27,7 @@ public enum PipelineToolDefinitions {
         ],
         [
             "name": "run_pipeline",
-            "description": "Execute an astrophoto pipeline on one or more FITS files and return the analysis results. Frames can be supplied from the archive via input_frameset_id. Use input_paths (array) for ad-hoc multi-frame pipelines such as frame_registration_quad.",
+            "description": "Execute an astrophoto pipeline on one or more FITS files and return the analysis results. Frames can be supplied from the archive via input_frameset_id. Use input_paths (array) for ad-hoc multi-frame pipelines such as frame_registration_quad. Metadata-only pipelines (e.g. frame_quality) update the source frame's archive record and produce no output file; output_path has no effect for these pipelines.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -66,7 +66,7 @@ public enum PipelineToolDefinitions {
                     ],
                     "output_path": [
                         "type": "string",
-                        "description": "Optional file path to save the output. For stacking pipelines (e.g. frame_stacking) this writes a FITS file containing the stacked image and registration table. For analysis pipelines (e.g. frame_registration_quad) it writes the result table. Use .csv extension with output_format=csv for a plain-text table.",
+                        "description": "Optional file path to save the output. For stacking pipelines (e.g. frame_stacking) this writes a FITS file containing the stacked image and registration table. For analysis pipelines (e.g. frame_registration_quad) it writes the result table. Use .csv extension with output_format=csv for a plain-text table. Has no effect for metadata-only pipelines (e.g. frame_quality).",
                     ],
                     "output_format": [
                         "type": "string",
