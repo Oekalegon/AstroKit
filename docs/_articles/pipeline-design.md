@@ -8,7 +8,7 @@ categories: astrophotography pipelines image-processing design
 published: true
 usemathjax: true
 ---
-This article dives into the design philosophy behind AstrophotoKit's pipeline system, showing you how we've built a flexible, reusable framework for astrophotography processing. While AstrophotoKit is being developed, this will represent our intentions and may not represent the current state of functionality. It is a design document after all.
+This article dives into the design philosophy behind AstroKit's pipeline system, showing you how we've built a flexible, reusable framework for astrophotography processing. While AstroKit is being developed, this will represent our intentions and may not represent the current state of functionality. It is a design document after all.
 
 ## Terminology
 

@@ -3,17 +3,30 @@ layout: default
 title: Home
 ---
 
-# AstrophotoKit
+# AstroKit
 
-A Swift package for astronomical image processing, including FITS file support and Metal shader integration.
+A unified Swift package bundling celestial dynamics, astrophotography image processing, and FITS archive management.
 
-## Features
+## What's included
 
-- **FITS File Support**: Fast FITS file reading/writing using CFITSIO
-- **Metal Shaders**: Support for custom Metal shaders for GPU-accelerated image processing
-- **Swift API**: Clean, Swifty interface for astronomical data processing
+| Component | Description |
+|-----------|-------------|
+| `AstroKit` | Celestial dynamics — ephemeris, coordinates, sidereal time, rise/transit/set |
+| `VSOP` | High-precision planetary positions (VSOP87) |
+| `AstrophotoKit` | Astrophotography — FITS I/O, Metal GPU pipelines, image processors |
+| `AstrophotoArchiveKit` | FITS archive backed by SQLite + HEALPix, observing sessions |
+| `ap` | CLI for running AstrophotoKit processing pipelines on FITS files |
+| `ap-archive` | CLI for managing the AstrophotoArchiveKit archive |
+| `astrokit-mcp` | MCP server exposing AstrophotoKit pipelines and archive to Claude |
 
 ## Documentation
 
-Welcome to the AstrophotoKit documentation. More content coming soon!
+| Topic | Link |
+|-------|-------|
+| Pipeline CLI (`ap`) | [ap.md](ap.md) |
+| Archive CLI (`ap-archive`) | [ap-archive.md](ap-archive.md) |
+| MCP server (`astrokit-mcp`) | [mcp.md](mcp.md) |
 
+## Articles
+
+Design documents and deep dives are published under [Articles](/AstroKit/articles/).
