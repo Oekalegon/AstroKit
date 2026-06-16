@@ -149,8 +149,8 @@ struct Recent: AsyncParsableCommand {
             case .session(let s, let recency):
                 let kind = "session·\(s.isNight ? "night" : "day")"
                 table.addRow([s.id.uuidString, shortDate(recency), kind, s.name, "\(s.frameCount)"])
-            case .dateGroup(let label, _, let recency, let count):
-                table.addRow(["-", shortDate(recency), "raw·light", label, "\(count)"])
+            case .dateGroup(let label, let utcDate, _, let count):
+                table.addRow(["-", utcDate, "raw·light", label, "\(count)"])
             case .frame(let f):
                 let kind = "\(f.processingLevel.rawValue)·\(f.frameType)"
                 let name = (f.filePath as NSString).lastPathComponent
