@@ -1,4 +1,4 @@
-# ap-archive — AstrophotoKit Archive CLI
+# ap-archive — AstroKit Archive CLI
 
 `ap-archive` manages a local FITS archive: ingests frames, indexes their metadata in SQLite, and lets you query by object, coordinates, frame type, filter, date, processing level, and rejection status.
 
@@ -638,6 +638,79 @@ ap-archive remove <id> [--delete-file]
 
 ```bash
 ap-archive remove A3F2B1C0-... --delete-file
+```
+
+---
+
+### `ap-archive sessions`
+
+Manages observing sessions. Raw light frames are automatically grouped into sessions by night (sunset-to-sunrise window) and imaging site (3 km haversine radius) whenever site coordinates (`SITELAT`/`SITELONG` or equivalent) are present in the FITS header.
+
+#### `ap-archive sessions list`
+
+Lists observing sessions, newest first.
+
+```
+ap-archive sessions list [--date <YYYY-MM-DD>] [--latest <N>] [--kind <all|night|day>] [--json]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--date YYYY-MM-DD` | Show only sessions for this night (date of the preceding sunset) |
+| `--latest N` | Return only the N most recent sessions |
+| `--kind all\|night\|day` | Filter by session type (default: `all`) |
+| `--json` | Output as JSON |
+
+**Examples:**
+
+```bash
+# List all sessions:
+ap-archive sessions list
+
+# Last 5 sessions, nights only:
+ap-archive sessions list --latest 5 --kind night
+
+# Sessions for a specific night:
+ap-archive sessions list --date 2026-04-06
+
+# JSON output:
+ap-archive sessions list --json
+```
+
+**Table output columns:** Session name, Kind (night/day), Frames, Start (UTC), End (UTC), UUID.
+
+---
+
+#### `ap-archive sessions frames <session-id>`
+
+Lists the raw light frames that belong to a session, ordered by timestamp.
+
+```
+ap-archive sessions frames <session-uuid> [--json]
+```
+
+**Example:**
+
+```bash
+ap-archive sessions frames A3F2B1C0-1234-5678-ABCD-EF0123456789
+```
+
+**Table output columns:** Timestamp (UTC), Object, Filter, Exposure (s), File path.
+
+---
+
+#### `ap-archive sessions backfill`
+
+Assigns sessions to raw light frames that already have site coordinates but have not been grouped into a session yet. Safe to run multiple times — already-assigned frames are skipped.
+
+```
+ap-archive sessions backfill
+```
+
+**Example:**
+
+```bash
+ap-archive sessions backfill
 ```
 
 ---

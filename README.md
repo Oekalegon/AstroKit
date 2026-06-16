@@ -1,12 +1,12 @@
-<img src="docs/assets/images/astrophotokit.png" alt="AstrophotoKit logo" width="200" height="200" style="display: block; margin: auto;"/>
+<img src="docs/assets/images/astrophotokit.png" alt="AstroKit logo" width="200" height="200" style="display: block; margin: auto;"/>
 
-# AstrophotoKit
+# AstroKit
 
-A Swift package for astronomical image processing. Reads and writes FITS files via CFITSIO, runs GPU-accelerated processing pipelines using Metal, and exposes everything through a pipeline CLI, an archive CLI, and a Model Context Protocol server.
+A unified Swift package bundling celestial dynamics, astrophotography image processing, and FITS archive management — together with a pipeline CLI, an archive CLI, and an MCP server for Claude.
 
 ## Documentation
 
-Full documentation: [oekalegon.org/AstrophotoKit](https://oekalegon.org/AstrophotoKit/)
+Full documentation: [oekalegon.github.io/AstroKit](https://oekalegon.github.io/AstroKit/)
 
 | Topic | Link |
 |-------|-------|
@@ -18,8 +18,10 @@ Full documentation: [oekalegon.org/AstrophotoKit](https://oekalegon.org/Astropho
 
 | Component | Description |
 |-----------|-------------|
+| `AstroKit` | Swift library — astronomy algorithms, ephemeris, coordinates, sidereal time |
+| `VSOP` | Swift library — high-precision planetary positions (VSOP87) |
 | `AstrophotoKit` | Swift library — FITS I/O, Metal pipelines, image processors |
-| `AstrophotoArchiveKit` | Swift library — FITS archive backed by SQLite + HEALPix |
+| `AstrophotoArchiveKit` | Swift library — FITS archive backed by SQLite + HEALPix, observing sessions |
 | `ap` | CLI for running processing pipelines on FITS files |
 | `ap-archive` | CLI for managing the FITS archive |
 | `astrokit-mcp` | MCP server exposing pipelines and archive to Claude |
