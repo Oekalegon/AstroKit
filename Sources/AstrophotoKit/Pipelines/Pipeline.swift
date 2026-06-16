@@ -19,7 +19,7 @@ public struct Pipeline: Codable {
     /// Declares what this pipeline produces. Defaults to `.default` when omitted from YAML.
     public let resultType: PipelineResultType
 
-    enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey {
         case id, name, description, steps
         case resultType = "result_type"
     }
