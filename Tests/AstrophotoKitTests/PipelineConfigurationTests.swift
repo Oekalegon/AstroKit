@@ -316,9 +316,45 @@ func missingRequiredFieldThrowsError() {
     name: Test Pipeline
     steps: []
     """
-    
+
     #expect(throws: PipelineConfigurationError.self) {
         try Pipeline.load(from: invalidYAML)
+    }
+}
+
+@Test("result_type: metadata decodes to .metadata")
+func resultTypeDecodesMetadata() throws {
+    let yaml = """
+    id: test
+    name: Test
+    result_type: metadata
+    steps: []
+    """
+    let pipeline = try Pipeline.load(from: yaml)
+    #expect(pipeline.resultType == .metadata)
+}
+
+@Test("result_type absent defaults to .default")
+func resultTypeDefaultsWhenAbsent() throws {
+    let yaml = """
+    id: test
+    name: Test
+    steps: []
+    """
+    let pipeline = try Pipeline.load(from: yaml)
+    #expect(pipeline.resultType == .default)
+}
+
+@Test("Unknown result_type value throws error")
+func unknownResultTypeThrowsError() {
+    let yaml = """
+    id: test
+    name: Test
+    result_type: garbage
+    steps: []
+    """
+    #expect(throws: PipelineConfigurationError.self) {
+        try Pipeline.load(from: yaml)
     }
 }
 
