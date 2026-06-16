@@ -379,30 +379,84 @@ struct ArchiveTools {
     private func archiveRecent(_ args: [String: Any]) async throws -> String {
         let limitArg = args["limit"] as? Int ?? 15
         let limit: Int? = limitArg > 0 ? limitArg : nil
-        let archive = try makeArchive()
-        let frames  = try await archive.recentFrames(limit: limit)
-        if frames.isEmpty { return "No frames in archive." }
+        let mode     = args["mode"] as? String ?? "sessions"
+        let archive  = try makeArchive()
 
+        if mode == "frames" {
+            let frames = try await archive.recentFrames(limit: limit)
+            if frames.isEmpty { return "No frames in archive." }
+
+            let iso = ISO8601DateFormatter()
+            func shortDate(_ date: Date) -> String {
+                String(iso.string(from: date).prefix(16)).replacingOccurrences(of: "T", with: " ")
+            }
+
+            var lines = ["Recently archived frames (\(frames.count)):"]
+            for f in frames {
+                var parts: [String] = [
+                    "id: \(f.id.uuidString)",
+                    "type: \(f.frameType)",
+                    "added: \(shortDate(f.addedAt))",
+                ]
+                if let v = f.objectName   { parts.append("object: \(v)") }
+                if let v = f.filter       { parts.append("filter: \(v)") }
+                if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
+                if let v = f.timestamp    { parts.append("date: \(shortDate(v))") }
+                parts += frameIdentityParts(f)
+                parts += frameQualityParts(f)
+                parts.append("file: \((f.filePath as NSString).lastPathComponent)")
+                lines.append("  { \(parts.joined(separator: ", ")) }")
+            }
+            return lines.joined(separator: "\n")
+        } else {
+            let entries = try await archive.recentActivity(limit: limit)
+            if entries.isEmpty { return "No recent activity in archive." }
+            return formatRecentActivity(entries)
+        }
+    }
+
+    private func formatRecentActivity(_ entries: [RecentEntry]) -> String {
         let iso = ISO8601DateFormatter()
         func shortDate(_ date: Date) -> String {
             String(iso.string(from: date).prefix(16)).replacingOccurrences(of: "T", with: " ")
         }
 
-        var lines = ["Recently archived frames (\(frames.count)):"]
-        for f in frames {
-            var parts: [String] = [
-                "id: \(f.id.uuidString)",
-                "type: \(f.frameType)",
-                "added: \(shortDate(f.addedAt))",
-            ]
-            if let v = f.objectName   { parts.append("object: \(v)") }
-            if let v = f.filter       { parts.append("filter: \(v)") }
-            if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
-            if let v = f.timestamp    { parts.append("date: \(shortDate(v))") }
-            parts += frameIdentityParts(f)
-            parts += frameQualityParts(f)
-            parts.append("file: \((f.filePath as NSString).lastPathComponent)")
-            lines.append("  { \(parts.joined(separator: ", ")) }")
+        var lines = ["Recent archive activity (\(entries.count)):"]
+        for entry in entries {
+            switch entry {
+            case .session(let s, let recency):
+                lines.append("  { kind: session, id: \(s.id.uuidString), name: \(s.name), type: \(s.isNight ? "night" : "day"), frames: \(s.frameCount), recency: \(shortDate(recency)) }")
+            case .dateGroup(let label, let utcDate, let recency, let count):
+                lines.append("  { kind: date_group, name: \(label), utc_date: \(utcDate), frames: \(count), recency: \(shortDate(recency)) }")
+            case .frame(let f):
+                var parts = [
+                    "kind: frame",
+                    "id: \(f.id.uuidString)",
+                    "level: \(f.processingLevel.rawValue)",
+                    "type: \(f.frameType)",
+                    "added: \(shortDate(f.addedAt))",
+                ]
+                if let v = f.objectName   { parts.append("object: \(v)") }
+                if let v = f.filter       { parts.append("filter: \(v)") }
+                if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
+                parts += frameIdentityParts(f)
+                parts += frameQualityParts(f)
+                parts.append("file: \((f.filePath as NSString).lastPathComponent)")
+                lines.append("  { \(parts.joined(separator: ", ")) }")
+            case .frameSet(let fs):
+                var parts = [
+                    "kind: frameset",
+                    "id: \(fs.id.uuidString)",
+                    "name: \(fs.name)",
+                    "level: \(fs.processingLevel.rawValue)",
+                    "type: \(fs.frameType)",
+                    "frames: \(fs.frameCount)",
+                    "created: \(shortDate(fs.createdAt))",
+                ]
+                if let v = fs.objectName { parts.append("object: \(v)") }
+                if let v = fs.filter     { parts.append("filter: \(v)") }
+                lines.append("  { \(parts.joined(separator: ", ")) }")
+            }
         }
         return lines.joined(separator: "\n")
     }
