@@ -93,8 +93,12 @@ extension Archive {
             ))
         }
 
+        // frameSets(matching:) returns results ORDER BY created_at DESC, so prefix(limit)
+        // gives the most recent ones. We never need more than limit total entries.
         let allFrameSets = try await frameSets(matching: FrameSetQuery())
-        for fs in allFrameSets { entries.append(.frameSet(fs)) }
+        for fs in allFrameSets.prefix(limit ?? allFrameSets.count) {
+            entries.append(.frameSet(fs))
+        }
 
         entries.sort { $0.recency > $1.recency }
         if let limit { return Array(entries.prefix(limit)) }
