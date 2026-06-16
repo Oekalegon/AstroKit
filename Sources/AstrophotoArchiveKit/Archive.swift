@@ -6,7 +6,7 @@ import os
 /// The main archive actor. Thread-safe; all operations are async.
 public actor Archive {
     private let configuration: ArchiveConfiguration
-    private let database: ArchiveDatabase
+    let database: ArchiveDatabase
 
     // nside=64 → ~55 arcmin per pixel; sufficient for astrophotography frame centres.
     private static let resolution = Resolution.nside64
