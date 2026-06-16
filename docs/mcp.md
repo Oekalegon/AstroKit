@@ -1,6 +1,6 @@
-# astrokit-mcp — AstrophotoKit MCP Server
+# astrokit-mcp — AstroKit MCP Server
 
-`astrokit-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server that exposes AstrophotoKit pipelines as tools. Connect it to Claude Desktop, VS Code, or any MCP-compatible client to analyse astrophotos through conversation.
+`astrokit-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server that exposes AstroKit pipelines and archive as tools. Connect it to Claude Desktop, VS Code, or any MCP-compatible client to analyse astrophotos through conversation.
 
 ## Installation
 
@@ -664,6 +664,67 @@ Deletes a frame set. Member frames are **not** removed from the archive.
 | Argument | Type | Required | Description |
 |----------|------|----------|-------------|
 | `id` | string | ✓ | Frame set UUID |
+
+---
+
+## Observing session tools
+
+### `archive_sessions`
+
+Lists observing sessions, newest first. Raw light frames are automatically grouped into sessions by night (sunset-to-sunrise) and imaging site (3 km radius) when site coordinates are present.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `date` | string | | Calendar date `YYYY-MM-DD`. Returns sessions whose night started on this date. |
+| `latest_count` | integer | | Return only the N most recent sessions. Omit for all. |
+| `kind` | string | | Filter by session type: `all` (default), `night`, or `day`. |
+
+**Example:**
+
+```
+archive_sessions(latest_count=5, kind="night")
+archive_sessions(date="2026-04-06")
+```
+
+---
+
+### `archive_backfill_sessions`
+
+Assigns observing sessions to raw light frames that have site coordinates but have not been grouped yet. Safe to call multiple times — already-assigned frames are skipped.
+
+No arguments.
+
+---
+
+### `archive_session_frames`
+
+Lists the raw light frames that belong to an observing session, ordered by timestamp.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `session_id` | string | ✓ | UUID of the observing session (from `archive_sessions`). |
+
+**Example:**
+
+```
+archive_session_frames(session_id="A3F2B1C0-1234-5678-ABCD-EF0123456789")
+```
+
+---
+
+### `archive_frame_session`
+
+Returns the observing session a raw light frame belongs to. Returns null if the frame has no session assigned, or if the frame is not a raw light frame.
+
+| Argument | Type | Required | Description |
+|----------|------|----------|-------------|
+| `frame_id` | string | ✓ | UUID of the frame (from `archive_find` or `archive_recent`). |
+
+**Example:**
+
+```
+archive_frame_session(frame_id="B1C2D3E4-5678-90AB-CDEF-012345678901")
+```
 
 ---
 
