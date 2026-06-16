@@ -295,6 +295,10 @@ extension AP {
                 return
             }
 
+            if output != nil && pipeline.resultType == .metadata {
+                if !json { print("Note: '\(pipelineID)' is a metadata-only pipeline — --output has no effect.") }
+            }
+
             if !json { print("Running '\(pipelineID)'…") }
 
             let start = Date()
