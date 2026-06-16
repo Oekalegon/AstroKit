@@ -51,7 +51,7 @@ let package = Package(
                 // Swift's cross-module optimization (CMO) incorrectly constant-propagates
                 // nonisolated(unsafe) globals (Planet.positionProvider, SphericalPosition.ephemeris)
                 // across module boundaries, producing wrong rise/transit/set results in release builds.
-                .unsafeFlags(["-disable-default-cmo"], .when(configuration: .release))
+                .unsafeFlags(["-Xfrontend", "-disable-cmo"], .when(configuration: .release))
             ]
         ),
         .target(
