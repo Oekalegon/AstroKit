@@ -13,7 +13,7 @@ struct Recent: AsyncParsableCommand {
             help: "Number of items to show (default: 15); 0 or negative shows all.")
     var count: Int = 15
 
-    @Flag(name: .long, help: "Show observing sessions instead of individual frames.")
+    @Flag(name: .long, help: "Show recent activity grouped by session (raw frames → session, processed frames and framesets shown individually).")
     var sessions: Bool = false
 
     @Flag(name: .long, help: "Output as JSON.")
@@ -25,13 +25,156 @@ struct Recent: AsyncParsableCommand {
         let limit   = count > 0 ? count : nil
 
         if sessions {
-            let result = try await (limit != nil
-                ? archive.latestSessions(limit: limit!)
-                : archive.sessions())
-            if json { printJSON(result) } else { printTable(result) }
+            let items = try await recentActivity(archive: archive, limit: limit)
+            if json { printJSON(items) } else { printTable(items) }
         } else {
             let frames = try await archive.recentFrames(limit: limit)
             if json { printJSON(frames) } else { printTable(frames) }
+        }
+    }
+
+    // MARK: - Mixed activity
+
+    private enum RecentEntry {
+        case session(ObservingSession, recency: Date)
+        case frame(ArchivedFrame)
+        case frameSet(ArchivedFrameSet)
+
+        var recency: Date {
+            switch self {
+            case .session(_, let d): return d
+            case .frame(let f):      return f.addedAt
+            case .frameSet(let fs):  return fs.createdAt
+            }
+        }
+    }
+
+    private func recentActivity(archive: Archive, limit: Int?) async throws -> [RecentEntry] {
+        // Fetch more frames than needed to survive session deduplication.
+        let frameLimit = limit.map { max($0 * 20, 50) }
+        let frames = try await archive.recentFrames(limit: frameLimit)
+
+        var entries: [RecentEntry] = []
+        var sessionRecency: [UUID: Date] = [:]
+
+        for frame in frames {
+            if frame.processingLevel == .raw {
+                if let sid = frame.sessionID {
+                    let existing = sessionRecency[sid] ?? .distantPast
+                    if frame.addedAt > existing { sessionRecency[sid] = frame.addedAt }
+                } else {
+                    entries.append(.frame(frame))
+                }
+            } else {
+                entries.append(.frame(frame))
+            }
+        }
+
+        for (sid, recency) in sessionRecency {
+            if let session = try await archive.session(id: sid) {
+                entries.append(.session(session, recency: recency))
+            }
+        }
+
+        let frameSets = try await archive.frameSets(matching: FrameSetQuery())
+        for fs in frameSets {
+            entries.append(.frameSet(fs))
+        }
+
+        entries.sort { $0.recency > $1.recency }
+        if let limit { return Array(entries.prefix(limit)) }
+        return entries
+    }
+
+    // MARK: - Activity table
+
+    private func printTable(_ entries: [RecentEntry]) {
+        if entries.isEmpty {
+            print("No recent activity in archive.")
+            return
+        }
+        let iso = ISO8601DateFormatter()
+        func shortDate(_ date: Date) -> String {
+            String(iso.string(from: date).prefix(16)).replacingOccurrences(of: "T", with: " ")
+        }
+
+        print("Recent archive activity (\(entries.count)):\n")
+        var table = TextTable(columns: [
+            .init("ID"),
+            .init("Date"),
+            .init("Kind"),
+            .init("Name / File"),
+            .init("Count", .right),
+        ])
+        for entry in entries {
+            switch entry {
+            case .session(let s, let recency):
+                let kind = "session·\(s.isNight ? "night" : "day")"
+                table.addRow([s.id.uuidString, shortDate(recency), kind, s.name, "\(s.frameCount)"])
+            case .frame(let f):
+                let kind = "\(f.processingLevel.rawValue)·\(f.frameType)"
+                let name = (f.filePath as NSString).lastPathComponent
+                table.addRow([f.id.uuidString, shortDate(f.addedAt), kind, name, ""])
+            case .frameSet(let fs):
+                table.addRow([fs.id.uuidString, shortDate(fs.createdAt), "frameset", fs.name, "\(fs.frameCount)"])
+            }
+        }
+        print(table.render())
+    }
+
+    // MARK: - Activity JSON
+
+    private func printJSON(_ entries: [RecentEntry]) {
+        let iso = ISO8601DateFormatter()
+        let dicts: [[String: Any]] = entries.map { entry in
+            switch entry {
+            case .session(let s, let recency):
+                var d: [String: Any] = [
+                    "kind":        "session",
+                    "id":          s.id.uuidString,
+                    "name":        s.name,
+                    "is_night":    s.isNight,
+                    "latitude":    s.latitude,
+                    "longitude":   s.longitude,
+                    "frame_count": s.frameCount,
+                    "recency":     iso.string(from: recency),
+                ]
+                if let v = s.startTime { d["start_time"] = iso.string(from: v) }
+                if let v = s.endTime   { d["end_time"]   = iso.string(from: v) }
+                return d
+            case .frame(let f):
+                var d: [String: Any] = [
+                    "kind":             "frame",
+                    "id":               f.id.uuidString,
+                    "file_path":        f.filePath,
+                    "frame_type":       f.frameType,
+                    "processing_level": f.processingLevel.rawValue,
+                    "added_at":         iso.string(from: f.addedAt),
+                ]
+                if let v = f.objectName   { d["object_name"]  = v }
+                if let v = f.filter       { d["filter"]        = v }
+                if let v = f.camera       { d["camera"]        = v }
+                if let v = f.exposureTime { d["exposure_time"] = v }
+                if let v = f.timestamp    { d["timestamp"]     = iso.string(from: v) }
+                return d
+            case .frameSet(let fs):
+                var d: [String: Any] = [
+                    "kind":             "frameset",
+                    "id":               fs.id.uuidString,
+                    "name":             fs.name,
+                    "frame_type":       fs.frameType,
+                    "processing_level": fs.processingLevel.rawValue,
+                    "frame_count":      fs.frameCount,
+                    "created_at":       iso.string(from: fs.createdAt),
+                ]
+                if let v = fs.objectName { d["object_name"] = v }
+                if let v = fs.filter     { d["filter"]       = v }
+                return d
+            }
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: dicts, options: .prettyPrinted),
+           let str = String(data: data, encoding: .utf8) {
+            print(str)
         }
     }
 
@@ -66,36 +209,6 @@ struct Recent: AsyncParsableCommand {
         print(table.render())
     }
 
-    // MARK: - Sessions table
-
-    private func printTable(_ sessions: [ObservingSession]) {
-        if sessions.isEmpty {
-            print("No sessions in archive.")
-            return
-        }
-        let iso = ISO8601DateFormatter()
-        func shortDate(_ date: Date) -> String {
-            String(iso.string(from: date).prefix(16)).replacingOccurrences(of: "T", with: " ")
-        }
-
-        print("Recent observing sessions (\(sessions.count)):\n")
-        var table = TextTable(columns: [
-            .init("ID"),
-            .init("Name"),
-            .init("Kind"),
-            .init("Frames", .right),
-            .init("Start"),
-            .init("End"),
-        ])
-        for s in sessions {
-            let kind  = s.isNight ? "night" : "day"
-            let start = s.startTime.map(shortDate) ?? "-"
-            let end   = s.endTime.map(shortDate) ?? "-"
-            table.addRow([s.id.uuidString, s.name, kind, "\(s.frameCount)", start, end])
-        }
-        print(table.render())
-    }
-
     // MARK: - Frames JSON
 
     private func printJSON(_ frames: [ArchivedFrame]) {
@@ -113,30 +226,6 @@ struct Recent: AsyncParsableCommand {
             if let v = f.camera       { d["camera"]         = v }
             if let v = f.exposureTime { d["exposure_time"]  = v }
             if let v = f.timestamp    { d["timestamp"]      = iso.string(from: v) }
-            return d
-        }
-        if let data = try? JSONSerialization.data(withJSONObject: dicts, options: .prettyPrinted),
-           let str = String(data: data, encoding: .utf8) {
-            print(str)
-        }
-    }
-
-    // MARK: - Sessions JSON
-
-    private func printJSON(_ sessions: [ObservingSession]) {
-        let iso = ISO8601DateFormatter()
-        let dicts: [[String: Any]] = sessions.map { s in
-            var d: [String: Any] = [
-                "id":          s.id.uuidString,
-                "name":        s.name,
-                "is_night":    s.isNight,
-                "latitude":    s.latitude,
-                "longitude":   s.longitude,
-                "frame_count": s.frameCount,
-                "added_at":    iso.string(from: s.addedAt),
-            ]
-            if let v = s.startTime { d["start_time"] = iso.string(from: v) }
-            if let v = s.endTime   { d["end_time"]   = iso.string(from: v) }
             return d
         }
         if let data = try? JSONSerialization.data(withJSONObject: dicts, options: .prettyPrinted),

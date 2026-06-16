@@ -409,12 +409,98 @@ struct ArchiveTools {
             }
             return lines.joined(separator: "\n")
         } else {
-            let sessions = try await (limit != nil
-                ? archive.latestSessions(limit: limit!)
-                : archive.sessions())
-            if sessions.isEmpty { return "No sessions in archive." }
-            return sessions.map { formatSession($0) }.joined(separator: "\n\n")
+            return try await formatRecentActivity(archive: archive, limit: limit)
         }
+    }
+
+    private func formatRecentActivity(archive: Archive, limit: Int?) async throws -> String {
+        let frameLimit = limit.map { max($0 * 20, 50) }
+        let frames = try await archive.recentFrames(limit: frameLimit)
+
+        enum Entry {
+            case session(ObservingSession, recency: Date)
+            case frame(ArchivedFrame)
+            case frameSet(ArchivedFrameSet)
+            var recency: Date {
+                switch self {
+                case .session(_, let d): return d
+                case .frame(let f):      return f.addedAt
+                case .frameSet(let fs):  return fs.createdAt
+                }
+            }
+        }
+
+        var entries: [Entry] = []
+        var sessionRecency: [UUID: Date] = [:]
+
+        for frame in frames {
+            if frame.processingLevel == .raw {
+                if let sid = frame.sessionID {
+                    let existing = sessionRecency[sid] ?? .distantPast
+                    if frame.addedAt > existing { sessionRecency[sid] = frame.addedAt }
+                } else {
+                    entries.append(.frame(frame))
+                }
+            } else {
+                entries.append(.frame(frame))
+            }
+        }
+
+        for (sid, recency) in sessionRecency {
+            if let session = try await archive.session(id: sid) {
+                entries.append(.session(session, recency: recency))
+            }
+        }
+
+        let frameSets = try await archive.frameSets(matching: FrameSetQuery())
+        for fs in frameSets { entries.append(.frameSet(fs)) }
+
+        entries.sort { $0.recency > $1.recency }
+        if let limit { entries = Array(entries.prefix(limit)) }
+
+        if entries.isEmpty { return "No recent activity in archive." }
+
+        let iso = ISO8601DateFormatter()
+        func shortDate(_ date: Date) -> String {
+            String(iso.string(from: date).prefix(16)).replacingOccurrences(of: "T", with: " ")
+        }
+
+        var lines = ["Recent archive activity (\(entries.count)):"]
+        for entry in entries {
+            switch entry {
+            case .session(let s, let recency):
+                lines.append("  { kind: session, id: \(s.id.uuidString), name: \(s.name), type: \(s.isNight ? "night" : "day"), frames: \(s.frameCount), recency: \(shortDate(recency)) }")
+            case .frame(let f):
+                var parts = [
+                    "kind: frame",
+                    "id: \(f.id.uuidString)",
+                    "level: \(f.processingLevel.rawValue)",
+                    "type: \(f.frameType)",
+                    "added: \(shortDate(f.addedAt))",
+                ]
+                if let v = f.objectName   { parts.append("object: \(v)") }
+                if let v = f.filter       { parts.append("filter: \(v)") }
+                if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
+                parts += frameIdentityParts(f)
+                parts += frameQualityParts(f)
+                parts.append("file: \((f.filePath as NSString).lastPathComponent)")
+                lines.append("  { \(parts.joined(separator: ", ")) }")
+            case .frameSet(let fs):
+                var parts = [
+                    "kind: frameset",
+                    "id: \(fs.id.uuidString)",
+                    "name: \(fs.name)",
+                    "level: \(fs.processingLevel.rawValue)",
+                    "type: \(fs.frameType)",
+                    "frames: \(fs.frameCount)",
+                    "created: \(shortDate(fs.createdAt))",
+                ]
+                if let v = fs.objectName { parts.append("object: \(v)") }
+                if let v = fs.filter     { parts.append("filter: \(v)") }
+                lines.append("  { \(parts.joined(separator: ", ")) }")
+            }
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func archiveListObjects() async throws -> String {
