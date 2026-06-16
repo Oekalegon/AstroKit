@@ -409,24 +409,28 @@ struct Tools {
 
         var lines = [
             "Pipeline '\(pipelineID)' completed in \(String(format: "%.2f", elapsed))s.",
-            "\(frames.count) frame(s) produced, \(tables.count) table(s) produced.\(savedNote)",
         ]
 
-        for (i, table) in tables.enumerated() {
-            guard let df = table.dataFrame else { continue }
-            let cols = df.columns.map { $0.name }
-            lines.append("")
-            lines.append("Table \(i + 1) — \(df.rows.count) rows, columns: \(cols.joined(separator: ", "))")
-            for row in df.rows.prefix(50) {
-                let entries = cols.compactMap { col -> String? in
-                    guard let v = row[col] else { return nil }
-                    if let d = v as? Double { return "\(col): \(String(format: "%.4f", d))" }
-                    if let f = v as? Float  { return "\(col): \(String(format: "%.4f", f))" }
-                    return "\(col): \(v)"
+        if pipeline.resultType == .metadata {
+            lines.append("Metadata updated on input frame(s).\(savedNote)")
+        } else {
+            lines.append("\(frames.count) frame(s) produced, \(tables.count) table(s) produced.\(savedNote)")
+            for (i, table) in tables.enumerated() {
+                guard let df = table.dataFrame else { continue }
+                let cols = df.columns.map { $0.name }
+                lines.append("")
+                lines.append("Table \(i + 1) — \(df.rows.count) rows, columns: \(cols.joined(separator: ", "))")
+                for row in df.rows.prefix(50) {
+                    let entries = cols.compactMap { col -> String? in
+                        guard let v = row[col] else { return nil }
+                        if let d = v as? Double { return "\(col): \(String(format: "%.4f", d))" }
+                        if let f = v as? Float  { return "\(col): \(String(format: "%.4f", f))" }
+                        return "\(col): \(v)"
+                    }
+                    lines.append("  { \(entries.joined(separator: ", ")) }")
                 }
-                lines.append("  { \(entries.joined(separator: ", ")) }")
+                if df.rows.count > 50 { lines.append("  … \(df.rows.count - 50) more rows omitted.") }
             }
-            if df.rows.count > 50 { lines.append("  … \(df.rows.count - 50) more rows omitted.") }
         }
 
         return lines.joined(separator: "\n")
