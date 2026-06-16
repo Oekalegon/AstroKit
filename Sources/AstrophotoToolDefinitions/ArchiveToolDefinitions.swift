@@ -219,7 +219,7 @@ public enum ArchiveToolDefinitions {
         ],
         [
             "name": "archive_recent",
-            "description": "List the most recently added items in the archive, newest first. By default returns observing sessions; pass mode=\"frames\" to get individual frames instead.",
+            "description": "List the most recently added items in the archive, newest first. By default returns a mixed activity feed (mode=\"sessions\"); pass mode=\"frames\" to get individual frames instead.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -230,7 +230,7 @@ public enum ArchiveToolDefinitions {
                     "mode": [
                         "type": "string",
                         "enum": ["sessions", "frames"],
-                        "description": "What to list: \"sessions\" (default) returns observing sessions grouped by night/day; \"frames\" returns individual raw frames.",
+                        "description": "What to list: \"sessions\" (default) returns a mixed activity feed — observing sessions for GPS-tagged raw frames, UTC-date groups for raw frames without site coordinates, processed frames individually, and framesets; \"frames\" returns individual raw frames only.",
                     ],
                 ] as [String: Any],
                 "required": [],
