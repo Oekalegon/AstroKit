@@ -419,25 +419,53 @@ struct ArchiveTools {
 
         enum Entry {
             case session(ObservingSession, recency: Date)
+            case dateGroup(label: String, utcDate: String, recency: Date, frameCount: Int)
             case frame(ArchivedFrame)
             case frameSet(ArchivedFrameSet)
             var recency: Date {
                 switch self {
-                case .session(_, let d): return d
-                case .frame(let f):      return f.addedAt
-                case .frameSet(let fs):  return fs.createdAt
+                case .session(_, let d):         return d
+                case .dateGroup(_, _, let d, _): return d
+                case .frame(let f):              return f.addedAt
+                case .frameSet(let fs):          return fs.createdAt
                 }
             }
         }
 
         var entries: [Entry] = []
         var sessionRecency: [UUID: Date] = [:]
+        var dateGroups: [String: (recency: Date, count: Int)] = [:]
+
+        var utcCal = Calendar(identifier: .gregorian)
+        utcCal.timeZone = TimeZone(identifier: "UTC")!
+        let labelFmt: DateFormatter = {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "d MMM yyyy"
+            f.timeZone = TimeZone(identifier: "UTC")
+            return f
+        }()
+        let isoDateFmt: DateFormatter = {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "yyyy-MM-dd"
+            f.timeZone = TimeZone(identifier: "UTC")
+            return f
+        }()
 
         for frame in frames {
             if frame.processingLevel == .raw {
                 if let sid = frame.sessionID {
                     let existing = sessionRecency[sid] ?? .distantPast
                     if frame.addedAt > existing { sessionRecency[sid] = frame.addedAt }
+                } else if let ts = frame.timestamp {
+                    let comps = utcCal.dateComponents([.year, .month, .day], from: ts)
+                    let key = String(format: "%04d-%02d-%02d", comps.year!, comps.month!, comps.day!)
+                    let existing = dateGroups[key] ?? (.distantPast, 0)
+                    dateGroups[key] = (
+                        recency: frame.addedAt > existing.recency ? frame.addedAt : existing.recency,
+                        count:   existing.count + 1
+                    )
                 } else {
                     entries.append(.frame(frame))
                 }
@@ -450,6 +478,16 @@ struct ArchiveTools {
             if let session = try await archive.session(id: sid) {
                 entries.append(.session(session, recency: recency))
             }
+        }
+
+        for (key, group) in dateGroups {
+            let date = isoDateFmt.date(from: key) ?? .distantPast
+            entries.append(.dateGroup(
+                label:      labelFmt.string(from: date),
+                utcDate:    key,
+                recency:    group.recency,
+                frameCount: group.count
+            ))
         }
 
         let frameSets = try await archive.frameSets(matching: FrameSetQuery())
@@ -470,6 +508,8 @@ struct ArchiveTools {
             switch entry {
             case .session(let s, let recency):
                 lines.append("  { kind: session, id: \(s.id.uuidString), name: \(s.name), type: \(s.isNight ? "night" : "day"), frames: \(s.frameCount), recency: \(shortDate(recency)) }")
+            case .dateGroup(let label, let utcDate, let recency, let count):
+                lines.append("  { kind: date_group, name: \(label), utc_date: \(utcDate), frames: \(count), recency: \(shortDate(recency)) }")
             case .frame(let f):
                 var parts = [
                     "kind: frame",
