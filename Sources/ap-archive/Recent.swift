@@ -79,7 +79,7 @@ struct Recent: AsyncParsableCommand {
                 if let sid = frame.sessionID {
                     let existing = sessionRecency[sid] ?? .distantPast
                     if frame.addedAt > existing { sessionRecency[sid] = frame.addedAt }
-                } else if let ts = frame.timestamp {
+                } else if frame.processingRunID == nil, let ts = frame.timestamp {
                     let comps = utcCal.dateComponents([.year, .month, .day], from: ts)
                     let key = String(format: "%04d-%02d-%02d", comps.year!, comps.month!, comps.day!)
                     let existing = dateGroups[key] ?? (.distantPast, 0)
