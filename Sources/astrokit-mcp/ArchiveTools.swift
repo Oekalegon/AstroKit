@@ -379,32 +379,42 @@ struct ArchiveTools {
     private func archiveRecent(_ args: [String: Any]) async throws -> String {
         let limitArg = args["limit"] as? Int ?? 15
         let limit: Int? = limitArg > 0 ? limitArg : nil
-        let archive = try makeArchive()
-        let frames  = try await archive.recentFrames(limit: limit)
-        if frames.isEmpty { return "No frames in archive." }
+        let mode     = args["mode"] as? String ?? "sessions"
+        let archive  = try makeArchive()
 
-        let iso = ISO8601DateFormatter()
-        func shortDate(_ date: Date) -> String {
-            String(iso.string(from: date).prefix(16)).replacingOccurrences(of: "T", with: " ")
-        }
+        if mode == "frames" {
+            let frames = try await archive.recentFrames(limit: limit)
+            if frames.isEmpty { return "No frames in archive." }
 
-        var lines = ["Recently archived frames (\(frames.count)):"]
-        for f in frames {
-            var parts: [String] = [
-                "id: \(f.id.uuidString)",
-                "type: \(f.frameType)",
-                "added: \(shortDate(f.addedAt))",
-            ]
-            if let v = f.objectName   { parts.append("object: \(v)") }
-            if let v = f.filter       { parts.append("filter: \(v)") }
-            if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
-            if let v = f.timestamp    { parts.append("date: \(shortDate(v))") }
-            parts += frameIdentityParts(f)
-            parts += frameQualityParts(f)
-            parts.append("file: \((f.filePath as NSString).lastPathComponent)")
-            lines.append("  { \(parts.joined(separator: ", ")) }")
+            let iso = ISO8601DateFormatter()
+            func shortDate(_ date: Date) -> String {
+                String(iso.string(from: date).prefix(16)).replacingOccurrences(of: "T", with: " ")
+            }
+
+            var lines = ["Recently archived frames (\(frames.count)):"]
+            for f in frames {
+                var parts: [String] = [
+                    "id: \(f.id.uuidString)",
+                    "type: \(f.frameType)",
+                    "added: \(shortDate(f.addedAt))",
+                ]
+                if let v = f.objectName   { parts.append("object: \(v)") }
+                if let v = f.filter       { parts.append("filter: \(v)") }
+                if let v = f.exposureTime { parts.append(String(format: "exp: %.0fs", v)) }
+                if let v = f.timestamp    { parts.append("date: \(shortDate(v))") }
+                parts += frameIdentityParts(f)
+                parts += frameQualityParts(f)
+                parts.append("file: \((f.filePath as NSString).lastPathComponent)")
+                lines.append("  { \(parts.joined(separator: ", ")) }")
+            }
+            return lines.joined(separator: "\n")
+        } else {
+            let sessions = try await (limit != nil
+                ? archive.latestSessions(limit: limit!)
+                : archive.sessions())
+            if sessions.isEmpty { return "No sessions in archive." }
+            return sessions.map { formatSession($0) }.joined(separator: "\n\n")
         }
-        return lines.joined(separator: "\n")
     }
 
     private func archiveListObjects() async throws -> String {
