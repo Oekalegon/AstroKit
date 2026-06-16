@@ -65,6 +65,9 @@ struct Tools {
             "Name: \(pipeline.name)",
         ]
         if let desc = pipeline.description { lines.append("Description: \(desc)") }
+        if pipeline.resultType == .metadata {
+            lines.append("Result type: metadata (updates input frame metadata; produces no output files)")
+        }
         lines.append("")
         lines.append("Inputs (\(inputNames.count)): \(inputNames.joined(separator: ", "))")
         lines.append("Steps: \(pipeline.steps.count)")
@@ -335,9 +338,9 @@ struct Tools {
         let tables = outputs.compactMap { $0 as? TableData }.filter { $0.isInstantiated }
         let frames = outputs.compactMap { $0 as? Frame }.filter { $0.isInstantiated }
 
-        // Save output if requested
+        // Save output if requested (skip for metadata-only pipelines — they produce no files)
         var savedNote = ""
-        if let outPath = outputPath {
+        if let outPath = outputPath, pipeline.resultType != .metadata {
             if let firstFrame = frames.first, let firstTable = tables.first,
                let df = firstTable.dataFrame, outputFormat.lowercased() != "csv" {
                 // Stacked image + registration table → combined FITS
@@ -382,7 +385,8 @@ struct Tools {
         }
 
         // Auto-archive result frames when an archive is configured.
-        if !frames.isEmpty {
+        // Metadata-only pipelines update the source frame in place; they produce no new files.
+        if !frames.isEmpty && pipeline.resultType != .metadata {
             let archiveNote = await autoArchiveResults(
                 frames: frames,
                 pipelineID: pipelineID,
@@ -405,24 +409,28 @@ struct Tools {
 
         var lines = [
             "Pipeline '\(pipelineID)' completed in \(String(format: "%.2f", elapsed))s.",
-            "\(frames.count) frame(s) produced, \(tables.count) table(s) produced.\(savedNote)",
         ]
 
-        for (i, table) in tables.enumerated() {
-            guard let df = table.dataFrame else { continue }
-            let cols = df.columns.map { $0.name }
-            lines.append("")
-            lines.append("Table \(i + 1) — \(df.rows.count) rows, columns: \(cols.joined(separator: ", "))")
-            for row in df.rows.prefix(50) {
-                let entries = cols.compactMap { col -> String? in
-                    guard let v = row[col] else { return nil }
-                    if let d = v as? Double { return "\(col): \(String(format: "%.4f", d))" }
-                    if let f = v as? Float  { return "\(col): \(String(format: "%.4f", f))" }
-                    return "\(col): \(v)"
+        if pipeline.resultType == .metadata {
+            lines.append("Metadata updated on input frame(s).\(savedNote)")
+        } else {
+            lines.append("\(frames.count) frame(s) produced, \(tables.count) table(s) produced.\(savedNote)")
+            for (i, table) in tables.enumerated() {
+                guard let df = table.dataFrame else { continue }
+                let cols = df.columns.map { $0.name }
+                lines.append("")
+                lines.append("Table \(i + 1) — \(df.rows.count) rows, columns: \(cols.joined(separator: ", "))")
+                for row in df.rows.prefix(50) {
+                    let entries = cols.compactMap { col -> String? in
+                        guard let v = row[col] else { return nil }
+                        if let d = v as? Double { return "\(col): \(String(format: "%.4f", d))" }
+                        if let f = v as? Float  { return "\(col): \(String(format: "%.4f", f))" }
+                        return "\(col): \(v)"
+                    }
+                    lines.append("  { \(entries.joined(separator: ", ")) }")
                 }
-                lines.append("  { \(entries.joined(separator: ", ")) }")
+                if df.rows.count > 50 { lines.append("  … \(df.rows.count - 50) more rows omitted.") }
             }
-            if df.rows.count > 50 { lines.append("  … \(df.rows.count - 50) more rows omitted.") }
         }
 
         return lines.joined(separator: "\n")
