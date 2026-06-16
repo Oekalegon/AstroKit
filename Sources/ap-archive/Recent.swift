@@ -25,103 +25,12 @@ struct Recent: AsyncParsableCommand {
         let limit   = count > 0 ? count : nil
 
         if sessions {
-            let items = try await recentActivity(archive: archive, limit: limit)
+            let items = try await archive.recentActivity(limit: limit)
             if json { printJSON(items) } else { printTable(items) }
         } else {
             let frames = try await archive.recentFrames(limit: limit)
             if json { printJSON(frames) } else { printTable(frames) }
         }
-    }
-
-    // MARK: - Mixed activity
-
-    private enum RecentEntry {
-        case session(ObservingSession, recency: Date)
-        /// Raw light frames without site coords, grouped by UTC observation date.
-        case dateGroup(label: String, utcDate: String, recency: Date, frameCount: Int)
-        case frame(ArchivedFrame)
-        case frameSet(ArchivedFrameSet)
-
-        var recency: Date {
-            switch self {
-            case .session(_, let d):          return d
-            case .dateGroup(_, _, let d, _):  return d
-            case .frame(let f):               return f.addedAt
-            case .frameSet(let fs):           return fs.createdAt
-            }
-        }
-    }
-
-    private func recentActivity(archive: Archive, limit: Int?) async throws -> [RecentEntry] {
-        let frameLimit = limit.map { max($0 * 20, 50) }
-        let frames = try await archive.recentFrames(limit: frameLimit)
-
-        var entries: [RecentEntry] = []
-        var sessionRecency: [UUID: Date] = [:]
-        // dateKey → (mostRecentAddedAt, frameCount)
-        var dateGroups: [String: (recency: Date, count: Int)] = [:]
-
-        let utcCal: Calendar = {
-            var c = Calendar(identifier: .gregorian)
-            c.timeZone = TimeZone(identifier: "UTC")!
-            return c
-        }()
-        let dateFmt: DateFormatter = {
-            let f = DateFormatter()
-            f.locale = Locale(identifier: "en_US_POSIX")
-            f.dateFormat = "d MMM yyyy"
-            f.timeZone = TimeZone(identifier: "UTC")
-            return f
-        }()
-
-        for frame in frames {
-            if frame.processingLevel == .raw {
-                if let sid = frame.sessionID {
-                    let existing = sessionRecency[sid] ?? .distantPast
-                    if frame.addedAt > existing { sessionRecency[sid] = frame.addedAt }
-                } else if frame.processingRunID == nil, let ts = frame.timestamp {
-                    let comps = utcCal.dateComponents([.year, .month, .day], from: ts)
-                    let key = String(format: "%04d-%02d-%02d", comps.year!, comps.month!, comps.day!)
-                    let existing = dateGroups[key] ?? (.distantPast, 0)
-                    dateGroups[key] = (
-                        recency: frame.addedAt > existing.recency ? frame.addedAt : existing.recency,
-                        count:   existing.count + 1
-                    )
-                } else {
-                    entries.append(.frame(frame))
-                }
-            } else {
-                entries.append(.frame(frame))
-            }
-        }
-
-        for (sid, recency) in sessionRecency {
-            if let session = try await archive.session(id: sid) {
-                entries.append(.session(session, recency: recency))
-            }
-        }
-
-        for (key, group) in dateGroups {
-            // Parse key back to a Date for the human-readable label.
-            let isoFmt = DateFormatter()
-            isoFmt.locale = Locale(identifier: "en_US_POSIX")
-            isoFmt.dateFormat = "yyyy-MM-dd"
-            isoFmt.timeZone = TimeZone(identifier: "UTC")
-            let date = isoFmt.date(from: key) ?? .distantPast
-            entries.append(.dateGroup(
-                label:      dateFmt.string(from: date),
-                utcDate:    key,
-                recency:    group.recency,
-                frameCount: group.count
-            ))
-        }
-
-        let frameSets = try await archive.frameSets(matching: FrameSetQuery())
-        for fs in frameSets { entries.append(.frameSet(fs)) }
-
-        entries.sort { $0.recency > $1.recency }
-        if let limit { return Array(entries.prefix(limit)) }
-        return entries
     }
 
     // MARK: - Activity table

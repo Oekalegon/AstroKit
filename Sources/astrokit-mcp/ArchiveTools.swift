@@ -409,95 +409,13 @@ struct ArchiveTools {
             }
             return lines.joined(separator: "\n")
         } else {
-            return try await formatRecentActivity(archive: archive, limit: limit)
+            let entries = try await archive.recentActivity(limit: limit)
+            if entries.isEmpty { return "No recent activity in archive." }
+            return formatRecentActivity(entries)
         }
     }
 
-    private func formatRecentActivity(archive: Archive, limit: Int?) async throws -> String {
-        let frameLimit = limit.map { max($0 * 20, 50) }
-        let frames = try await archive.recentFrames(limit: frameLimit)
-
-        enum Entry {
-            case session(ObservingSession, recency: Date)
-            case dateGroup(label: String, utcDate: String, recency: Date, frameCount: Int)
-            case frame(ArchivedFrame)
-            case frameSet(ArchivedFrameSet)
-            var recency: Date {
-                switch self {
-                case .session(_, let d):         return d
-                case .dateGroup(_, _, let d, _): return d
-                case .frame(let f):              return f.addedAt
-                case .frameSet(let fs):          return fs.createdAt
-                }
-            }
-        }
-
-        var entries: [Entry] = []
-        var sessionRecency: [UUID: Date] = [:]
-        var dateGroups: [String: (recency: Date, count: Int)] = [:]
-
-        var utcCal = Calendar(identifier: .gregorian)
-        utcCal.timeZone = TimeZone(identifier: "UTC")!
-        let labelFmt: DateFormatter = {
-            let f = DateFormatter()
-            f.locale = Locale(identifier: "en_US_POSIX")
-            f.dateFormat = "d MMM yyyy"
-            f.timeZone = TimeZone(identifier: "UTC")
-            return f
-        }()
-        let isoDateFmt: DateFormatter = {
-            let f = DateFormatter()
-            f.locale = Locale(identifier: "en_US_POSIX")
-            f.dateFormat = "yyyy-MM-dd"
-            f.timeZone = TimeZone(identifier: "UTC")
-            return f
-        }()
-
-        for frame in frames {
-            if frame.processingLevel == .raw {
-                if let sid = frame.sessionID {
-                    let existing = sessionRecency[sid] ?? .distantPast
-                    if frame.addedAt > existing { sessionRecency[sid] = frame.addedAt }
-                } else if frame.processingRunID == nil, let ts = frame.timestamp {
-                    let comps = utcCal.dateComponents([.year, .month, .day], from: ts)
-                    let key = String(format: "%04d-%02d-%02d", comps.year!, comps.month!, comps.day!)
-                    let existing = dateGroups[key] ?? (.distantPast, 0)
-                    dateGroups[key] = (
-                        recency: frame.addedAt > existing.recency ? frame.addedAt : existing.recency,
-                        count:   existing.count + 1
-                    )
-                } else {
-                    entries.append(.frame(frame))
-                }
-            } else {
-                entries.append(.frame(frame))
-            }
-        }
-
-        for (sid, recency) in sessionRecency {
-            if let session = try await archive.session(id: sid) {
-                entries.append(.session(session, recency: recency))
-            }
-        }
-
-        for (key, group) in dateGroups {
-            let date = isoDateFmt.date(from: key) ?? .distantPast
-            entries.append(.dateGroup(
-                label:      labelFmt.string(from: date),
-                utcDate:    key,
-                recency:    group.recency,
-                frameCount: group.count
-            ))
-        }
-
-        let frameSets = try await archive.frameSets(matching: FrameSetQuery())
-        for fs in frameSets { entries.append(.frameSet(fs)) }
-
-        entries.sort { $0.recency > $1.recency }
-        if let limit { entries = Array(entries.prefix(limit)) }
-
-        if entries.isEmpty { return "No recent activity in archive." }
-
+    private func formatRecentActivity(_ entries: [RecentEntry]) -> String {
         let iso = ISO8601DateFormatter()
         func shortDate(_ date: Date) -> String {
             String(iso.string(from: date).prefix(16)).replacingOccurrences(of: "T", with: " ")
