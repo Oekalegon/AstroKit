@@ -21,7 +21,7 @@
 title: AstroKit
 email: your-email@example.com
 description: >- # this means to ignore newlines until "baseurl:"
-  A Swift package for astrophotography — astronomy calculations, GPU-accelerated image processing, FITS archive, and an MCP server for Claude.
+  A unified Swift package bundling celestial dynamics, astrophotography image processing, and FITS archive management.
 baseurl: "/AstroKit"   # Repo name, important for GitHub Pages
 url: "https://oekalegon.github.io"  # GitHub username (lowercase)
 github_username:  Oekalegon
@@ -29,7 +29,7 @@ github_username:  Oekalegon
 # Author settings (required by jekyll-klise theme)
 author:
   name: AstroKit
-  bio: A Swift package for astrophotography — astronomy calculations, image processing, and archive
+  bio: Celestial dynamics, astrophotography image processing, and FITS archive management
   avatar: /assets/images/astrophotokit.png
 
 # Build settings

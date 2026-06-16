@@ -2,7 +2,7 @@
 
 # AstroKit
 
-A Swift package for astrophotography — astronomy calculations, GPU-accelerated image processing, a FITS archive, and an MCP server for Claude. Reads and writes FITS files via CFITSIO, runs Metal-based processing pipelines, and auto-groups your frames into observing sessions.
+A unified Swift package bundling celestial dynamics, astrophotography image processing, and FITS archive management — together with a pipeline CLI, an archive CLI, and an MCP server for Claude.
 
 ## Documentation
 

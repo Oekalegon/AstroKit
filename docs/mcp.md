@@ -1,6 +1,6 @@
 # astrokit-mcp — AstroKit MCP Server
 
-`astrokit-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server that exposes AstroKit pipelines and archive as tools. Connect it to Claude Desktop, VS Code, or any MCP-compatible client to analyse astrophotos through conversation.
+`astrokit-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server that exposes AstrophotoKit pipelines and the AstrophotoArchiveKit archive as tools. Connect it to Claude Desktop, VS Code, or any MCP-compatible client to analyse astrophotos through conversation.
 
 ## Installation
 

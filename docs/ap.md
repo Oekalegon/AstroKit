@@ -1,6 +1,6 @@
-# ap — AstroKit CLI
+# ap — AstrophotoKit CLI
 
-`ap` is the command-line interface for AstroKit. It lets you run any registered pipeline directly on FITS files from a terminal.
+`ap` is the command-line interface for AstrophotoKit. It lets you run any registered pipeline directly on FITS files from a terminal.
 
 ## Installation
 
