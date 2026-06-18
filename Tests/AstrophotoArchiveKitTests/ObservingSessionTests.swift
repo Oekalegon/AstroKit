@@ -111,25 +111,22 @@ struct ObservingSessionTests {
 
     // MARK: - session(forFrame:) filtering
 
-    @Test("session(forFrame:) returns nil for a dark frame even when session_id is assigned")
-    func sessionForDarkFrameIsNil() async throws {
+    @Test("session(forFrame:) returns the session for a dark frame with a session_id assigned")
+    func sessionForDarkFrameReturnsSession() async throws {
         let (db, url) = try makeSessionDB()
         defer { try? FileManager.default.removeItem(at: url) }
 
-        // Create a valid session via a raw light frame.
-        let lightFrame = makeFrame(lat: osloLat, lon: osloLon, timestamp: osloNightTS)
-        _ = try await db.insertFrame(lightFrame, deduplicate: false)
-        let sid = try await db.findOrCreateSession(timestamp: osloNightTS, latDeg: osloLat, lonDeg: osloLon)
-        try await db.updateSessionID(frameID: lightFrame.id, sessionID: sid)
-
-        // Insert a dark frame with that same session_id explicitly pre-set.
-        let darkFrame = makeFrame(lat: osloLat, lon: osloLon, timestamp: osloNightTS,
-                                   frameType: "dark", sessionID: sid)
+        // Create a calibration session and assign a dark frame to it.
+        let darkFrame = makeFrame(lat: osloLat, lon: osloLon, timestamp: osloNightTS, frameType: "dark")
         _ = try await db.insertFrame(darkFrame, deduplicate: false)
+        let sid = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: osloNightTS,
+            exposureTime: 300, temperature: -10, filter: nil)
+        try await db.updateSessionID(frameID: darkFrame.id, sessionID: sid)
 
-        // session(forFrame:) must return nil because dark frames are excluded by the filter.
         let result = try await db.session(forFrame: darkFrame.id)
-        #expect(result == nil, "session(forFrame:) must return nil for a dark frame")
+        #expect(result != nil, "session(forFrame:) must return the calibration session for a dark frame")
+        #expect(result?.calibrationFrameType == "dark")
     }
 
     @Test("session(forFrame:) returns nil for a processed (non-raw) light frame")
@@ -202,24 +199,26 @@ struct ObservingSessionTests {
         #expect(frames[1].id == f2.id)
     }
 
-    @Test("frames(inSession:) excludes dark frames even when they share session_id")
-    func framesInSessionExcludesDarkFrames() async throws {
+    @Test("frames(inSession:) returns all raw frames including calibration types")
+    func framesInSessionIncludesAllTypes() async throws {
         let (db, url) = try makeSessionDB()
         defer { try? FileManager.default.removeItem(at: url) }
 
-        let light = makeFrame(lat: osloLat, lon: osloLon, timestamp: osloNightTS)
-        _ = try await db.insertFrame(light, deduplicate: false)
-        try await db.backfillSessions()
-        let sid = try #require(try await db.frameByID(light.id)?.sessionID)
-
-        // Dark frame manually assigned to the same session.
-        let dark = makeFrame(lat: osloLat, lon: osloLon, timestamp: osloNightTS,
-                              frameType: "dark", sessionID: sid)
-        _ = try await db.insertFrame(dark, deduplicate: false)
+        // Create a calibration session and assign two dark frames to it.
+        let ts1 = osloNightTS
+        let ts2 = osloNightTS.addingTimeInterval(10)
+        let dark1 = makeFrame(lat: osloLat, lon: osloLon, timestamp: ts1, frameType: "dark")
+        let dark2 = makeFrame(lat: osloLat, lon: osloLon, timestamp: ts2, frameType: "dark")
+        _ = try await db.insertFrame(dark1, deduplicate: false)
+        _ = try await db.insertFrame(dark2, deduplicate: false)
+        let sid = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: ts1,
+            exposureTime: 300, temperature: -10, filter: nil)
+        try await db.updateSessionID(frameID: dark1.id, sessionID: sid)
+        try await db.updateSessionID(frameID: dark2.id, sessionID: sid)
 
         let frames = try await db.frames(inSession: sid)
-        #expect(frames.count == 1, "Dark frame must not appear in frames(inSession:)")
-        #expect(frames[0].id == light.id)
+        #expect(frames.count == 2, "Both dark frames should appear in frames(inSession:)")
     }
 
     // MARK: - Polar night classification (DB level)
@@ -290,6 +289,160 @@ struct ObservingSessionTests {
     }
 }
 
+// MARK: - Calibration session tests
+
+@Suite("Calibration sessions — findOrCreateCalibrationSession and backfill")
+struct CalibrationSessionTests {
+
+    @Test("consecutive dark frames join the same session")
+    func consecutiveDarksShareSession() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+        // Three consecutive 300s darks at -10°C, 5 seconds apart.
+        let sid1 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base,
+            exposureTime: 300, temperature: -10, filter: nil)
+        let sid2 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base.addingTimeInterval(305),
+            exposureTime: 300, temperature: -10, filter: nil)
+        let sid3 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base.addingTimeInterval(610),
+            exposureTime: 300, temperature: -10, filter: nil)
+
+        #expect(sid1 == sid2, "Consecutive darks should share a session")
+        #expect(sid2 == sid3, "Consecutive darks should share a session")
+
+        let session = try await db.session(id: sid1)
+        #expect(session?.frameCount == 3)
+        #expect(session?.calibrationFrameType == "dark")
+    }
+
+    @Test("dark frames with a large gap get separate sessions")
+    func gappedDarksGetSeparateSessions() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+        // Two darks separated by more than 300 seconds after end time (300s exposure + 600s gap).
+        let sid1 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base,
+            exposureTime: 300, temperature: -10, filter: nil)
+        let sid2 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base.addingTimeInterval(300 + 301),
+            exposureTime: 300, temperature: -10, filter: nil)
+
+        #expect(sid1 != sid2, "Darks with a gap > threshold should be in separate sessions")
+    }
+
+    @Test("dark frames at different temperatures get separate sessions")
+    func darksDifferentTempsGetSeparateSessions() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+        let sid1 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base,
+            exposureTime: 300, temperature: -10, filter: nil)
+        let sid2 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base.addingTimeInterval(305),
+            exposureTime: 300, temperature: 0, filter: nil)
+
+        #expect(sid1 != sid2, "Darks at different temperatures should be in separate sessions")
+    }
+
+    @Test("flat frames with different filters get separate sessions")
+    func flatsDifferentFiltersGetSeparateSessions() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+        let sid1 = try await db.findOrCreateCalibrationSession(
+            frameType: "flat", timestamp: base,
+            exposureTime: 5, temperature: nil, filter: "Hα")
+        let sid2 = try await db.findOrCreateCalibrationSession(
+            frameType: "flat", timestamp: base.addingTimeInterval(6),
+            exposureTime: 5, temperature: nil, filter: "OIII")
+
+        #expect(sid1 != sid2, "Flats with different filters should be in separate sessions")
+    }
+
+    @Test("calibration session name follows display-name convention")
+    func calibrationSessionNames() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let ts = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+
+        let darkID = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: ts,
+            exposureTime: 300, temperature: -10, filter: nil)
+        let flatID = try await db.findOrCreateCalibrationSession(
+            frameType: "flat", timestamp: ts,
+            exposureTime: 5, temperature: nil, filter: "OIII")
+        let biasID = try await db.findOrCreateCalibrationSession(
+            frameType: "bias", timestamp: ts,
+            exposureTime: 0, temperature: nil, filter: nil)
+
+        let darkSession = try await db.session(id: darkID)
+        let flatSession = try await db.session(id: flatID)
+        let biasSession = try await db.session(id: biasID)
+
+        #expect(darkSession?.name.contains("Darks") == true)
+        #expect(darkSession?.name.contains("-10°C") == true)
+        #expect(flatSession?.name.contains("Flats") == true)
+        #expect(flatSession?.name.contains("OIII") == true)
+        #expect(biasSession?.name.contains("Bias") == true)
+    }
+
+    @Test("backfillCalibrationSessions assigns sessions to unassigned calibration frames")
+    func backfillCalibrationSessionsAssigns() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+        // Three consecutive dark frames without session_id.
+        for i in 0..<3 {
+            let frame = makeFrame(
+                lat: osloLat, lon: osloLon,
+                timestamp: base.addingTimeInterval(Double(i) * 305),
+                frameType: "dark"
+            )
+            _ = try await db.insertFrame(frame, deduplicate: false)
+        }
+
+        try await db.backfillCalibrationSessions()
+
+        let sessions = try await db.calibrationSessions()
+        #expect(sessions.count == 1)
+        #expect(sessions[0].frameCount == 3)
+        #expect(sessions[0].calibrationFrameType == "dark")
+    }
+
+    @Test("calibrationSessions() only returns calibration sessions, not light sessions")
+    func calibrationSessionsFilteredCorrectly() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let ts = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+
+        // Create one light session and one calibration session.
+        _ = try await db.findOrCreateSession(timestamp: osloNightTS, latDeg: osloLat, lonDeg: osloLon)
+        _ = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: ts,
+            exposureTime: 300, temperature: -10, filter: nil)
+
+        let calibSessions = try await db.calibrationSessions()
+        let lightSessions = try await db.sessions()
+
+        #expect(calibSessions.count == 1)
+        #expect(calibSessions[0].isCalibration == true)
+        #expect(lightSessions.count == 1)
+        #expect(lightSessions[0].isCalibration == false)
+    }
+}
+
 // MARK: - Archive-level session integration
 
 /// Uses Archive.add() and Archive.backfillObservationMetadata() via the public API,
@@ -344,8 +497,8 @@ struct ArchiveSessionIntegrationTests {
         #expect(session?.isNight == true, "Oslo at 20:17 UTC April 6 should be a night session")
     }
 
-    @Test("Archive.add() does not assign a session to a dark frame with site coordinates")
-    func archiveAddSkipsSessionForDarkFrame() async throws {
+    @Test("Archive.add() assigns a calibration session to a dark frame with a timestamp")
+    func archiveAddAssignsCalibrationSessionForDarkFrame() async throws {
         let (archive, root) = try makeTempArchive(prefix: "sess-dark")
         defer { try? FileManager.default.removeItem(at: root) }
 
@@ -353,7 +506,10 @@ struct ArchiveSessionIntegrationTests {
         try writeSiteFITS(to: src, imageType: "Dark Frame", siteLat: osloLat, siteLon: osloLon)
 
         let (frame, _) = try await archive.add(fitsFile: src)
-        #expect(frame.sessionID == nil, "Dark frames must not be assigned to a session on add()")
+        #expect(frame.sessionID != nil, "Dark frames with a timestamp should be auto-assigned a calibration session")
+
+        let session = try await archive.session(forFrame: frame.id)
+        #expect(session?.calibrationFrameType == "dark", "Session should be a dark calibration session")
     }
 
     @Test("Archive.add() does not assign a session to a raw light frame without site coordinates")

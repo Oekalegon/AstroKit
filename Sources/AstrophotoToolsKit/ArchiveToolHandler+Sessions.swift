@@ -5,21 +5,27 @@ extension ArchiveToolHandler {
 
     func archiveSessions(_ args: [String: Any]) async throws -> String {
         let kindStr = args["kind"] as? String ?? "all"
-        let isNight: Bool? = kindStr == "night" ? true : kindStr == "day" ? false : nil
 
         let sessions: [ObservingSession]
-        if let n = args["latest_count"] as? Int {
-            sessions = try await archive.latestSessions(limit: n, isNight: isNight)
-        } else if let dateStr = args["date"] as? String {
-            let df = DateFormatter()
-            df.locale = Locale(identifier: "en_US_POSIX")
-            df.dateFormat = "yyyy-MM-dd"
-            guard let date = df.date(from: dateStr) else {
-                throw ToolError("Invalid date '\(dateStr)'. Use YYYY-MM-DD format.")
-            }
-            sessions = try await archive.sessions(on: date, isNight: isNight)
+        if kindStr == "calibration" {
+            sessions = try await archive.calibrationSessions()
         } else {
-            sessions = try await archive.sessions(isNight: isNight)
+            let isNight: Bool? = kindStr == "night" ? true : kindStr == "day" ? false : nil
+            if let n = args["latest_count"] as? Int {
+                sessions = try await archive.latestSessions(limit: n, isNight: isNight)
+            } else if let dateStr = args["date"] as? String {
+                let df = DateFormatter()
+                df.locale = Locale(identifier: "en_US_POSIX")
+                df.dateFormat = "yyyy-MM-dd"
+                guard let date = df.date(from: dateStr) else {
+                    throw ToolError("Invalid date '\(dateStr)'. Use YYYY-MM-DD format.")
+                }
+                sessions = try await archive.sessions(on: date, isNight: isNight)
+            } else if kindStr == "all" {
+                sessions = try await archive.allSessions()
+            } else {
+                sessions = try await archive.sessions(isNight: isNight)
+            }
         }
         if sessions.isEmpty { return "No sessions found." }
         return sessions.map { formatSession($0) }.joined(separator: "\n\n")
@@ -27,6 +33,7 @@ extension ArchiveToolHandler {
 
     func archiveBackfillSessions() async throws -> String {
         try await archive.backfillSessions()
+        try await archive.backfillCalibrationSessions()
         return "Session backfill complete."
     }
 
@@ -39,7 +46,8 @@ extension ArchiveToolHandler {
         }
         let frames = try await archive.frames(inSession: id)
         let iso = ISO8601DateFormatter()
-        var lines = ["\(session.name) (\(session.isNight ? "night" : "day")) — \(frames.count) raw light frame(s):"]
+        let kind = session.calibrationFrameType ?? (session.isNight ? "night" : "day")
+        var lines = ["\(session.name) (\(kind)) — \(frames.count) raw frame(s):"]
         for f in frames {
             let ts  = f.timestamp.map { String(iso.string(from: $0).prefix(19)).replacingOccurrences(of: "T", with: " ") } ?? "-"
             let obj = f.objectName ?? "-"
@@ -55,8 +63,21 @@ extension ArchiveToolHandler {
             throw ToolError("frame_id must be a valid UUID string.")
         }
         guard let session = try await archive.session(forFrame: id) else {
-            return "Frame \(idStr) has no observing session assigned (or is not a raw light frame)."
+            return "Frame \(idStr) has no session assigned (or is not a raw frame)."
         }
         return formatSession(session)
+    }
+
+    func formatSession(_ s: ObservingSession) -> String {
+        let iso = ISO8601DateFormatter()
+        let kind = s.calibrationFrameType ?? (s.isNight ? "night" : "day")
+        var lines = ["\(s.name)  [\(kind)]  \(s.frameCount) frame(s)"]
+        lines.append("  id:       \(s.id.uuidString)")
+        if !s.isCalibration {
+            lines.append(String(format: "  location: %.4f°, %.4f°", s.latitude, s.longitude))
+        }
+        if let t = s.startTime { lines.append("  start:    \(String(iso.string(from: t).prefix(16)).replacingOccurrences(of: "T", with: " "))") }
+        if let t = s.endTime   { lines.append("  end:      \(String(iso.string(from: t).prefix(16)).replacingOccurrences(of: "T", with: " "))") }
+        return lines.joined(separator: "\n")
     }
 }

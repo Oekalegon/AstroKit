@@ -26,35 +26,41 @@ struct Sessions: AsyncParsableCommand {
         @Option(name: .long, help: "Return only the N most recent sessions.")
         var latest: Int?
 
-        @Option(name: .long, help: "Filter by session type: all (default), night, or day.")
+        @Option(name: .long, help: "Filter by session type: all (default), night, day, or calibration.")
         var kind: String = "all"
 
         @Flag(name: .shortAndLong, help: "Output as JSON.")
         var json: Bool = false
 
         func run() async throws {
-            guard kind == "all" || kind == "night" || kind == "day" else {
-                printError("--kind must be 'all', 'night', or 'day'.")
+            guard ["all", "night", "day", "calibration"].contains(kind) else {
+                printError("--kind must be 'all', 'night', 'day', or 'calibration'.")
                 throw ExitCode.failure
             }
-            let isNight: Bool? = kind == "night" ? true : kind == "day" ? false : nil
 
             let archive = try Archive(configuration: try archiveOptions.makeConfiguration())
             let sessions: [ObservingSession]
 
-            if let n = latest {
-                sessions = try await archive.latestSessions(limit: n, isNight: isNight)
-            } else if let dateStr = date {
-                let df = DateFormatter()
-                df.locale = Locale(identifier: "en_US_POSIX")
-                df.dateFormat = "yyyy-MM-dd"
-                guard let parsed = df.date(from: dateStr) else {
-                    printError("Invalid date '\(dateStr)'. Use YYYY-MM-DD.")
-                    throw ExitCode.failure
-                }
-                sessions = try await archive.sessions(on: parsed, isNight: isNight)
+            if kind == "calibration" {
+                sessions = try await archive.calibrationSessions()
             } else {
-                sessions = try await archive.sessions(isNight: isNight)
+                let isNight: Bool? = kind == "night" ? true : kind == "day" ? false : nil
+                if let n = latest {
+                    sessions = try await archive.latestSessions(limit: n, isNight: isNight)
+                } else if let dateStr = date {
+                    let df = DateFormatter()
+                    df.locale = Locale(identifier: "en_US_POSIX")
+                    df.dateFormat = "yyyy-MM-dd"
+                    guard let parsed = df.date(from: dateStr) else {
+                        printError("Invalid date '\(dateStr)'. Use YYYY-MM-DD.")
+                        throw ExitCode.failure
+                    }
+                    sessions = try await archive.sessions(on: parsed, isNight: isNight)
+                } else if kind == "all" {
+                    sessions = try await archive.allSessions()
+                } else {
+                    sessions = try await archive.sessions(isNight: isNight)
+                }
             }
 
             if json {
@@ -85,7 +91,7 @@ struct Sessions: AsyncParsableCommand {
             for s in sessions {
                 table.addRow([
                     s.name,
-                    s.isNight ? "night" : "day",
+                    s.calibrationFrameType ?? (s.isNight ? "night" : "day"),
                     "\(s.frameCount)",
                     s.startTime.map { shortTime($0) } ?? "-",
                     s.endTime.map   { shortTime($0) } ?? "-",
@@ -101,12 +107,16 @@ struct Sessions: AsyncParsableCommand {
                 var d: [String: Any] = [
                     "id":          s.id.uuidString,
                     "name":        s.name,
-                    "is_night":    s.isNight,
-                    "latitude":    s.latitude,
-                    "longitude":   s.longitude,
                     "frame_count": s.frameCount,
                     "added_at":    iso.string(from: s.addedAt),
                 ]
+                if let ft = s.calibrationFrameType {
+                    d["frame_type"] = ft
+                } else {
+                    d["is_night"]  = s.isNight
+                    d["latitude"]  = s.latitude
+                    d["longitude"] = s.longitude
+                }
                 if let t = s.startTime { d["start_time"] = iso.string(from: t) }
                 if let t = s.endTime   { d["end_time"]   = iso.string(from: t) }
                 return d
@@ -159,7 +169,8 @@ struct Sessions: AsyncParsableCommand {
             func shortTime(_ date: Date) -> String {
                 String(iso.string(from: date).prefix(16)).replacingOccurrences(of: "T", with: " ")
             }
-            print("\(session.name) (\(session.isNight ? "night" : "day")) — \(frames.count) frame(s)\n")
+            let kind = session.calibrationFrameType ?? (session.isNight ? "night" : "day")
+            print("\(session.name) (\(kind)) — \(frames.count) frame(s)\n")
             var table = TextTable(columns: [
                 .init("Timestamp (UTC)"),
                 .init("Object"),
@@ -189,12 +200,16 @@ struct Sessions: AsyncParsableCommand {
                 if let v  = f.exposureTime { d["exposure_s"]   = v }
                 return d
             }
-            let root: [String: Any] = [
+            var root: [String: Any] = [
                 "session_id": session.id.uuidString,
                 "session_name": session.name,
-                "is_night": session.isNight,
                 "frames": frameDicts,
             ]
+            if let ft = session.calibrationFrameType {
+                root["frame_type"] = ft
+            } else {
+                root["is_night"] = session.isNight
+            }
             if let data = try? JSONSerialization.data(withJSONObject: root, options: .prettyPrinted),
                let str = String(data: data, encoding: .utf8) { print(str) }
         }
@@ -205,8 +220,8 @@ struct Sessions: AsyncParsableCommand {
     struct Backfill: AsyncParsableCommand {
         static let configuration = CommandConfiguration(
             commandName: "backfill",
-            abstract: "Assign sessions to raw light frames that have site coordinates but no session yet.",
-            discussion: "Reads SITELAT/SITELONG from the archive database and uses AstroKit to determine the correct night boundary. Safe to run multiple times."
+            abstract: "Assign sessions to unassigned raw light and calibration frames.",
+            discussion: "Groups light frames by night/location and calibration frames by consecutive sequences. Safe to run multiple times."
         )
 
         @OptionGroup var archiveOptions: ArchivePathOption
@@ -215,6 +230,8 @@ struct Sessions: AsyncParsableCommand {
             let archive = try Archive(configuration: try archiveOptions.makeConfiguration())
             print("Backfilling observing sessions…")
             try await archive.backfillSessions()
+            print("Backfilling calibration sessions…")
+            try await archive.backfillCalibrationSessions()
             print("Done.")
         }
     }

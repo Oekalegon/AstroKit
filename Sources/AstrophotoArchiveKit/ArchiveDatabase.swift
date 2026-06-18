@@ -324,6 +324,18 @@ actor ArchiveDatabase {
         CREATE INDEX IF NOT EXISTS idx_sessions_date ON sessions(date);
         CREATE INDEX IF NOT EXISTS idx_frames_session ON frames(session_id);
         """,
+        // v32: calibration sessions. Extends the sessions table with columns that describe
+        // calibration sessions (dark/flat/bias sequences). frame_type IS NULL → light session;
+        // 'dark'/'flat'/'bias' → calibration session. temperature_hint/filter_hint store the
+        // representative CCD temperature and filter used when matching new frames to an open
+        // calibration session and when naming the session. Calibration sessions use 0/0 for
+        // latitude/longitude (no location required).
+        """
+        ALTER TABLE sessions ADD COLUMN frame_type TEXT;
+        ALTER TABLE sessions ADD COLUMN temperature_hint REAL;
+        ALTER TABLE sessions ADD COLUMN filter_hint TEXT;
+        CREATE INDEX IF NOT EXISTS idx_sessions_frame_type ON sessions(frame_type);
+        """,
     ]
 
     private static func applyMigrations(db: OpaquePointer) throws {
@@ -1886,9 +1898,10 @@ actor ArchiveDatabase {
             sessionDateString = df.string(from: timestamp)
         }
 
-        // Search for an existing session on the same date at the same location.
+        // Search for an existing light session on the same date at the same location.
         let selectSQL = """
-            SELECT id, latitude, longitude FROM sessions WHERE date = ? AND is_night = ?
+            SELECT id, latitude, longitude FROM sessions
+            WHERE date = ? AND is_night = ? AND frame_type IS NULL
             """
         let selectStmt = try prepare(selectSQL)
         defer { sqlite3_finalize(selectStmt) }
@@ -1965,12 +1978,25 @@ actor ArchiveDatabase {
         }
     }
 
+    func allSessions() throws -> [ObservingSession] {
+        let stmt = try prepare("""
+            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at, frame_type
+            FROM sessions ORDER BY date DESC, start_time DESC
+            """)
+        defer { sqlite3_finalize(stmt) }
+        var results: [ObservingSession] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let s = rowToSession(stmt) { results.append(s) }
+        }
+        return results
+    }
+
     func sessions(isNight: Bool? = nil) throws -> [ObservingSession] {
         var sql = """
-            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
-            FROM sessions
+            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at, frame_type
+            FROM sessions WHERE frame_type IS NULL
             """
-        if isNight != nil { sql += " WHERE is_night = ?" }
+        if isNight != nil { sql += " AND is_night = ?" }
         sql += " ORDER BY date DESC"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -1982,9 +2008,23 @@ actor ArchiveDatabase {
         return results
     }
 
+    func calibrationSessions() throws -> [ObservingSession] {
+        let stmt = try prepare("""
+            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at, frame_type
+            FROM sessions WHERE frame_type IS NOT NULL
+            ORDER BY date DESC, start_time DESC
+            """)
+        defer { sqlite3_finalize(stmt) }
+        var results: [ObservingSession] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            if let s = rowToSession(stmt) { results.append(s) }
+        }
+        return results
+    }
+
     func session(id: UUID) throws -> ObservingSession? {
         let stmt = try prepare("""
-            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
+            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at, frame_type
             FROM sessions WHERE id = ?
             """)
         defer { sqlite3_finalize(stmt) }
@@ -1995,8 +2035,8 @@ actor ArchiveDatabase {
     func sessions(on date: Date, isNight: Bool? = nil) throws -> [ObservingSession] {
         let dateString = Self.sessionDateParser.string(from: date)
         var sql = """
-            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
-            FROM sessions WHERE date = ?
+            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at, frame_type
+            FROM sessions WHERE date = ? AND frame_type IS NULL
             """
         if isNight != nil { sql += " AND is_night = ?" }
         sql += " ORDER BY is_night DESC"
@@ -2013,10 +2053,10 @@ actor ArchiveDatabase {
 
     func latestSessions(limit: Int, isNight: Bool?) throws -> [ObservingSession] {
         var sql = """
-            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at
-            FROM sessions
+            SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at, frame_type
+            FROM sessions WHERE frame_type IS NULL
             """
-        if isNight != nil { sql += " WHERE is_night = ?" }
+        if isNight != nil { sql += " AND is_night = ?" }
         sql += " ORDER BY date DESC, added_at DESC LIMIT ?"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -2037,7 +2077,6 @@ actor ArchiveDatabase {
         let stmt = try prepare("""
             SELECT * FROM frames
             WHERE session_id = ?
-              AND LOWER(frame_type) = 'light'
               AND processing_level = 'raw'
             ORDER BY timestamp
             """)
@@ -2053,11 +2092,10 @@ actor ArchiveDatabase {
     func session(forFrame frameID: UUID) throws -> ObservingSession? {
         let stmt = try prepare("""
             SELECT s.id, s.name, s.date, s.is_night, s.latitude, s.longitude,
-                   s.frame_count, s.start_time, s.end_time, s.added_at
+                   s.frame_count, s.start_time, s.end_time, s.added_at, s.frame_type
             FROM sessions s
             JOIN frames f ON f.session_id = s.id
             WHERE f.id = ?
-              AND LOWER(f.frame_type) = 'light'
               AND f.processing_level = 'raw'
             """)
         defer { sqlite3_finalize(stmt) }
@@ -2121,15 +2159,17 @@ actor ArchiveDatabase {
               let name  = columnText(stmt, 1),
               let dateStr = columnText(stmt, 2) else { return nil }
         guard let date = Self.sessionDateParser.date(from: dateStr) else { return nil }
-        let isNight    = sqlite3_column_int(stmt, 3) != 0
-        let latitude   = sqlite3_column_double(stmt, 4)
-        let longitude  = sqlite3_column_double(stmt, 5)
-        let frameCount = Int(sqlite3_column_int(stmt, 6))
-        let startTime  = columnText(stmt, 7).flatMap { Self.sessionISO.date(from: $0) }
-        let endTime    = columnText(stmt, 8).flatMap { Self.sessionISO.date(from: $0) }
-        let addedAt    = columnText(stmt, 9).flatMap { Self.sessionISO.date(from: $0) } ?? Date()
+        let isNight            = sqlite3_column_int(stmt, 3) != 0
+        let latitude           = sqlite3_column_double(stmt, 4)
+        let longitude          = sqlite3_column_double(stmt, 5)
+        let frameCount         = Int(sqlite3_column_int(stmt, 6))
+        let startTime          = columnText(stmt, 7).flatMap { Self.sessionISO.date(from: $0) }
+        let endTime            = columnText(stmt, 8).flatMap { Self.sessionISO.date(from: $0) }
+        let addedAt            = columnText(stmt, 9).flatMap { Self.sessionISO.date(from: $0) } ?? Date()
+        let calibrationFrameType = columnText(stmt, 10)
         return ObservingSession(
             id: id, name: name, date: date, isNight: isNight,
+            calibrationFrameType: calibrationFrameType,
             latitude: latitude, longitude: longitude,
             frameCount: frameCount, startTime: startTime, endTime: endTime, addedAt: addedAt
         )
@@ -2138,6 +2178,198 @@ actor ArchiveDatabase {
     private static func sessionName(for dateString: String) -> String {
         guard let date = sessionDateParser.date(from: dateString) else { return dateString }
         return sessionDisplayFormatter.string(from: date)
+    }
+
+    /// Builds a human-readable name for a calibration session, following the same naming
+    /// convention as calibration frame display names in the archive browser.
+    ///
+    /// Examples: "Darks -10°C on 16 June 2026", "Flats OIII on 16 June 2026", "Bias on 16 June 2026"
+    private static func calibrationSessionName(
+        frameType: String, dateString: String,
+        temperature: Double?, filter: String?
+    ) -> String {
+        let dateLabel: String
+        if let date = sessionDateParser.date(from: dateString) {
+            dateLabel = sessionDisplayFormatter.string(from: date)
+        } else {
+            dateLabel = dateString
+        }
+        var parts: [String]
+        switch frameType.lowercased() {
+        case "dark":
+            let tempLabel = temperature.map { String(format: "%g°C", $0) }
+            parts = ["Darks", tempLabel, "on", dateLabel].compactMap { $0 }
+        case "flat":
+            parts = ["Flats", filter, "on", dateLabel].compactMap { $0 }
+        default:
+            parts = ["Bias", "on", dateLabel]
+        }
+        return parts.joined(separator: " ")
+    }
+
+    /// Gap threshold in seconds: if the next calibration frame starts within this many seconds
+    /// of the previous frame's end (= start + exposure), they join the same session.
+    private static let calibrationSessionGapSeconds: TimeInterval = 300
+
+    /// Finds an existing open calibration session for a new frame, or creates one.
+    ///
+    /// A session is "open" if the frame's start time falls within `calibrationSessionGapSeconds`
+    /// of the session's current `end_time`. The session must also match on `frame_type` and,
+    /// for darks, be within 2°C of the frame's temperature; for flats, match the filter exactly.
+    func findOrCreateCalibrationSession(
+        frameType: String,
+        timestamp: Date,
+        exposureTime: Double?,
+        temperature: Double?,
+        filter: String?
+    ) throws -> UUID {
+        let iso = Self.sessionISO
+        let df  = Self.sessionDateParser
+        let frameEnd = timestamp.addingTimeInterval(exposureTime ?? 0)
+        let dateString = df.string(from: timestamp)
+
+        // Look for an open session of the same type whose end_time is recent enough.
+        let selectSQL = """
+            SELECT id, end_time, temperature_hint, filter_hint
+            FROM sessions
+            WHERE frame_type = ?
+              AND end_time IS NOT NULL
+              AND (julianday(?) - julianday(end_time)) * 86400 <= ?
+            ORDER BY end_time DESC
+            LIMIT 20
+            """
+        let selectStmt = try prepare(selectSQL)
+        defer { sqlite3_finalize(selectStmt) }
+        bind(selectStmt, 1, frameType.lowercased())
+        bind(selectStmt, 2, iso.string(from: timestamp))
+        sqlite3_bind_double(selectStmt, 3, Self.calibrationSessionGapSeconds)
+
+        var matchedID: String?
+        while sqlite3_step(selectStmt) == SQLITE_ROW {
+            guard let idStr = columnText(selectStmt, 0) else { continue }
+            let sessionTemp   = columnDouble(selectStmt, 2)
+            let sessionFilter = columnText(selectStmt, 3)
+            switch frameType.lowercased() {
+            case "dark":
+                // Darks: match within ±2°C if temperature is known for both.
+                if let t = temperature, let st = sessionTemp {
+                    guard abs(t - st) <= 2.0 else { continue }
+                } else if temperature != nil || sessionTemp != nil {
+                    // One has temp and the other doesn't — treat as different sessions.
+                    continue
+                }
+            case "flat":
+                // Flats: must match filter exactly.
+                guard sessionFilter == filter else { continue }
+            default:
+                break // Bias: just use the most recent open session.
+            }
+            matchedID = idStr
+            break
+        }
+
+        if let existing = matchedID {
+            // Extend the session's time window.
+            let updateSQL = """
+                UPDATE sessions SET
+                    frame_count = frame_count + 1,
+                    end_time = CASE WHEN end_time IS NULL OR ? > end_time THEN ? ELSE end_time END
+                WHERE id = ?
+                """
+            let updateStmt = try prepare(updateSQL)
+            defer { sqlite3_finalize(updateStmt) }
+            let endStr = iso.string(from: frameEnd)
+            bind(updateStmt, 1, endStr); bind(updateStmt, 2, endStr)
+            bind(updateStmt, 3, existing)
+            guard sqlite3_step(updateStmt) == SQLITE_DONE else {
+                throw ArchiveError.databaseError(dbErrorMessage())
+            }
+            guard let uuid = UUID(uuidString: existing) else {
+                throw ArchiveError.databaseError("Malformed session UUID: \(existing)")
+            }
+            return uuid
+        }
+
+        // No matching open session — create a new one.
+        let newID = UUID()
+        let name  = Self.calibrationSessionName(frameType: frameType, dateString: dateString,
+                                                temperature: temperature, filter: filter)
+        let insertSQL = """
+            INSERT INTO sessions
+                (id, name, date, is_night, latitude, longitude, frame_type,
+                 frame_count, start_time, end_time, added_at,
+                 temperature_hint, filter_hint)
+            VALUES (?, ?, ?, 0, 0, 0, ?, 1, ?, ?, ?, ?, ?)
+            """
+        let insertStmt = try prepare(insertSQL)
+        defer { sqlite3_finalize(insertStmt) }
+        bind(insertStmt, 1, newID.uuidString)
+        bind(insertStmt, 2, name)
+        bind(insertStmt, 3, dateString)
+        bind(insertStmt, 4, frameType.lowercased())
+        let startStr = iso.string(from: timestamp)
+        let endStr   = iso.string(from: frameEnd)
+        bind(insertStmt, 5, startStr)
+        bind(insertStmt, 6, endStr)
+        bind(insertStmt, 7, iso.string(from: Date()))
+        if let t = temperature { sqlite3_bind_double(insertStmt, 8, t) } else { sqlite3_bind_null(insertStmt, 8) }
+        if let f = filter { bind(insertStmt, 9, f) } else { sqlite3_bind_null(insertStmt, 9) }
+        guard sqlite3_step(insertStmt) == SQLITE_DONE else {
+            throw ArchiveError.databaseError(dbErrorMessage())
+        }
+        return newID
+    }
+
+    /// Assigns calibration sessions to all raw calibration frames with a timestamp
+    /// that have not yet been assigned to a session. Safe to call multiple times.
+    func backfillCalibrationSessions() throws {
+        // Collect unassigned calibration frames ordered by type, then time.
+        let selectSQL = """
+            SELECT id, frame_type, timestamp, exposure_time, temperature, filter
+            FROM frames
+            WHERE session_id IS NULL
+              AND timestamp IS NOT NULL
+              AND LOWER(frame_type) IN ('bias', 'dark', 'flat')
+              AND processing_level = 'raw'
+            ORDER BY LOWER(frame_type), timestamp
+            """
+        let stmt = try prepare(selectSQL)
+        defer { sqlite3_finalize(stmt) }
+
+        let iso = Self.sessionISO
+        var assignments: [(frameID: String, sessionID: UUID)] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard let frameID   = columnText(stmt, 0),
+                  let frameType = columnText(stmt, 1),
+                  let tsStr     = columnText(stmt, 2),
+                  let timestamp = iso.date(from: tsStr) else { continue }
+            let exposureTime = columnDouble(stmt, 3)
+            let temperature  = columnDouble(stmt, 4)
+            let filter       = columnText(stmt, 5)
+            let sid = try findOrCreateCalibrationSession(
+                frameType: frameType, timestamp: timestamp,
+                exposureTime: exposureTime, temperature: temperature, filter: filter)
+            assignments.append((frameID, sid))
+        }
+
+        try exec("BEGIN")
+        do {
+            let updateStmt = try prepare("UPDATE frames SET session_id = ? WHERE id = ?")
+            defer { sqlite3_finalize(updateStmt) }
+            for (frameID, sessionID) in assignments {
+                sqlite3_reset(updateStmt)
+                sqlite3_clear_bindings(updateStmt)
+                bind(updateStmt, 1, sessionID.uuidString)
+                bind(updateStmt, 2, frameID)
+                guard sqlite3_step(updateStmt) == SQLITE_DONE else {
+                    throw ArchiveError.databaseError(dbErrorMessage())
+                }
+            }
+            try exec("COMMIT")
+        } catch {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            throw error
+        }
     }
 
     private static func haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double) -> Double {
