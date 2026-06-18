@@ -2,6 +2,7 @@ import Foundation
 import AstrophotoArchiveKit
 import AstrophotoKit
 import AstrophotoToolDefinitions
+import AstrophotoToolsKit
 import Metal
 import TabularData
 
@@ -927,7 +928,3 @@ struct Tools {
     }
 }
 
-struct ToolError: Error, LocalizedError {
-    var errorDescription: String?
-    init(_ message: String) { self.errorDescription = message }
-}

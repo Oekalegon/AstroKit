@@ -25,6 +25,9 @@ let package = Package(
         .library(
             name: "AstrophotoToolDefinitions",
             targets: ["AstrophotoToolDefinitions"]),
+        .library(
+            name: "AstrophotoToolsKit",
+            targets: ["AstrophotoToolsKit"]),
         .executable(name: "ap", targets: ["ap"]),
         .executable(name: "ap-archive", targets: ["ap-archive"]),
         .executable(name: "astrokit-mcp", targets: ["astrokit-mcp"]),
@@ -137,9 +140,14 @@ let package = Package(
             name: "AstrophotoToolDefinitions",
             path: "Sources/AstrophotoToolDefinitions"
         ),
+        .target(
+            name: "AstrophotoToolsKit",
+            dependencies: ["AstrophotoKit", "AstrophotoArchiveKit", "AstrophotoToolDefinitions"],
+            path: "Sources/AstrophotoToolsKit"
+        ),
         .executableTarget(
             name: "astrokit-mcp",
-            dependencies: ["AstrophotoKit", "AstrophotoArchiveKit", "AstrophotoToolDefinitions"],
+            dependencies: ["AstrophotoKit", "AstrophotoArchiveKit", "AstrophotoToolDefinitions", "AstrophotoToolsKit"],
             path: "Sources/astrokit-mcp"
         ),
 
