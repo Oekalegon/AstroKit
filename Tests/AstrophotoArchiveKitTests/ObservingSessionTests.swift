@@ -126,7 +126,7 @@ struct ObservingSessionTests {
 
         let result = try await db.session(forFrame: darkFrame.id)
         #expect(result != nil, "session(forFrame:) must return the calibration session for a dark frame")
-        #expect(result?.calibrationFrameType == "dark")
+        #expect(result?.frameType == "dark")
     }
 
     @Test("session(forFrame:) returns nil for a processed (non-raw) light frame")
@@ -316,7 +316,7 @@ struct CalibrationSessionTests {
 
         let session = try await db.session(id: sid1)
         #expect(session?.frameCount == 3)
-        #expect(session?.calibrationFrameType == "dark")
+        #expect(session?.frameType == "dark")
     }
 
     @Test("dark frames with a large gap get separate sessions")
@@ -417,7 +417,7 @@ struct CalibrationSessionTests {
         let sessions = try await db.calibrationSessions()
         #expect(sessions.count == 1)
         #expect(sessions[0].frameCount == 3)
-        #expect(sessions[0].calibrationFrameType == "dark")
+        #expect(sessions[0].frameType == "dark")
     }
 
     @Test("calibrationSessions() only returns calibration sessions, not light sessions")
@@ -509,7 +509,7 @@ struct ArchiveSessionIntegrationTests {
         #expect(frame.sessionID != nil, "Dark frames with a timestamp should be auto-assigned a calibration session")
 
         let session = try await archive.session(forFrame: frame.id)
-        #expect(session?.calibrationFrameType == "dark", "Session should be a dark calibration session")
+        #expect(session?.frameType == "dark", "Session should be a dark calibration session")
     }
 
     @Test("Archive.add() does not assign a session to a raw light frame without site coordinates")

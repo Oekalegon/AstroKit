@@ -101,9 +101,11 @@ extension ArchiveToolHandler {
 
     func formatSession(_ s: ObservingSession) -> String {
         let iso = ISO8601DateFormatter()
-        var lines = ["\(s.name)  [\(s.isNight ? "night" : "day")]  \(s.frameCount) frame(s)"]
+        var lines = ["\(s.name)  [\(s.kindLabel)]  \(s.frameCount) frame(s)"]
         lines.append("  id:       \(s.id.uuidString)")
-        lines.append(String(format: "  location: %.4f°, %.4f°", s.latitude, s.longitude))
+        if !s.isCalibration {
+            lines.append(String(format: "  location: %.4f°, %.4f°", s.latitude, s.longitude))
+        }
         if let t = s.startTime { lines.append("  start:    \(String(iso.string(from: t).prefix(16)).replacingOccurrences(of: "T", with: " "))") }
         if let t = s.endTime   { lines.append("  end:      \(String(iso.string(from: t).prefix(16)).replacingOccurrences(of: "T", with: " "))") }
         return lines.joined(separator: "\n")

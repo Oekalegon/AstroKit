@@ -8,19 +8,16 @@ import Foundation
 /// An observing session — typically one night's imaging from a single location,
 /// or a calibration run (sequence of dark, flat, or bias frames taken close together in time).
 ///
-/// **Light sessions** span two calendar dates in local time (observations starting
-/// before midnight and continuing past it). The session is named after the
-/// calendar date of the preceding local sunset: e.g. a frame captured at
-/// 01:30 on 16 June belongs to the "15 June 2026" session.
+/// **Light sessions** (`frameType == "light"`) span two calendar dates in local time.
+/// The session is named after the calendar date of the preceding local sunset: e.g. a frame
+/// captured at 01:30 on 16 June belongs to the "15 June 2026" session.
 ///
-/// **Day sessions** cover solar or daytime imaging and are named after the
-/// calendar date of the observation.
+/// **Day sessions** also have `frameType == "light"` but `isNight == false`.
 ///
-/// **Calibration sessions** cover a consecutive sequence of the same calibration frame
-/// type (dark, flat, or bias). They are named after the frame type and a distinguishing
+/// **Calibration sessions** (`frameType == "dark"/"flat"/"bias"`) cover a consecutive sequence
+/// of the same calibration frame type. They are named after the frame type and a distinguishing
 /// characteristic: e.g. "Darks -10°C on 16 June 2026" or "Flats OIII on 16 June 2026".
-/// `calibrationFrameType` is non-nil for these sessions; `latitude` and `longitude` are
-/// not meaningful and should be ignored.
+/// `latitude` and `longitude` are not meaningful for calibration sessions.
 public struct ObservingSession: Sendable, Identifiable {
     public let id: UUID
     /// Human-readable name: "15 June 2026" for light sessions,
@@ -32,8 +29,8 @@ public struct ObservingSession: Sendable, Identifiable {
     public var date: Date
     /// `true` for night-time light imaging, `false` for daytime or calibration sessions.
     public var isNight: Bool
-    /// Frame type for calibration sessions ("dark", "flat", "bias"), nil for light sessions.
-    public var calibrationFrameType: String?
+    /// Frame type for all sessions: "light", "dark", "flat", or "bias".
+    public var frameType: String
     /// Mean geographic latitude of the frames in this session, in degrees (north positive).
     /// Not meaningful for calibration sessions.
     public var latitude: Double
@@ -49,14 +46,17 @@ public struct ObservingSession: Sendable, Identifiable {
     public var addedAt: Date
 
     /// `true` if this session groups calibration frames (dark/flat/bias).
-    public var isCalibration: Bool { calibrationFrameType != nil }
+    public var isCalibration: Bool { frameType != "light" }
+
+    /// Short label for display: "night" or "day" for light sessions, frame type for calibration.
+    public var kindLabel: String { isCalibration ? frameType : (isNight ? "night" : "day") }
 
     public init(
         id: UUID = UUID(),
         name: String,
         date: Date,
         isNight: Bool,
-        calibrationFrameType: String? = nil,
+        frameType: String = "light",
         latitude: Double = 0,
         longitude: Double = 0,
         frameCount: Int = 0,
@@ -68,7 +68,7 @@ public struct ObservingSession: Sendable, Identifiable {
         self.name = name
         self.date = date
         self.isNight = isNight
-        self.calibrationFrameType = calibrationFrameType
+        self.frameType = frameType
         self.latitude = latitude
         self.longitude = longitude
         self.frameCount = frameCount

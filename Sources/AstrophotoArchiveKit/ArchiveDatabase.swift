@@ -325,8 +325,8 @@ actor ArchiveDatabase {
         CREATE INDEX IF NOT EXISTS idx_frames_session ON frames(session_id);
         """,
         // v32: calibration sessions. Extends the sessions table with columns that describe
-        // calibration sessions (dark/flat/bias sequences). frame_type IS NULL → light session;
-        // 'dark'/'flat'/'bias' → calibration session. temperature_hint/filter_hint store the
+        // calibration sessions (dark/flat/bias sequences). At this point frame_type IS NULL
+        // means a light session (upgraded to 'light' in v33). temperature_hint/filter_hint store the
         // representative CCD temperature and filter used when matching new frames to an open
         // calibration session and when naming the session. Calibration sessions use 0/0 for
         // latitude/longitude (no location required).
@@ -335,6 +335,11 @@ actor ArchiveDatabase {
         ALTER TABLE sessions ADD COLUMN temperature_hint REAL;
         ALTER TABLE sessions ADD COLUMN filter_hint TEXT;
         CREATE INDEX IF NOT EXISTS idx_sessions_frame_type ON sessions(frame_type);
+        """,
+        // v33: give light sessions an explicit frame_type = 'light' so that all sessions
+        // carry a non-NULL frame_type and the model can expose it uniformly.
+        """
+        UPDATE sessions SET frame_type = 'light' WHERE frame_type IS NULL;
         """,
     ]
 
@@ -1901,7 +1906,7 @@ actor ArchiveDatabase {
         // Search for an existing light session on the same date at the same location.
         let selectSQL = """
             SELECT id, latitude, longitude FROM sessions
-            WHERE date = ? AND is_night = ? AND frame_type IS NULL
+            WHERE date = ? AND is_night = ? AND frame_type = 'light'
             """
         let selectStmt = try prepare(selectSQL)
         defer { sqlite3_finalize(selectStmt) }
@@ -1926,8 +1931,8 @@ actor ArchiveDatabase {
         } else {
             let newID = UUID()
             let insertSQL = """
-                INSERT INTO sessions (id, name, date, is_night, latitude, longitude, frame_count, added_at)
-                VALUES (?, ?, ?, ?, ?, ?, 0, ?)
+                INSERT INTO sessions (id, name, date, is_night, latitude, longitude, frame_type, frame_count, added_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'light', 0, ?)
                 """
             let insertStmt = try prepare(insertSQL)
             defer { sqlite3_finalize(insertStmt) }
@@ -1994,7 +1999,7 @@ actor ArchiveDatabase {
     func sessions(isNight: Bool? = nil) throws -> [ObservingSession] {
         var sql = """
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at, frame_type
-            FROM sessions WHERE frame_type IS NULL
+            FROM sessions WHERE frame_type = 'light'
             """
         if isNight != nil { sql += " AND is_night = ?" }
         sql += " ORDER BY date DESC"
@@ -2011,7 +2016,7 @@ actor ArchiveDatabase {
     func calibrationSessions() throws -> [ObservingSession] {
         let stmt = try prepare("""
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at, frame_type
-            FROM sessions WHERE frame_type IS NOT NULL
+            FROM sessions WHERE frame_type != 'light'
             ORDER BY date DESC, start_time DESC
             """)
         defer { sqlite3_finalize(stmt) }
@@ -2036,7 +2041,7 @@ actor ArchiveDatabase {
         let dateString = Self.sessionDateParser.string(from: date)
         var sql = """
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at, frame_type
-            FROM sessions WHERE date = ? AND frame_type IS NULL
+            FROM sessions WHERE date = ? AND frame_type = 'light'
             """
         if isNight != nil { sql += " AND is_night = ?" }
         sql += " ORDER BY is_night DESC"
@@ -2054,7 +2059,7 @@ actor ArchiveDatabase {
     func latestSessions(limit: Int, isNight: Bool?) throws -> [ObservingSession] {
         var sql = """
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at, frame_type
-            FROM sessions WHERE frame_type IS NULL
+            FROM sessions WHERE frame_type = 'light'
             """
         if isNight != nil { sql += " AND is_night = ?" }
         sql += " ORDER BY date DESC, added_at DESC LIMIT ?"
@@ -2166,10 +2171,10 @@ actor ArchiveDatabase {
         let startTime          = columnText(stmt, 7).flatMap { Self.sessionISO.date(from: $0) }
         let endTime            = columnText(stmt, 8).flatMap { Self.sessionISO.date(from: $0) }
         let addedAt            = columnText(stmt, 9).flatMap { Self.sessionISO.date(from: $0) } ?? Date()
-        let calibrationFrameType = columnText(stmt, 10)
+        let frameType = columnText(stmt, 10) ?? "light"
         return ObservingSession(
             id: id, name: name, date: date, isNight: isNight,
-            calibrationFrameType: calibrationFrameType,
+            frameType: frameType,
             latitude: latitude, longitude: longitude,
             frameCount: frameCount, startTime: startTime, endTime: endTime, addedAt: addedAt
         )

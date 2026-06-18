@@ -46,8 +46,7 @@ extension ArchiveToolHandler {
         }
         let frames = try await archive.frames(inSession: id)
         let iso = ISO8601DateFormatter()
-        let kind = session.calibrationFrameType ?? (session.isNight ? "night" : "day")
-        var lines = ["\(session.name) (\(kind)) — \(frames.count) raw frame(s):"]
+        var lines = ["\(session.name) (\(session.kindLabel)) — \(frames.count) raw frame(s):"]
         for f in frames {
             let ts  = f.timestamp.map { String(iso.string(from: $0).prefix(19)).replacingOccurrences(of: "T", with: " ") } ?? "-"
             let obj = f.objectName ?? "-"
@@ -66,18 +65,5 @@ extension ArchiveToolHandler {
             return "Frame \(idStr) has no session assigned (or is not a raw frame)."
         }
         return formatSession(session)
-    }
-
-    func formatSession(_ s: ObservingSession) -> String {
-        let iso = ISO8601DateFormatter()
-        let kind = s.calibrationFrameType ?? (s.isNight ? "night" : "day")
-        var lines = ["\(s.name)  [\(kind)]  \(s.frameCount) frame(s)"]
-        lines.append("  id:       \(s.id.uuidString)")
-        if !s.isCalibration {
-            lines.append(String(format: "  location: %.4f°, %.4f°", s.latitude, s.longitude))
-        }
-        if let t = s.startTime { lines.append("  start:    \(String(iso.string(from: t).prefix(16)).replacingOccurrences(of: "T", with: " "))") }
-        if let t = s.endTime   { lines.append("  end:      \(String(iso.string(from: t).prefix(16)).replacingOccurrences(of: "T", with: " "))") }
-        return lines.joined(separator: "\n")
     }
 }

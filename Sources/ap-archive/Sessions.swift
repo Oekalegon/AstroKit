@@ -91,7 +91,7 @@ struct Sessions: AsyncParsableCommand {
             for s in sessions {
                 table.addRow([
                     s.name,
-                    s.calibrationFrameType ?? (s.isNight ? "night" : "day"),
+                    s.kindLabel,
                     "\(s.frameCount)",
                     s.startTime.map { shortTime($0) } ?? "-",
                     s.endTime.map   { shortTime($0) } ?? "-",
@@ -110,9 +110,8 @@ struct Sessions: AsyncParsableCommand {
                     "frame_count": s.frameCount,
                     "added_at":    iso.string(from: s.addedAt),
                 ]
-                if let ft = s.calibrationFrameType {
-                    d["frame_type"] = ft
-                } else {
+                d["frame_type"] = s.frameType
+                if !s.isCalibration {
                     d["is_night"]  = s.isNight
                     d["latitude"]  = s.latitude
                     d["longitude"] = s.longitude
@@ -169,7 +168,7 @@ struct Sessions: AsyncParsableCommand {
             func shortTime(_ date: Date) -> String {
                 String(iso.string(from: date).prefix(16)).replacingOccurrences(of: "T", with: " ")
             }
-            let kind = session.calibrationFrameType ?? (session.isNight ? "night" : "day")
+            let kind = session.kindLabel
             print("\(session.name) (\(kind)) — \(frames.count) frame(s)\n")
             var table = TextTable(columns: [
                 .init("Timestamp (UTC)"),
@@ -205,9 +204,8 @@ struct Sessions: AsyncParsableCommand {
                 "session_name": session.name,
                 "frames": frameDicts,
             ]
-            if let ft = session.calibrationFrameType {
-                root["frame_type"] = ft
-            } else {
+            root["frame_type"] = session.frameType
+            if !session.isCalibration {
                 root["is_night"] = session.isNight
             }
             if let data = try? JSONSerialization.data(withJSONObject: root, options: .prettyPrinted),
