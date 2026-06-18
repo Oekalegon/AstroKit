@@ -295,6 +295,10 @@ extension AP {
                 return
             }
 
+            if output != nil && pipeline.resultType == .metadata {
+                if !json { print("Note: '\(pipelineID)' is a metadata-only pipeline — --output has no effect.") }
+            }
+
             if !json { print("Running '\(pipelineID)'…") }
 
             let start = Date()
@@ -310,8 +314,8 @@ extension AP {
             let tables = outputs.compactMap { $0 as? TableData }.filter { $0.isInstantiated }
             let frames = outputs.compactMap { $0 as? Frame }.filter { $0.isInstantiated }
 
-            // Save output if requested
-            if let outputPath = output {
+            // Save output if requested (skip for metadata-only pipelines — they produce no files)
+            if let outputPath = output, pipeline.resultType != .metadata {
                 // A registration table is identified by its frame_index column.
                 let regTable = tables.first(where: {
                     $0.dataFrame?.columns.contains(where: { $0.name == "frame_index" }) == true

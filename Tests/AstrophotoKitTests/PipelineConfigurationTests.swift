@@ -316,9 +316,79 @@ func missingRequiredFieldThrowsError() {
     name: Test Pipeline
     steps: []
     """
-    
+
     #expect(throws: PipelineConfigurationError.self) {
         try Pipeline.load(from: invalidYAML)
     }
 }
 
+@Test("result_type: metadata decodes to .metadata")
+func resultTypeDecodesMetadata() throws {
+    let yaml = """
+    id: test
+    name: Test
+    result_type: metadata
+    steps: []
+    """
+    let pipeline = try Pipeline.load(from: yaml)
+    #expect(pipeline.resultType == .metadata)
+}
+
+@Test("result_type absent defaults to .default")
+func resultTypeDefaultsWhenAbsent() throws {
+    let yaml = """
+    id: test
+    name: Test
+    steps: []
+    """
+    let pipeline = try Pipeline.load(from: yaml)
+    #expect(pipeline.resultType == .default)
+}
+
+@Test("Unknown result_type value throws error")
+func unknownResultTypeThrowsError() {
+    let yaml = """
+    id: test
+    name: Test
+    result_type: garbage
+    steps: []
+    """
+    #expect(throws: PipelineConfigurationError.self) {
+        try Pipeline.load(from: yaml)
+    }
+}
+
+// MARK: - Archiving guard regression tests
+
+/// Regression: the MCP's autoArchiveResults guard (`pipeline.resultType != .metadata`) is
+/// load-bearing for frame_quality. This test encodes the three structural invariants that
+/// make the guard necessary:
+///
+/// 1. frame_quality declares resultType == .metadata  →  guard suppresses archiving
+/// 2. Its last step produces no frame outputs  →  CLI is already safe (terminalFrames() == [])
+/// 3. Intermediate steps DO produce frame outputs  →  without the guard the MCP would
+///    archive those frames, re-introducing the latent bug fixed in this PR
+@Test("frame_quality archiving guard — resultType and step structure invariants")
+func frameQualityArchivingGuardInvariant() throws {
+    guard let pipelineURL = getPipelineResourceURL(name: "frame-quality") else { return }
+    let pipeline = try Pipeline.load(from: pipelineURL)
+
+    // 1. The pipeline must declare resultType == .metadata; the MCP guard keys on this.
+    #expect(pipeline.resultType == .metadata)
+
+    // 2. The last step must produce no frame outputs.
+    //    The CLI filters to terminalFrames() (outputs of the last step), so it is already
+    //    safe. This invariant must be preserved so the CLI stays safe independently.
+    let lastStep = try #require(pipeline.steps.last)
+    let terminalFrameOutputs = lastStep.outputs.filter { $0.type == .frame }
+    #expect(terminalFrameOutputs.isEmpty,
+            "Last step '\(lastStep.id)' must produce no frame outputs")
+
+    // 3. Earlier steps DO produce frame outputs, so PipelineRunner.execute() returns frames.
+    //    Without `pipeline.resultType != .metadata` the MCP would auto-archive all of them.
+    let intermediateFrameOutputs = pipeline.steps.dropLast().flatMap {
+        $0.outputs.filter { $0.type == .frame }
+    }
+    #expect(!intermediateFrameOutputs.isEmpty,
+            "Intermediate steps must produce frame outputs — confirms the guard is load-bearing")
+}

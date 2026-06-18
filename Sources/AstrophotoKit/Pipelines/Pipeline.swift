@@ -16,6 +16,23 @@ public struct Pipeline: Codable {
     /// The steps in this pipeline
     public let steps: [PipelineStep]
 
+    /// Declares what this pipeline produces. Defaults to `.default` when omitted from YAML.
+    public let resultType: PipelineResultType
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, description, steps
+        case resultType = "result_type"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id          = try c.decode(String.self,         forKey: .id)
+        name        = try c.decode(String.self,         forKey: .name)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        steps       = try c.decode([PipelineStep].self, forKey: .steps)
+        resultType  = try c.decodeIfPresent(PipelineResultType.self, forKey: .resultType) ?? .default
+    }
+
     /// Load a pipeline from a YAML file
     public static func load(from url: URL) throws -> Pipeline {
         let data = try Data(contentsOf: url)
@@ -69,11 +86,13 @@ public struct Pipeline: Codable {
         id: String,
         name: String,
         description: String? = nil,
-        steps: [PipelineStep]
+        steps: [PipelineStep],
+        resultType: PipelineResultType = .default
     ) {
         self.id = id
         self.name = name
         self.description = description
         self.steps = steps
+        self.resultType = resultType
     }
 }
