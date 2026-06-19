@@ -427,10 +427,13 @@ struct CalibrationSessionTests {
 
         let ts = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
 
-        // Create one light session and one calibration session.
+        // One light session and one dark session with 2 frames (minimum threshold).
         _ = try await db.findOrCreateSession(timestamp: osloNightTS, latDeg: osloLat, lonDeg: osloLon)
         _ = try await db.findOrCreateCalibrationSession(
             frameType: "dark", timestamp: ts,
+            exposureTime: 300, temperature: -10, filter: nil)
+        _ = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: ts.addingTimeInterval(305),
             exposureTime: 300, temperature: -10, filter: nil)
 
         let calibSessions = try await db.calibrationSessions()
@@ -538,10 +541,11 @@ struct CalibrationSessionTests {
         defer { try? FileManager.default.removeItem(at: url) }
 
         let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
-        for (i, type) in ["dark", "flat", "bias"].enumerated() {
+        // 2 frames per type, 305s apart so each pair joins a session (makeFrame uses 300s exposure).
+        for (i, type) in ["dark", "dark", "flat", "flat", "bias", "bias"].enumerated() {
             let frame = makeFrame(
                 lat: osloLat, lon: osloLon,
-                timestamp: base.addingTimeInterval(Double(i) * 10),
+                timestamp: base.addingTimeInterval(Double(i) * 305),
                 frameType: type
             )
             _ = try await db.insertFrame(frame, deduplicate: false)
@@ -623,6 +627,63 @@ struct ArchiveSessionIntegrationTests {
 
         let session = try await archive.session(forFrame: frame.id)
         #expect(session?.frameType == "dark", "Session should be a dark calibration session")
+    }
+
+    @Test("Archive.add() groups consecutive dark frames into the same session")
+    func archiveAddGroupsConsecutiveDarks() async throws {
+        let (archive, root) = try makeTempArchive(prefix: "sess-consec")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // Three 280s darks, each starting 300s after the previous — 20s gap between frames.
+        let timestamps = ["2026-06-16T22:00:00Z", "2026-06-16T22:05:00Z", "2026-06-16T22:10:00Z"]
+        var frames: [ArchivedFrame] = []
+        for (i, ts) in timestamps.enumerated() {
+            let src = root.appendingPathComponent("dark\(i).fits")
+            try writeSiteFITS(to: src, imageType: "Dark Frame",
+                              dateObs: ts, exptime: 280,
+                              siteLat: osloLat, siteLon: osloLon)
+            let (frame, _) = try await archive.add(fitsFile: src)
+            frames.append(frame)
+        }
+
+        let sessionIDs = Set(frames.compactMap { $0.sessionID })
+        #expect(sessionIDs.count == 1, "All three consecutive darks should join the same session")
+
+        let session = try await archive.session(forFrame: frames[0].id)
+        #expect(session?.frameCount == 3)
+        #expect(session?.frameType == "dark")
+    }
+
+    @Test("a single dark frame is below the minimum — calibrationSessions() hides it until a second frame arrives")
+    func singleDarkFrameHiddenUntilSecondFrameJoins() async throws {
+        let (archive, root) = try makeTempArchive(prefix: "sess-min")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // Add the first dark frame.
+        let src1 = root.appendingPathComponent("dark1.fits")
+        try writeSiteFITS(to: src1, imageType: "Dark Frame",
+                          dateObs: "2026-06-16T22:00:00Z", exptime: 280,
+                          siteLat: osloLat, siteLon: osloLon)
+        let (frame1, _) = try await archive.add(fitsFile: src1)
+        #expect(frame1.sessionID != nil, "Session is created eagerly on the first frame")
+
+        let afterOne = try await archive.calibrationSessions()
+        #expect(afterOne.isEmpty, "A single-frame session must not appear in calibrationSessions()")
+
+        // The session is still reachable directly — it exists, just not listed.
+        let sessionDirect = try await archive.session(forFrame: frame1.id)
+        #expect(sessionDirect != nil, "session(forFrame:) must still return the single-frame session")
+
+        // Add the second dark frame — now the session crosses the threshold.
+        let src2 = root.appendingPathComponent("dark2.fits")
+        try writeSiteFITS(to: src2, imageType: "Dark Frame",
+                          dateObs: "2026-06-16T22:05:00Z", exptime: 280,
+                          siteLat: osloLat, siteLon: osloLon)
+        _ = try await archive.add(fitsFile: src2)
+
+        let afterTwo = try await archive.calibrationSessions()
+        #expect(afterTwo.count == 1, "Session with 2 frames must now appear in calibrationSessions()")
+        #expect(afterTwo[0].frameCount == 2)
     }
 
     @Test("Archive.add() does not assign a session to a raw light frame without site coordinates")
