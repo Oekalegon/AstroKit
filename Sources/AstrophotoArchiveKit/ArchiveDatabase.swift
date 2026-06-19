@@ -2002,7 +2002,7 @@ actor ArchiveDatabase {
             FROM sessions WHERE frame_type = 'light'
             """
         if isNight != nil { sql += " AND is_night = ?" }
-        sql += " ORDER BY date DESC"
+        sql += " ORDER BY date DESC, start_time DESC"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
         if let isNight { sqlite3_bind_int(stmt, 1, isNight ? 1 : 0) }
