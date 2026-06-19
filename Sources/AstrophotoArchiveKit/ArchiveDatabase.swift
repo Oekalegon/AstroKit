@@ -2338,12 +2338,19 @@ actor ArchiveDatabase {
     }
 
     /// After any session extension or creation, absorbs adjacent sessions of the same
-    /// type/constraints whose `start_time` falls within ±`calibrationSessionGapSeconds` of
-    /// `sessionID`'s current `end_time`. Loops until no further merge is possible.
+    /// type/constraints that are adjacent to `sessionID`'s current time window. Loops
+    /// until no further merge is possible.
     ///
-    /// The ±window (rather than strictly forward) is needed for out-of-order additions:
-    /// e.g. a bridging frame F3 may extend S1's end_time past the start_time of a
-    /// previously separate S2, meaning S2's first frame now overlaps S1's window.
+    /// Two sessions are adjacent if either:
+    /// - the candidate's `start_time` is within `gapSeconds` of our `end_time` (forward), or
+    /// - the candidate's `end_time` is within `gapSeconds` of our `start_time` (backward).
+    ///
+    /// The backward check handles `backfillCalibrationSessions`: backfill processes frames in
+    /// timestamp order, so a long-exposure bridging frame (F3) may extend S1's `end_time`
+    /// past a later frame's timestamp (F2), causing F2 to create a new session S2 whose
+    /// `start_time` falls inside S1's window. When `merge(into: S2)` runs, the forward
+    /// check misses S1 (S1.start_time is far from S2.end_time), but the backward check
+    /// catches it (S1.end_time is close to S2.start_time).
     private func mergeAdjacentCalibrationSessions(
         into sessionID: UUID,
         frameType: String,
@@ -2351,30 +2358,47 @@ actor ArchiveDatabase {
         filter: String?
     ) throws {
         while true {
-            // Current end_time of our session.
-            let tStmt = try prepare("SELECT end_time FROM sessions WHERE id = ?")
+            // Current time window of our session (need both ends for bidirectional adjacency check).
+            let tStmt = try prepare("SELECT start_time, end_time FROM sessions WHERE id = ?")
             defer { sqlite3_finalize(tStmt) }
             bind(tStmt, 1, sessionID.uuidString)
-            guard sqlite3_step(tStmt) == SQLITE_ROW, let endStr = columnText(tStmt, 0) else { return }
+            guard sqlite3_step(tStmt) == SQLITE_ROW,
+                  let startStr = columnText(tStmt, 0),
+                  let endStr   = columnText(tStmt, 1) else { return }
 
-            // Find a candidate: same type, matching temperature/filter, start_time within ±gap.
+            // Find a candidate: same type, matching temperature/filter, adjacent in either direction.
+            // Forward:  other.start_time within gap of our end_time  (other starts when we end)
+            // Backward: other.end_time within gap of our start_time  (other ends when we start)
+            // The backward check is needed when backfillCalibrationSessions processes a frame
+            // out of temporal order: the newly created session may start inside an existing
+            // session's window rather than after it.
             let findSQL = """
                 SELECT id, end_time, frame_count, temperature_hint, filter_hint
                 FROM sessions
                 WHERE frame_type = ?
                   AND id != ?
                   AND start_time IS NOT NULL
-                  AND ABS((julianday(start_time) - julianday(?)) * 86400) <= ?
-                ORDER BY ABS((julianday(start_time) - julianday(?)) * 86400) ASC
+                  AND end_time IS NOT NULL
+                  AND (
+                    ABS((julianday(start_time) - julianday(?)) * 86400) <= ?
+                    OR ABS((julianday(end_time) - julianday(?)) * 86400) <= ?
+                  )
+                ORDER BY MIN(
+                  ABS((julianday(start_time) - julianday(?)) * 86400),
+                  ABS((julianday(end_time) - julianday(?)) * 86400)
+                ) ASC
                 LIMIT 20
                 """
             let findStmt = try prepare(findSQL)
             defer { sqlite3_finalize(findStmt) }
             bind(findStmt, 1, frameType.lowercased())
             bind(findStmt, 2, sessionID.uuidString)
-            bind(findStmt, 3, endStr)
+            bind(findStmt, 3, endStr)                                    // forward: other.start vs our.end
             sqlite3_bind_double(findStmt, 4, Self.calibrationSessionGapSeconds)
-            bind(findStmt, 5, endStr)
+            bind(findStmt, 5, startStr)                                  // backward: other.end vs our.start
+            sqlite3_bind_double(findStmt, 6, Self.calibrationSessionGapSeconds)
+            bind(findStmt, 7, endStr)                                    // ORDER BY forward
+            bind(findStmt, 8, startStr)                                  // ORDER BY backward
 
             var srcID: String?
             var srcEndStr: String?
