@@ -162,16 +162,7 @@ extension ArchiveDatabase {
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
 
-        for (i, value) in bindings.enumerated() {
-            let pos = Int32(i + 1)
-            switch value {
-            case let s as String: sqlite3_bind_text(stmt, pos, s, -1, ArchiveDatabase.sqliteTransient)
-            case let d as Double: sqlite3_bind_double(stmt, pos, d)
-            case let n as Int:    sqlite3_bind_int(stmt, pos, Int32(n))
-            case let n as Int64:  sqlite3_bind_int64(stmt, pos, n)
-            default: break
-            }
-        }
+        for (i, v) in bindings.enumerated() { bindAny(stmt, Int32(i + 1), v) }
 
         var results: [ArchivedFrameSet] = []
         while sqlite3_step(stmt) == SQLITE_ROW {

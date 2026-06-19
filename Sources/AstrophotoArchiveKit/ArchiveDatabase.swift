@@ -110,6 +110,16 @@ actor ArchiveDatabase {
         }
     }
 
+    func bindAny(_ stmt: OpaquePointer?, _ pos: Int32, _ value: Any) {
+        switch value {
+        case let s as String: sqlite3_bind_text(stmt, pos, s, -1, Self.sqliteTransient)
+        case let d as Double: sqlite3_bind_double(stmt, pos, d)
+        case let n as Int:    sqlite3_bind_int(stmt, pos, Int32(n))
+        case let n as Int64:  sqlite3_bind_int64(stmt, pos, n)
+        default: break
+        }
+    }
+
     // MARK: - Column helpers
 
     func columnText(_ stmt: OpaquePointer?, _ col: Int32) -> String? {
