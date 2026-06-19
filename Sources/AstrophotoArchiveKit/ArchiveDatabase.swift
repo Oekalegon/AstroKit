@@ -2300,6 +2300,8 @@ actor ArchiveDatabase {
             guard let uuid = UUID(uuidString: existing) else {
                 throw ArchiveError.databaseError("Malformed session UUID: \(existing)")
             }
+            try mergeAdjacentCalibrationSessions(into: uuid, frameType: frameType,
+                                                 temperature: temperature, filter: filter)
             return uuid
         }
 
@@ -2330,7 +2332,112 @@ actor ArchiveDatabase {
         guard sqlite3_step(insertStmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
         }
+        try mergeAdjacentCalibrationSessions(into: newID, frameType: frameType,
+                                             temperature: temperature, filter: filter)
         return newID
+    }
+
+    /// After any session extension or creation, absorbs adjacent sessions of the same
+    /// type/constraints whose `start_time` falls within ±`calibrationSessionGapSeconds` of
+    /// `sessionID`'s current `end_time`. Loops until no further merge is possible.
+    ///
+    /// The ±window (rather than strictly forward) is needed for out-of-order additions:
+    /// e.g. a bridging frame F3 may extend S1's end_time past the start_time of a
+    /// previously separate S2, meaning S2's first frame now overlaps S1's window.
+    private func mergeAdjacentCalibrationSessions(
+        into sessionID: UUID,
+        frameType: String,
+        temperature: Double?,
+        filter: String?
+    ) throws {
+        while true {
+            // Current end_time of our session.
+            let tStmt = try prepare("SELECT end_time FROM sessions WHERE id = ?")
+            defer { sqlite3_finalize(tStmt) }
+            bind(tStmt, 1, sessionID.uuidString)
+            guard sqlite3_step(tStmt) == SQLITE_ROW, let endStr = columnText(tStmt, 0) else { return }
+
+            // Find a candidate: same type, matching temperature/filter, start_time within ±gap.
+            let findSQL = """
+                SELECT id, end_time, frame_count, temperature_hint, filter_hint
+                FROM sessions
+                WHERE frame_type = ?
+                  AND id != ?
+                  AND start_time IS NOT NULL
+                  AND ABS((julianday(start_time) - julianday(?)) * 86400) <= ?
+                ORDER BY ABS((julianday(start_time) - julianday(?)) * 86400) ASC
+                LIMIT 20
+                """
+            let findStmt = try prepare(findSQL)
+            defer { sqlite3_finalize(findStmt) }
+            bind(findStmt, 1, frameType.lowercased())
+            bind(findStmt, 2, sessionID.uuidString)
+            bind(findStmt, 3, endStr)
+            sqlite3_bind_double(findStmt, 4, Self.calibrationSessionGapSeconds)
+            bind(findStmt, 5, endStr)
+
+            var srcID: String?
+            var srcEndStr: String?
+            var srcCount = 0
+            while sqlite3_step(findStmt) == SQLITE_ROW {
+                guard let idStr = columnText(findStmt, 0) else { continue }
+                let adjTemp   = columnDouble(findStmt, 3)
+                let adjFilter = columnText(findStmt, 4)
+                switch frameType.lowercased() {
+                case "dark":
+                    if let t = temperature, let st = adjTemp {
+                        guard abs(t - st) <= 2.0 else { continue }
+                    } else if temperature != nil || adjTemp != nil {
+                        continue
+                    }
+                case "flat":
+                    guard adjFilter == filter else { continue }
+                default:
+                    break
+                }
+                srcID     = idStr
+                srcEndStr = columnText(findStmt, 1)
+                srcCount  = Int(sqlite3_column_int(findStmt, 2))
+                break
+            }
+
+            guard let source = srcID else { return }
+
+            // Move all frames from the source session into ours.
+            let moveStmt = try prepare("UPDATE frames SET session_id = ? WHERE session_id = ?")
+            defer { sqlite3_finalize(moveStmt) }
+            bind(moveStmt, 1, sessionID.uuidString)
+            bind(moveStmt, 2, source)
+            guard sqlite3_step(moveStmt) == SQLITE_DONE else {
+                throw ArchiveError.databaseError(dbErrorMessage())
+            }
+
+            // Update frame_count and take the later end_time.
+            let updStmt = try prepare("""
+                UPDATE sessions SET
+                    frame_count = frame_count + ?,
+                    end_time = CASE WHEN ? IS NOT NULL AND (end_time IS NULL OR ? > end_time)
+                                    THEN ? ELSE end_time END
+                WHERE id = ?
+                """)
+            defer { sqlite3_finalize(updStmt) }
+            sqlite3_bind_int(updStmt, 1, Int32(srcCount))
+            bind(updStmt, 2, srcEndStr ?? "")
+            bind(updStmt, 3, srcEndStr ?? "")
+            bind(updStmt, 4, srcEndStr ?? "")
+            bind(updStmt, 5, sessionID.uuidString)
+            guard sqlite3_step(updStmt) == SQLITE_DONE else {
+                throw ArchiveError.databaseError(dbErrorMessage())
+            }
+
+            // Delete the absorbed session.
+            let delStmt = try prepare("DELETE FROM sessions WHERE id = ?")
+            defer { sqlite3_finalize(delStmt) }
+            bind(delStmt, 1, source)
+            guard sqlite3_step(delStmt) == SQLITE_DONE else {
+                throw ArchiveError.databaseError(dbErrorMessage())
+            }
+        }
     }
 
     /// Assigns calibration sessions to all raw calibration frames with a timestamp

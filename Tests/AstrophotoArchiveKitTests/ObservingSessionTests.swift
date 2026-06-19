@@ -445,6 +445,44 @@ struct CalibrationSessionTests {
         #expect(lightSessions[0].isCalibration == false)
     }
 
+    // MARK: - Bridging frame merges two separate sessions
+
+    @Test("bridging frame absorbs the adjacent single-frame session into one")
+    func bridgingFrameMergesAdjacentSessions() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let iso = ISO8601DateFormatter()
+        // F1: T=0, 300s exposure → S1.end_time = 300
+        // F2: T=720 (420s after F1 ended) → separate S2
+        // F3: T=360, 420s exposure → end_time = 780, gap from S1.end = 60s → joins S1
+        //     After joining, S1.end_time = 780; S2.start_time = 720 → |720-780| = 60 ≤ 300 → S2 absorbed
+        let base = iso.date(from: "2026-06-16T22:00:00Z")!
+
+        let sid1 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base,
+            exposureTime: 300, temperature: -10, filter: nil)
+        let sid2 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base.addingTimeInterval(720),
+            exposureTime: 300, temperature: -10, filter: nil)
+
+        #expect(sid1 != sid2, "Before bridging, F1 and F2 must be in separate sessions")
+
+        // Add bridging frame F3.
+        let sid3 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base.addingTimeInterval(360),
+            exposureTime: 420, temperature: -10, filter: nil)
+
+        #expect(sid3 == sid1, "Bridging frame should join S1")
+
+        // S2 must have been absorbed into S1.
+        let merged = try await db.session(id: sid1)
+        #expect(merged?.frameCount == 3, "All three frames must be in the merged session")
+
+        let s2Gone = try await db.session(id: sid2)
+        #expect(s2Gone == nil, "S2 must no longer exist after being absorbed")
+    }
+
     // MARK: - Gap boundary
 
     @Test("dark frame with exactly 300s gap joins the session")
