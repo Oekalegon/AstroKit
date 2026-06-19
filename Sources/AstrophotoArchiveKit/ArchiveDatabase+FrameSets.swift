@@ -165,7 +165,7 @@ extension ArchiveDatabase {
         for (i, value) in bindings.enumerated() {
             let pos = Int32(i + 1)
             switch value {
-            case let s as String: sqlite3_bind_text(stmt, pos, s, -1, SQLITE_TRANSIENT)
+            case let s as String: sqlite3_bind_text(stmt, pos, s, -1, ArchiveDatabase.sqliteTransient)
             case let d as Double: sqlite3_bind_double(stmt, pos, d)
             case let n as Int:    sqlite3_bind_int(stmt, pos, Int32(n))
             case let n as Int64:  sqlite3_bind_int64(stmt, pos, n)
@@ -184,7 +184,7 @@ extension ArchiveDatabase {
         let sql = ArchiveDatabase.frameSetSelectSQL + " WHERE fs.id = ? GROUP BY fs.id"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, ArchiveDatabase.sqliteTransient)
         return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrameSet(stmt) : nil
     }
 
@@ -194,7 +194,7 @@ extension ArchiveDatabase {
             : "SELECT frame_id FROM frame_set_members WHERE frame_set_id = ? ORDER BY position"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, ArchiveDatabase.sqliteTransient)
         var ids: [UUID] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let s = columnText(stmt, 0), let uuid = UUID(uuidString: s) {
@@ -210,7 +210,7 @@ extension ArchiveDatabase {
             "SELECT frame_id, excluded, excluded_reason FROM frame_set_members WHERE frame_set_id = ? ORDER BY position"
         )
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, ArchiveDatabase.sqliteTransient)
         var result: [(UUID, Bool, String?)] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let s = columnText(stmt, 0), let uuid = UUID(uuidString: s) else { continue }
@@ -357,7 +357,7 @@ extension ArchiveDatabase {
             "SELECT frame_set_id FROM frame_set_members WHERE frame_id = ?"
         )
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, frameID.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, frameID.uuidString, -1, ArchiveDatabase.sqliteTransient)
         var ids: [UUID] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let s = columnText(stmt, 0), let uuid = UUID(uuidString: s) {
@@ -370,7 +370,7 @@ extension ArchiveDatabase {
     func deleteFrameSet(id: UUID) throws {
         let stmt = try prepare("DELETE FROM frame_sets WHERE id = ?")
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, ArchiveDatabase.sqliteTransient)
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
         }

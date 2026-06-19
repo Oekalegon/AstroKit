@@ -3,10 +3,10 @@ import AstrophotoKit
 import Foundation
 import SQLite3
 
-// SQLITE_TRANSIENT tells SQLite to copy the string before the call returns.
-let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
-
 actor ArchiveDatabase {
+    // Tells SQLite to copy the string before the call returns.
+    static let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
     var db: OpaquePointer?
     let archiveRootPath: String
     let iso = ISO8601DateFormatter()
@@ -89,10 +89,10 @@ actor ArchiveDatabase {
     // MARK: - Bind helpers
 
     func bind(_ stmt: OpaquePointer?, _ pos: Int32, _ value: String) {
-        sqlite3_bind_text(stmt, pos, value, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, pos, value, -1, Self.sqliteTransient)
     }
     func bind(_ stmt: OpaquePointer?, _ pos: Int32, _ value: String?) {
-        if let v = value { sqlite3_bind_text(stmt, pos, v, -1, SQLITE_TRANSIENT) }
+        if let v = value { sqlite3_bind_text(stmt, pos, v, -1, Self.sqliteTransient) }
         else              { sqlite3_bind_null(stmt, pos) }
     }
     func bind(_ stmt: OpaquePointer?, _ pos: Int32, _ value: Double?) {
@@ -106,7 +106,7 @@ actor ArchiveDatabase {
     func bind(_ stmt: OpaquePointer?, _ pos: Int32, _ value: Data?) {
         guard let v = value else { sqlite3_bind_null(stmt, pos); return }
         _ = v.withUnsafeBytes { ptr in
-            sqlite3_bind_blob(stmt, pos, ptr.baseAddress, Int32(v.count), SQLITE_TRANSIENT)
+            sqlite3_bind_blob(stmt, pos, ptr.baseAddress, Int32(v.count), Self.sqliteTransient)
         }
     }
 

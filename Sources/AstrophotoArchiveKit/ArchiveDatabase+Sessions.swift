@@ -59,7 +59,7 @@ extension ArchiveDatabase {
             """
         let selectStmt = try prepare(selectSQL)
         defer { sqlite3_finalize(selectStmt) }
-        sqlite3_bind_text(selectStmt, 1, sessionDateString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(selectStmt, 1, sessionDateString, -1, ArchiveDatabase.sqliteTransient)
         sqlite3_bind_int(selectStmt, 2, isNight ? 1 : 0)
 
         var matchedID: String?
@@ -184,7 +184,7 @@ extension ArchiveDatabase {
             FROM sessions WHERE id = ?
             """)
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, ArchiveDatabase.sqliteTransient)
         return sqlite3_step(stmt) == SQLITE_ROW ? rowToSession(stmt) : nil
     }
 
@@ -198,7 +198,7 @@ extension ArchiveDatabase {
         sql += " ORDER BY is_night DESC"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, dateString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, dateString, -1, ArchiveDatabase.sqliteTransient)
         if let isNight { sqlite3_bind_int(stmt, 2, isNight ? 1 : 0) }
         var results: [ObservingSession] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -237,7 +237,7 @@ extension ArchiveDatabase {
             ORDER BY timestamp
             """)
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, ArchiveDatabase.sqliteTransient)
         var results: [ArchivedFrame] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let f = rowToFrame(stmt) { results.append(f) }
@@ -255,7 +255,7 @@ extension ArchiveDatabase {
               AND f.processing_level = 'raw'
             """)
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, frameID.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, frameID.uuidString, -1, ArchiveDatabase.sqliteTransient)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return rowToSession(stmt)
     }

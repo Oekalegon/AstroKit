@@ -399,7 +399,7 @@ extension ArchiveDatabase {
         defer { sqlite3_finalize(stmt) }
         // SUBSTR start position is 1-based; skip the root + trailing slash.
         sqlite3_bind_int(stmt, 1, Int32(prefix.utf8.count + 1))
-        sqlite3_bind_text(stmt, 2, prefix + "%", -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, prefix + "%", -1, ArchiveDatabase.sqliteTransient)
         sqlite3_step(stmt)
 
         // Same normalization for fits_tables.
@@ -412,7 +412,7 @@ extension ArchiveDatabase {
         guard sqlite3_prepare_v2(db, tableSQL, -1, &tstmt, nil) == SQLITE_OK else { return }
         defer { sqlite3_finalize(tstmt) }
         sqlite3_bind_int(tstmt, 1, Int32(prefix.utf8.count + 1))
-        sqlite3_bind_text(tstmt, 2, prefix + "%", -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(tstmt, 2, prefix + "%", -1, ArchiveDatabase.sqliteTransient)
         sqlite3_step(tstmt)
     }
 }

@@ -87,9 +87,9 @@ extension ArchiveDatabase {
             """
             let stmt = try prepare(sql)
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, framesetID.uuidString, -1, SQLITE_TRANSIENT)
-            sqlite3_bind_text(stmt, 2, pipelineID,            -1, SQLITE_TRANSIENT)
-            sqlite3_bind_text(stmt, 3, excludingRunID.uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 1, framesetID.uuidString, -1, ArchiveDatabase.sqliteTransient)
+            sqlite3_bind_text(stmt, 2, pipelineID,            -1, ArchiveDatabase.sqliteTransient)
+            sqlite3_bind_text(stmt, 3, excludingRunID.uuidString, -1, ArchiveDatabase.sqliteTransient)
             return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
         } else if let frameID = singleInputFrameID {
             // Strategy 2: same source frame (calibration, registration of individual frames)
@@ -105,9 +105,9 @@ extension ArchiveDatabase {
             """
             let stmt = try prepare(sql)
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, frameID.uuidString,    -1, SQLITE_TRANSIENT)
-            sqlite3_bind_text(stmt, 2, pipelineID,            -1, SQLITE_TRANSIENT)
-            sqlite3_bind_text(stmt, 3, excludingRunID.uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 1, frameID.uuidString,    -1, ArchiveDatabase.sqliteTransient)
+            sqlite3_bind_text(stmt, 2, pipelineID,            -1, ArchiveDatabase.sqliteTransient)
+            sqlite3_bind_text(stmt, 3, excludingRunID.uuidString, -1, ArchiveDatabase.sqliteTransient)
             return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
         } else {
             // Strategy 3: ad-hoc multi-frame run — match on result frame target characteristics
@@ -125,10 +125,10 @@ extension ArchiveDatabase {
             """
             let stmt = try prepare(sql)
             defer { sqlite3_finalize(stmt) }
-            sqlite3_bind_text(stmt, 1, pipelineID,                -1, SQLITE_TRANSIENT)
-            sqlite3_bind_text(stmt, 2, excludingRunID.uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 1, pipelineID,                -1, ArchiveDatabase.sqliteTransient)
+            sqlite3_bind_text(stmt, 2, excludingRunID.uuidString, -1, ArchiveDatabase.sqliteTransient)
             bind(stmt, 3, objectName)
-            sqlite3_bind_text(stmt, 4, frameType,                 -1, SQLITE_TRANSIENT)
+            sqlite3_bind_text(stmt, 4, frameType,                 -1, ArchiveDatabase.sqliteTransient)
             bind(stmt, 5, filter)
             return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
         }
@@ -178,7 +178,7 @@ extension ArchiveDatabase {
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, ArchiveDatabase.sqliteTransient)
         var results: [ArchivedFrame] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let f = rowToFrame(stmt) { results.append(f) }
@@ -191,7 +191,7 @@ extension ArchiveDatabase {
     func successors(of id: UUID) throws -> [ArchivedFrame] {
         let stmt = try prepare("SELECT * FROM frames WHERE supersedes_id = ?")
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, ArchiveDatabase.sqliteTransient)
         var results: [ArchivedFrame] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let f = rowToFrame(stmt) { results.append(f) }
@@ -204,7 +204,7 @@ extension ArchiveDatabase {
             "SELECT id, pipeline_id, parameters, created_at FROM processing_runs WHERE id = ? LIMIT 1"
         )
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, ArchiveDatabase.sqliteTransient)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return rowToProcessingRun(stmt)
     }
@@ -215,7 +215,7 @@ extension ArchiveDatabase {
             FROM processing_run_inputs WHERE run_id = ? ORDER BY input_name, position
             """)
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, ArchiveDatabase.sqliteTransient)
         var results: [ProcessingRunInputRef] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             let inputName  = columnText(stmt, 0) ?? ""

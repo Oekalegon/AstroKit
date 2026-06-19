@@ -82,7 +82,7 @@ extension ArchiveDatabase {
         for (i, value) in bindings.enumerated() {
             let pos = Int32(i + 1)
             switch value {
-            case let s as String: sqlite3_bind_text(stmt, pos, s, -1, SQLITE_TRANSIENT)
+            case let s as String: sqlite3_bind_text(stmt, pos, s, -1, ArchiveDatabase.sqliteTransient)
             case let d as Double: sqlite3_bind_double(stmt, pos, d)
             case let n as Int:    sqlite3_bind_int(stmt, pos, Int32(n))
             case let n as Int64:  sqlite3_bind_int64(stmt, pos, n)
@@ -100,14 +100,14 @@ extension ArchiveDatabase {
     func frameByID(_ id: UUID) throws -> ArchivedFrame? {
         let stmt = try prepare("SELECT * FROM frames WHERE id = ?")
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, ArchiveDatabase.sqliteTransient)
         return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
     }
 
     func frameFilePath(id: UUID) throws -> String? {
         let stmt = try prepare("SELECT file_path FROM frames WHERE id = ?")
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, ArchiveDatabase.sqliteTransient)
         guard sqlite3_step(stmt) == SQLITE_ROW else { return nil }
         return columnText(stmt, 0)
     }
@@ -115,14 +115,14 @@ extension ArchiveDatabase {
     func frameByFilePath(_ path: String) throws -> ArchivedFrame? {
         let stmt = try prepare("SELECT * FROM frames WHERE file_path = ? LIMIT 1")
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, path, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, path, -1, ArchiveDatabase.sqliteTransient)
         return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
     }
 
     func frameBySignature(_ signature: String) throws -> ArchivedFrame? {
         let stmt = try prepare("SELECT * FROM frames WHERE frame_signature = ? LIMIT 1")
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, signature, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, signature, -1, ArchiveDatabase.sqliteTransient)
         return sqlite3_step(stmt) == SQLITE_ROW ? rowToFrame(stmt) : nil
     }
 
@@ -378,7 +378,7 @@ extension ArchiveDatabase {
     func deleteFrame(id: UUID) throws {
         let stmt = try prepare("DELETE FROM frames WHERE id = ?")
         defer { sqlite3_finalize(stmt) }
-        sqlite3_bind_text(stmt, 1, id.uuidString, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 1, id.uuidString, -1, ArchiveDatabase.sqliteTransient)
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
         }
