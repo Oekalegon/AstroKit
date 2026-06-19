@@ -63,7 +63,7 @@ extension ArchiveToolHandler {
         for entry in entries {
             switch entry {
             case .session(let s, let recency):
-                lines.append("  { kind: session, id: \(s.id.uuidString), name: \(s.name), type: \(s.isNight ? "night" : "day"), frames: \(s.frameCount), recency: \(shortDate(recency)) }")
+                lines.append("  { kind: session, id: \(s.id.uuidString), name: \(s.name), type: \(s.kindLabel), frames: \(s.frameCount), recency: \(shortDate(recency)) }")
             case .dateGroup(let label, let utcDate, let recency, let count):
                 lines.append("  { kind: date_group, name: \(label), utc_date: \(utcDate), frames: \(count), recency: \(shortDate(recency)) }")
             case .frame(let f):
