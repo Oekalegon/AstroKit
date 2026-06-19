@@ -2067,9 +2067,9 @@ actor ArchiveDatabase {
         defer { sqlite3_finalize(stmt) }
         if let isNight {
             sqlite3_bind_int(stmt, 1, isNight ? 1 : 0)
-            sqlite3_bind_int(stmt, 2, Int32(limit))
+            sqlite3_bind_int64(stmt, 2, Int64(limit))
         } else {
-            sqlite3_bind_int(stmt, 1, Int32(limit))
+            sqlite3_bind_int64(stmt, 1, Int64(limit))
         }
         var results: [ObservingSession] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
