@@ -2480,6 +2480,9 @@ actor ArchiveDatabase {
     /// that have not yet been assigned to a session. Safe to call multiple times.
     func backfillCalibrationSessions() throws {
         // Collect unassigned calibration frames ordered by type, then time.
+        // Read into an array first so the SELECT cursor is closed before we begin writing;
+        // this avoids holding a read cursor open across the nested SAVEPOINTs that
+        // mergeAdjacentCalibrationSessions uses.
         let selectSQL = """
             SELECT id, frame_type, timestamp, exposure_time, temperature, filter
             FROM frames
@@ -2493,30 +2496,36 @@ actor ArchiveDatabase {
         defer { sqlite3_finalize(stmt) }
 
         let iso = Self.sessionISO
-        var assignments: [(frameID: String, sessionID: UUID)] = []
+        typealias FrameRecord = (id: String, frameType: String, timestamp: Date,
+                                 exposureTime: Double?, temperature: Double?, filter: String?)
+        var records: [FrameRecord] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let frameID   = columnText(stmt, 0),
                   let frameType = columnText(stmt, 1),
                   let tsStr     = columnText(stmt, 2),
                   let timestamp = iso.date(from: tsStr) else { continue }
-            let exposureTime = columnDouble(stmt, 3)
-            let temperature  = columnDouble(stmt, 4)
-            let filter       = columnText(stmt, 5)
-            let sid = try findOrCreateCalibrationSession(
-                frameType: frameType, timestamp: timestamp,
-                exposureTime: exposureTime, temperature: temperature, filter: filter)
-            assignments.append((frameID, sid))
+            records.append((frameID, frameType, timestamp,
+                            columnDouble(stmt, 3), columnDouble(stmt, 4), columnText(stmt, 5)))
         }
+        guard !records.isEmpty else { return }
 
+        // Assign session_ids inline within a single transaction. Each frame is written
+        // to the DB immediately after findOrCreateCalibrationSession returns so that
+        // mergeAdjacentCalibrationSessions can relocate already-assigned frames when a
+        // later bridging frame triggers a session merge.
         try exec("BEGIN")
         do {
             let updateStmt = try prepare("UPDATE frames SET session_id = ? WHERE id = ?")
             defer { sqlite3_finalize(updateStmt) }
-            for (frameID, sessionID) in assignments {
+            for record in records {
+                let sid = try findOrCreateCalibrationSession(
+                    frameType: record.frameType, timestamp: record.timestamp,
+                    exposureTime: record.exposureTime, temperature: record.temperature,
+                    filter: record.filter)
                 sqlite3_reset(updateStmt)
                 sqlite3_clear_bindings(updateStmt)
-                bind(updateStmt, 1, sessionID.uuidString)
-                bind(updateStmt, 2, frameID)
+                bind(updateStmt, 1, sid.uuidString)
+                bind(updateStmt, 2, record.id)
                 guard sqlite3_step(updateStmt) == SQLITE_DONE else {
                     throw ArchiveError.databaseError(dbErrorMessage())
                 }

@@ -15,6 +15,7 @@ private func makeFrame(
     lon: Double,
     timestamp: Date,
     frameType: String = "light",
+    exposureTime: Double = 300,
     processingLevel: ProcessingLevel = .raw,
     sessionID: UUID? = nil
 ) -> ArchivedFrame {
@@ -31,7 +32,7 @@ private func makeFrame(
         focalLength: nil, pixelScale: nil,
         temperature: -10,
         timestamp: timestamp,
-        exposureTime: 300,
+        exposureTime: exposureTime,
         gain: 100, offset: nil,
         width: nil, height: nil, bitpix: nil,
         calibrated: false, stacked: false, stretched: false,
@@ -481,6 +482,36 @@ struct CalibrationSessionTests {
 
         let s2Gone = try await db.session(id: sid2)
         #expect(s2Gone == nil, "S2 must no longer exist after being absorbed")
+    }
+
+    @Test("backfillCalibrationSessions merges sessions bridged by a long-exposure out-of-order frame")
+    func bridgingFrameMergesViaBackfill() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+
+        // Three frames inserted with no session_id; backfill will process them in timestamp
+        // order: F1 (T=0), F3 (T=360), F2 (T=720).
+        //
+        // After F3 joins S1, S1.end_time = 780. F2's gap from S1 = 720−780 = −60, so backfill
+        // creates a separate S2. The backward-adjacency check in mergeAdjacentCalibrationSessions
+        // must then absorb S2 (S1.end_time=780 is within 60s of S2.start_time=720).
+        _ = try await db.insertFrame(
+            makeFrame(lat: 0, lon: 0, timestamp: base,
+                      frameType: "dark", exposureTime: 300), deduplicate: false)
+        _ = try await db.insertFrame(
+            makeFrame(lat: 0, lon: 0, timestamp: base.addingTimeInterval(720),
+                      frameType: "dark", exposureTime: 300), deduplicate: false)
+        _ = try await db.insertFrame(
+            makeFrame(lat: 0, lon: 0, timestamp: base.addingTimeInterval(360),
+                      frameType: "dark", exposureTime: 420), deduplicate: false)
+
+        try await db.backfillCalibrationSessions()
+
+        let sessions = try await db.calibrationSessions()
+        #expect(sessions.count == 1, "All three frames must end up in one merged session")
+        #expect(sessions[0].frameCount == 3)
     }
 
     // MARK: - Gap boundary
