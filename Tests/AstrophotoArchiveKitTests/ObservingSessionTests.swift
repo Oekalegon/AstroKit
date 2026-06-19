@@ -514,6 +514,61 @@ struct CalibrationSessionTests {
         #expect(sessions[0].frameCount == 3)
     }
 
+    // MARK: - Constraint mismatch suppresses merge
+
+    @Test("time-adjacent dark sessions at different temperatures are not merged")
+    func temperatureMismatchPreventsMerge() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+
+        // S1: −10°C dark, ends at base+300.
+        let sid1 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base,
+            exposureTime: 300, temperature: -10, filter: nil)
+
+        // S2: −20°C dark, starts 60s after S1 ends — within the gap window.
+        // Because temperatures differ by 10°C (> 2°C tolerance), S2 must stay separate
+        // and mergeAdjacentCalibrationSessions must not absorb it into S1.
+        let sid2 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base.addingTimeInterval(360),
+            exposureTime: 300, temperature: -20, filter: nil)
+
+        #expect(sid1 != sid2, "Dark sessions at −10°C and −20°C must not be merged")
+
+        let s1 = try await db.session(id: sid1)
+        let s2 = try await db.session(id: sid2)
+        #expect(s1?.frameCount == 1, "S1 must still have exactly 1 frame")
+        #expect(s2?.frameCount == 1, "S2 must still have exactly 1 frame")
+    }
+
+    @Test("time-adjacent flat sessions with different filters are not merged")
+    func filterMismatchPreventsMerge() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+
+        // S1: Hα flat, ends at base+5.
+        let sid1 = try await db.findOrCreateCalibrationSession(
+            frameType: "flat", timestamp: base,
+            exposureTime: 5, temperature: nil, filter: "Hα")
+
+        // S2: OIII flat, starts 3s after S1 ends — within the gap window.
+        // Different filter → must remain a separate session.
+        let sid2 = try await db.findOrCreateCalibrationSession(
+            frameType: "flat", timestamp: base.addingTimeInterval(8),
+            exposureTime: 5, temperature: nil, filter: "OIII")
+
+        #expect(sid1 != sid2, "Flat sessions with different filters must not be merged")
+
+        let s1 = try await db.session(id: sid1)
+        let s2 = try await db.session(id: sid2)
+        #expect(s1?.frameCount == 1, "Hα session must still have exactly 1 frame")
+        #expect(s2?.frameCount == 1, "OIII session must still have exactly 1 frame")
+    }
+
     // MARK: - Gap boundary
 
     @Test("dark frame with exactly 300s gap joins the session")
