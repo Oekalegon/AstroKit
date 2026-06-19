@@ -31,7 +31,6 @@ extension ArchiveDatabase {
         excludedIDs: Set<UUID> = [],
         excludedReasons: [UUID: String] = [:]
     ) throws {
-        let iso = ISO8601DateFormatter()
         try exec("BEGIN")
         do {
             let sql = """
@@ -308,7 +307,6 @@ extension ArchiveDatabase {
     /// Identity fields (id, name, frame_type, processing_level, created_at, criteria)
     /// are not touched.
     func updateFrameSetAggregates(_ fs: ArchivedFrameSet) throws {
-        let iso = ISO8601DateFormatter()
         let sql = """
         UPDATE frame_sets SET
             object_name = ?, filter = ?, camera = ?, telescope = ?, site = ?,

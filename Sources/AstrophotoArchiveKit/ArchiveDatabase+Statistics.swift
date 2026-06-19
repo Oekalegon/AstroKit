@@ -53,7 +53,6 @@ extension ArchiveDatabase {
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
-        let iso = ISO8601DateFormatter()
         bind(stmt, 1, cameraName)
         sqlite3_bind_double(stmt, 2, gainSetting)
         sqlite3_bind_double(stmt, 3, egain)

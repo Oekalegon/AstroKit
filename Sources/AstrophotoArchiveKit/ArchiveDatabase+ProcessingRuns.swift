@@ -6,7 +6,6 @@ extension ArchiveDatabase {
     // MARK: - Processing runs
 
     func insertProcessingRun(_ run: ArchivedProcessingRun, inputs: [ProcessingRunInputRef]) throws {
-        let iso = ISO8601DateFormatter()
         try exec("BEGIN")
 
         let paramsJSON: String
@@ -238,7 +237,6 @@ extension ArchiveDatabase {
               let createdAtStr = columnText(stmt, 3)
         else { return nil }
 
-        let iso = ISO8601DateFormatter()
         let createdAt = iso.date(from: createdAtStr) ?? Date()
 
         // Parse simple JSON object {"key":"value",...} — no external dep needed.

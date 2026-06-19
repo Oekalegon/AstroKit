@@ -9,6 +9,7 @@ let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 actor ArchiveDatabase {
     var db: OpaquePointer?
     let archiveRootPath: String
+    let iso = ISO8601DateFormatter()
 
     init(url: URL, archiveRootPath: String) throws {
         self.archiveRootPath = archiveRootPath

@@ -33,8 +33,6 @@ extension ArchiveDatabase {
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
-
-        let iso = ISO8601DateFormatter()
         bind(stmt, 1,  frame.id.uuidString)
         bind(stmt, 2,  frame.filePath)
         bind(stmt, 3,  frame.objectName)
@@ -144,7 +142,6 @@ extension ArchiveDatabase {
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
-        let iso = ISO8601DateFormatter()
         bind(stmt, 1, table.id.uuidString)
         bind(stmt, 2, table.filePath)
         sqlite3_bind_int(stmt, 3, Int32(table.hduIndex))
@@ -310,7 +307,6 @@ extension ArchiveDatabase {
 
     /// Updates the timestamp (DATE-OBS) for a single frame.
     func updateTimestamp(id: UUID, timestamp: Date) throws {
-        let iso = ISO8601DateFormatter()
         let sql = "UPDATE frames SET timestamp = ? WHERE id = ?"
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -545,7 +541,6 @@ extension ArchiveDatabase {
               let filePath = columnText(stmt, 1)
         else { return nil }
 
-        let iso = ISO8601DateFormatter()
         var frame = ArchivedFrame(
             id: id,
             filePath: filePath,
