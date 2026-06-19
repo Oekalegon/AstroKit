@@ -2382,7 +2382,7 @@ actor ArchiveDatabase {
             // out of temporal order: the newly created session may start inside an existing
             // session's window rather than after it.
             let findSQL = """
-                SELECT id, end_time, frame_count, temperature_hint, filter_hint
+                SELECT id, end_time, frame_count, temperature_hint, filter_hint, start_time
                 FROM sessions
                 WHERE frame_type = ?
                   AND id != ?
@@ -2411,6 +2411,7 @@ actor ArchiveDatabase {
 
             var srcID: String?
             var srcEndStr: String?
+            var srcStartStr: String?
             var srcCount = 0
             while sqlite3_step(findStmt) == SQLITE_ROW {
                 guard let idStr = columnText(findStmt, 0) else { continue }
@@ -2421,9 +2422,10 @@ actor ArchiveDatabase {
                     frameTemp: temperature, frameFilter: filter,
                     sessionTemp: adjTemp, sessionFilter: adjFilter
                 ) else { continue }
-                srcID     = idStr
-                srcEndStr = columnText(findStmt, 1)
-                srcCount  = Int(sqlite3_column_int(findStmt, 2))
+                srcID       = idStr
+                srcEndStr   = columnText(findStmt, 1)
+                srcCount    = Int(sqlite3_column_int(findStmt, 2))
+                srcStartStr = columnText(findStmt, 5)
                 break
             }
 
@@ -2442,20 +2444,21 @@ actor ArchiveDatabase {
                     throw ArchiveError.databaseError(dbErrorMessage())
                 }
 
-                // Update frame_count and take the later end_time.
+                // Update frame_count, take the later end_time, and take the earlier start_time.
                 let updStmt = try prepare("""
                     UPDATE sessions SET
                         frame_count = frame_count + ?,
-                        end_time = CASE WHEN ? IS NOT NULL AND (end_time IS NULL OR ? > end_time)
-                                        THEN ? ELSE end_time END
+                        end_time   = CASE WHEN ? IS NOT NULL AND (end_time   IS NULL OR ? > end_time)
+                                         THEN ? ELSE end_time END,
+                        start_time = CASE WHEN ? IS NOT NULL AND (start_time IS NULL OR ? < start_time)
+                                         THEN ? ELSE start_time END
                     WHERE id = ?
                     """)
                 defer { sqlite3_finalize(updStmt) }
                 sqlite3_bind_int64(updStmt, 1, Int64(srcCount))
-                bind(updStmt, 2, srcEndStr ?? "")
-                bind(updStmt, 3, srcEndStr ?? "")
-                bind(updStmt, 4, srcEndStr ?? "")
-                bind(updStmt, 5, sessionID.uuidString)
+                bind(updStmt, 2, srcEndStr   ?? ""); bind(updStmt, 3, srcEndStr   ?? ""); bind(updStmt, 4, srcEndStr   ?? "")
+                bind(updStmt, 5, srcStartStr ?? ""); bind(updStmt, 6, srcStartStr ?? ""); bind(updStmt, 7, srcStartStr ?? "")
+                bind(updStmt, 8, sessionID.uuidString)
                 guard sqlite3_step(updStmt) == SQLITE_DONE else {
                     throw ArchiveError.databaseError(dbErrorMessage())
                 }

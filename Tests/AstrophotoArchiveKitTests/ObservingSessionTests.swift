@@ -484,6 +484,36 @@ struct CalibrationSessionTests {
         #expect(s2Gone == nil, "S2 must no longer exist after being absorbed")
     }
 
+    @Test("merged session start_time is the earliest frame's timestamp, not the absorbing session's")
+    func mergedSessionHasEarliestStartTime() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+
+        // Backfill path: F1 (T=0), F3 (T=360), F2 (T=720) processed in timestamp order.
+        // F2 creates S2 (start=720); backward-adjacency absorbs S1 (start=0) into S2.
+        // The merged session must report start_time = base (the earliest frame), not base+720.
+        _ = try await db.insertFrame(
+            makeFrame(lat: 0, lon: 0, timestamp: base,
+                      frameType: "dark", exposureTime: 300), deduplicate: false)
+        _ = try await db.insertFrame(
+            makeFrame(lat: 0, lon: 0, timestamp: base.addingTimeInterval(720),
+                      frameType: "dark", exposureTime: 300), deduplicate: false)
+        _ = try await db.insertFrame(
+            makeFrame(lat: 0, lon: 0, timestamp: base.addingTimeInterval(360),
+                      frameType: "dark", exposureTime: 420), deduplicate: false)
+
+        try await db.backfillCalibrationSessions()
+
+        let sessions = try await db.calibrationSessions()
+        let session = try #require(sessions.first)
+        #expect(session.startTime == base,
+                "start_time must be the earliest frame's timestamp after a backward merge")
+        #expect(session.endTime == base.addingTimeInterval(1020),
+                "end_time must be the latest frame's end time (T=720 + E=300)")
+    }
+
     @Test("backfillCalibrationSessions merges sessions bridged by a long-exposure out-of-order frame")
     func bridgingFrameMergesViaBackfill() async throws {
         let (db, url) = try makeSessionDB()
