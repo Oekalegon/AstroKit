@@ -1865,7 +1865,7 @@ actor ArchiveDatabase {
     }()
     private static let sessionDisplayFormatter: DateFormatter = {
         let df = DateFormatter()
-        df.locale = Locale.current
+        df.locale = Locale(identifier: "en_GB")  // stored strings must be locale-stable
         df.dateFormat = "d MMMM yyyy"
         return df
     }()
@@ -2016,7 +2016,7 @@ actor ArchiveDatabase {
     func calibrationSessions() throws -> [ObservingSession] {
         let stmt = try prepare("""
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at, frame_type
-            FROM sessions WHERE frame_type != 'light'
+            FROM sessions WHERE frame_type IN ('dark', 'flat', 'bias')
             ORDER BY date DESC, start_time DESC
             """)
         defer { sqlite3_finalize(stmt) }
@@ -2234,12 +2234,16 @@ actor ArchiveDatabase {
         let dateString = df.string(from: timestamp)
 
         // Look for an open session of the same type whose end_time is recent enough.
+        // Gap = newFrame.timestamp − session.end_time must be in [0, gapSeconds]: the frame
+        // must start after the session ends (≥ 0) and within the gap window (≤ gapSeconds).
+        // Without the lower bound, any frame timestamped before end_time (gap < 0) would
+        // also match, incorrectly joining frames from other nights.
         let selectSQL = """
             SELECT id, end_time, temperature_hint, filter_hint
             FROM sessions
             WHERE frame_type = ?
               AND end_time IS NOT NULL
-              AND (julianday(?) - julianday(end_time)) * 86400 <= ?
+              AND (julianday(?) - julianday(end_time)) * 86400 BETWEEN ? AND ?
             ORDER BY end_time DESC
             LIMIT 20
             """
@@ -2247,7 +2251,8 @@ actor ArchiveDatabase {
         defer { sqlite3_finalize(selectStmt) }
         bind(selectStmt, 1, frameType.lowercased())
         bind(selectStmt, 2, iso.string(from: timestamp))
-        sqlite3_bind_double(selectStmt, 3, Self.calibrationSessionGapSeconds)
+        sqlite3_bind_double(selectStmt, 3, 0.0)
+        sqlite3_bind_double(selectStmt, 4, Self.calibrationSessionGapSeconds)
 
         var matchedID: String?
         while sqlite3_step(selectStmt) == SQLITE_ROW {
