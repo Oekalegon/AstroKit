@@ -272,8 +272,8 @@ extension ArchiveDatabase {
                     """)
                 defer { sqlite3_finalize(updStmt) }
                 sqlite3_bind_int64(updStmt, 1, Int64(srcCount))
-                bind(updStmt, 2, srcEndStr   ?? ""); bind(updStmt, 3, srcEndStr   ?? ""); bind(updStmt, 4, srcEndStr   ?? "")
-                bind(updStmt, 5, srcStartStr ?? ""); bind(updStmt, 6, srcStartStr ?? ""); bind(updStmt, 7, srcStartStr ?? "")
+                bind(updStmt, 2, srcEndStr);   bind(updStmt, 3, srcEndStr);   bind(updStmt, 4, srcEndStr)
+                bind(updStmt, 5, srcStartStr); bind(updStmt, 6, srcStartStr); bind(updStmt, 7, srcStartStr)
                 bind(updStmt, 8, sessionID.uuidString)
                 guard sqlite3_step(updStmt) == SQLITE_DONE else {
                     throw ArchiveError.databaseError(dbErrorMessage())
