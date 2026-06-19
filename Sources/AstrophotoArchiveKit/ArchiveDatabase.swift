@@ -2219,6 +2219,25 @@ actor ArchiveDatabase {
     /// of the previous frame's end (= start + exposure), they join the same session.
     private static let calibrationSessionGapSeconds: TimeInterval = 300
 
+    /// Returns true if a frame's temperature/filter constraints are compatible with a candidate
+    /// session's stored hints. Used by both `findOrCreateCalibrationSession` and
+    /// `mergeAdjacentCalibrationSessions` to keep matching rules in one place.
+    private func calibrationConstraintsMatch(
+        frameType: String,
+        frameTemp: Double?, frameFilter: String?,
+        sessionTemp: Double?, sessionFilter: String?
+    ) -> Bool {
+        switch frameType.lowercased() {
+        case "dark":
+            if let t = frameTemp, let st = sessionTemp { return abs(t - st) <= 2.0 }
+            return frameTemp == nil && sessionTemp == nil
+        case "flat":
+            return sessionFilter == frameFilter
+        default:
+            return true
+        }
+    }
+
     /// Finds an existing open calibration session for a new frame, or creates one.
     ///
     /// A session is "open" if the frame's start time falls within `calibrationSessionGapSeconds`
@@ -2262,21 +2281,11 @@ actor ArchiveDatabase {
             guard let idStr = columnText(selectStmt, 0) else { continue }
             let sessionTemp   = columnDouble(selectStmt, 2)
             let sessionFilter = columnText(selectStmt, 3)
-            switch frameType.lowercased() {
-            case "dark":
-                // Darks: match within ±2°C if temperature is known for both.
-                if let t = temperature, let st = sessionTemp {
-                    guard abs(t - st) <= 2.0 else { continue }
-                } else if temperature != nil || sessionTemp != nil {
-                    // One has temp and the other doesn't — treat as different sessions.
-                    continue
-                }
-            case "flat":
-                // Flats: must match filter exactly.
-                guard sessionFilter == filter else { continue }
-            default:
-                break // Bias: just use the most recent open session.
-            }
+            guard calibrationConstraintsMatch(
+                frameType: frameType,
+                frameTemp: temperature, frameFilter: filter,
+                sessionTemp: sessionTemp, sessionFilter: sessionFilter
+            ) else { continue }
             matchedID = idStr
             break
         }
@@ -2407,18 +2416,11 @@ actor ArchiveDatabase {
                 guard let idStr = columnText(findStmt, 0) else { continue }
                 let adjTemp   = columnDouble(findStmt, 3)
                 let adjFilter = columnText(findStmt, 4)
-                switch frameType.lowercased() {
-                case "dark":
-                    if let t = temperature, let st = adjTemp {
-                        guard abs(t - st) <= 2.0 else { continue }
-                    } else if temperature != nil || adjTemp != nil {
-                        continue
-                    }
-                case "flat":
-                    guard adjFilter == filter else { continue }
-                default:
-                    break
-                }
+                guard calibrationConstraintsMatch(
+                    frameType: frameType,
+                    frameTemp: temperature, frameFilter: filter,
+                    sessionTemp: adjTemp, sessionFilter: adjFilter
+                ) else { continue }
                 srcID     = idStr
                 srcEndStr = columnText(findStmt, 1)
                 srcCount  = Int(sqlite3_column_int(findStmt, 2))
