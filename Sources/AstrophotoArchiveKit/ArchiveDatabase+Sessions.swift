@@ -67,7 +67,7 @@ extension ArchiveDatabase {
             guard let idStr = columnText(selectStmt, 0),
                   let existingLat = columnDouble(selectStmt, 1),
                   let existingLon = columnDouble(selectStmt, 2) else { continue }
-            if Self.haversineKm(lat1: latDeg, lon1: lonDeg, lat2: existingLat, lon2: existingLon) < 3.0 {
+            if Self.haversineKm(lat1Deg: latDeg, lon1Deg: lonDeg, lat2Deg: existingLat, lon2Deg: existingLon) < 3.0 {
                 matchedID = idStr
                 break
             }
@@ -335,12 +335,12 @@ extension ArchiveDatabase {
         return sessionDisplayFormatter.string(from: date)
     }
 
-    private static func haversineKm(lat1: Double, lon1: Double, lat2: Double, lon2: Double) -> Double {
+    private static func haversineKm(lat1Deg: Double, lon1Deg: Double, lat2Deg: Double, lon2Deg: Double) -> Double {
         let r = 6371.0
-        let dLat = (lat2 - lat1) * .pi / 180
-        let dLon = (lon2 - lon1) * .pi / 180
+        let dLat = (lat2Deg - lat1Deg) * .pi / 180
+        let dLon = (lon2Deg - lon1Deg) * .pi / 180
         let a = sin(dLat / 2) * sin(dLat / 2)
-                + cos(lat1 * .pi / 180) * cos(lat2 * .pi / 180) * sin(dLon / 2) * sin(dLon / 2)
+                + cos(lat1Deg * .pi / 180) * cos(lat2Deg * .pi / 180) * sin(dLon / 2) * sin(dLon / 2)
         return r * 2 * atan2(sqrt(a), sqrt(1 - a))
     }
 }
