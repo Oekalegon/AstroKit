@@ -2429,39 +2429,49 @@ actor ArchiveDatabase {
 
             guard let source = srcID else { return }
 
-            // Move all frames from the source session into ours.
-            let moveStmt = try prepare("UPDATE frames SET session_id = ? WHERE session_id = ?")
-            defer { sqlite3_finalize(moveStmt) }
-            bind(moveStmt, 1, sessionID.uuidString)
-            bind(moveStmt, 2, source)
-            guard sqlite3_step(moveStmt) == SQLITE_DONE else {
-                throw ArchiveError.databaseError(dbErrorMessage())
-            }
+            // Move, update, and delete as one atomic unit so a mid-sequence failure
+            // can't leave frames moved but frame_count inflated or the source un-deleted.
+            try exec("SAVEPOINT merge_calibration_session")
+            do {
+                // Move all frames from the source session into ours.
+                let moveStmt = try prepare("UPDATE frames SET session_id = ? WHERE session_id = ?")
+                defer { sqlite3_finalize(moveStmt) }
+                bind(moveStmt, 1, sessionID.uuidString)
+                bind(moveStmt, 2, source)
+                guard sqlite3_step(moveStmt) == SQLITE_DONE else {
+                    throw ArchiveError.databaseError(dbErrorMessage())
+                }
 
-            // Update frame_count and take the later end_time.
-            let updStmt = try prepare("""
-                UPDATE sessions SET
-                    frame_count = frame_count + ?,
-                    end_time = CASE WHEN ? IS NOT NULL AND (end_time IS NULL OR ? > end_time)
-                                    THEN ? ELSE end_time END
-                WHERE id = ?
-                """)
-            defer { sqlite3_finalize(updStmt) }
-            sqlite3_bind_int(updStmt, 1, Int32(srcCount))
-            bind(updStmt, 2, srcEndStr ?? "")
-            bind(updStmt, 3, srcEndStr ?? "")
-            bind(updStmt, 4, srcEndStr ?? "")
-            bind(updStmt, 5, sessionID.uuidString)
-            guard sqlite3_step(updStmt) == SQLITE_DONE else {
-                throw ArchiveError.databaseError(dbErrorMessage())
-            }
+                // Update frame_count and take the later end_time.
+                let updStmt = try prepare("""
+                    UPDATE sessions SET
+                        frame_count = frame_count + ?,
+                        end_time = CASE WHEN ? IS NOT NULL AND (end_time IS NULL OR ? > end_time)
+                                        THEN ? ELSE end_time END
+                    WHERE id = ?
+                    """)
+                defer { sqlite3_finalize(updStmt) }
+                sqlite3_bind_int64(updStmt, 1, Int64(srcCount))
+                bind(updStmt, 2, srcEndStr ?? "")
+                bind(updStmt, 3, srcEndStr ?? "")
+                bind(updStmt, 4, srcEndStr ?? "")
+                bind(updStmt, 5, sessionID.uuidString)
+                guard sqlite3_step(updStmt) == SQLITE_DONE else {
+                    throw ArchiveError.databaseError(dbErrorMessage())
+                }
 
-            // Delete the absorbed session.
-            let delStmt = try prepare("DELETE FROM sessions WHERE id = ?")
-            defer { sqlite3_finalize(delStmt) }
-            bind(delStmt, 1, source)
-            guard sqlite3_step(delStmt) == SQLITE_DONE else {
-                throw ArchiveError.databaseError(dbErrorMessage())
+                // Delete the absorbed session.
+                let delStmt = try prepare("DELETE FROM sessions WHERE id = ?")
+                defer { sqlite3_finalize(delStmt) }
+                bind(delStmt, 1, source)
+                guard sqlite3_step(delStmt) == SQLITE_DONE else {
+                    throw ArchiveError.databaseError(dbErrorMessage())
+                }
+
+                try exec("RELEASE SAVEPOINT merge_calibration_session")
+            } catch {
+                sqlite3_exec(db, "ROLLBACK TO SAVEPOINT merge_calibration_session", nil, nil, nil)
+                throw error
             }
         }
     }
