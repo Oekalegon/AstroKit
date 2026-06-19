@@ -441,6 +441,119 @@ struct CalibrationSessionTests {
         #expect(lightSessions.count == 1)
         #expect(lightSessions[0].isCalibration == false)
     }
+
+    // MARK: - Gap boundary
+
+    @Test("dark frame with exactly 300s gap joins the session")
+    func darkFrameAtExactGapBoundaryJoins() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+        // 300s exposure → end_time = base + 300s.
+        let sid1 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base,
+            exposureTime: 300, temperature: -10, filter: nil)
+        // gap = (base + 600) − (base + 300) = 300s — exactly at the threshold.
+        let sid2 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base.addingTimeInterval(600),
+            exposureTime: 300, temperature: -10, filter: nil)
+
+        #expect(sid1 == sid2, "A dark frame with exactly a 300s gap should join the existing session")
+    }
+
+    @Test("dark frame with 301s gap gets a new session")
+    func darkFrameOverGapBoundaryGetsNewSession() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+        let sid1 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base,
+            exposureTime: 300, temperature: -10, filter: nil)
+        // gap = (base + 601) − (base + 300) = 301s — one second over the threshold.
+        let sid2 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base.addingTimeInterval(601),
+            exposureTime: 300, temperature: -10, filter: nil)
+
+        #expect(sid1 != sid2, "A dark frame with a 301s gap must get a new session")
+    }
+
+    // MARK: - Out-of-order frame addition
+
+    @Test("out-of-order dark frame (timestamped before session end_time) does not join that session")
+    func outOfOrderDarkDoesNotJoinNewerSession() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+        // Session S1 ends at base + 300s.
+        let sid1 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: base,
+            exposureTime: 300, temperature: -10, filter: nil)
+
+        // A frame from 25 hours before base has gap = -90300s — well below 0.
+        let oldTS = base.addingTimeInterval(-25 * 3600)
+        let sid2 = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", timestamp: oldTS,
+            exposureTime: 300, temperature: -10, filter: nil)
+
+        #expect(sid1 != sid2, "A dark frame timestamped before a session's end_time must not join it")
+    }
+
+    // MARK: - Backfill idempotency and mixed types
+
+    @Test("backfillCalibrationSessions is idempotent — frame_count unchanged on second call")
+    func backfillCalibrationSessionsIdempotency() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+        for i in 0..<3 {
+            let frame = makeFrame(
+                lat: osloLat, lon: osloLon,
+                timestamp: base.addingTimeInterval(Double(i) * 305),
+                frameType: "dark"
+            )
+            _ = try await db.insertFrame(frame, deduplicate: false)
+        }
+
+        try await db.backfillCalibrationSessions()
+        let sessions1 = try await db.calibrationSessions()
+        let count1 = try #require(sessions1.first).frameCount
+
+        try await db.backfillCalibrationSessions()
+        let sessions2 = try await db.calibrationSessions()
+        let count2 = try #require(sessions2.first).frameCount
+
+        #expect(sessions1.count == 1)
+        #expect(count1 == 3, "frame_count should be 3 after first backfill")
+        #expect(sessions2.count == 1, "Second backfill must not create a duplicate session")
+        #expect(count2 == 3, "frame_count must not increase on second backfill")
+    }
+
+    @Test("backfillCalibrationSessions puts bias, dark, and flat frames in separate sessions")
+    func backfillCalibrationSessionsMixedTypes() async throws {
+        let (db, url) = try makeSessionDB()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let base = ISO8601DateFormatter().date(from: "2026-06-16T22:00:00Z")!
+        for (i, type) in ["dark", "flat", "bias"].enumerated() {
+            let frame = makeFrame(
+                lat: osloLat, lon: osloLon,
+                timestamp: base.addingTimeInterval(Double(i) * 10),
+                frameType: type
+            )
+            _ = try await db.insertFrame(frame, deduplicate: false)
+        }
+
+        try await db.backfillCalibrationSessions()
+        let sessions = try await db.calibrationSessions()
+        let frameTypes = Set(sessions.map { $0.frameType })
+
+        #expect(sessions.count == 3, "One session per calibration frame type")
+        #expect(frameTypes == ["dark", "flat", "bias"])
+    }
 }
 
 // MARK: - Archive-level session integration
