@@ -318,13 +318,13 @@ public enum ArchiveToolDefinitions {
         ],
         [
             "name": "archive_sessions",
-            "description": "List observing sessions, newest first. Without arguments returns all sessions. Use date to filter to one night, latest_count to get the N most recent, and kind to restrict to night or day sessions.",
+            "description": "List observing sessions, newest first. Without arguments returns all sessions (light and calibration). Use date to filter to one night, latest_count to get the N most recent, and kind to restrict by type.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
-                    "date":         ["type": "string",  "description": "Calendar date YYYY-MM-DD. Returns sessions whose night started on this date."],
-                    "latest_count": ["type": "integer", "description": "Return only the N most recent sessions. Omit for all."],
-                    "kind":         ["type": "string",  "enum": ["all", "night", "day"], "description": "Filter by session type: night (default: all)."],
+                    "date":         ["type": "string",  "description": "Calendar date YYYY-MM-DD. Returns light sessions whose night started on this date."],
+                    "latest_count": ["type": "integer", "description": "Return only the N most recent light sessions. Omit for all."],
+                    "kind":         ["type": "string",  "enum": ["all", "night", "day", "calibration"], "description": "Filter by session type: 'all' returns light + calibration sessions; 'calibration' returns dark/flat/bias sessions only (default: all)."],
                 ] as [String: Any],
                 "required": [],
             ] as [String: Any],
@@ -340,18 +340,18 @@ public enum ArchiveToolDefinitions {
         ],
         [
             "name": "archive_session_frames",
-            "description": "List the raw light frames that belong to an observing session, ordered by timestamp.",
+            "description": "List the raw frames that belong to a session (light or calibration), ordered by timestamp.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
-                    "session_id": ["type": "string", "description": "UUID of the observing session."],
+                    "session_id": ["type": "string", "description": "UUID of the session."],
                 ] as [String: Any],
                 "required": ["session_id"],
             ] as [String: Any],
         ],
         [
             "name": "archive_frame_session",
-            "description": "Return the observing session a raw light frame belongs to. Returns null if the frame has no session assigned or is not a raw light frame.",
+            "description": "Return the session (light or calibration) a raw frame belongs to. Returns null if the frame has no session assigned or is not a raw frame.",
             "inputSchema": [
                 "type": "object",
                 "properties": [

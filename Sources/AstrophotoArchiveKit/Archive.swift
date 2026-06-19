@@ -209,6 +209,19 @@ public actor Archive {
             try await database.updateSessionID(frameID: frame.id, sessionID: sid)
             frame.sessionID = sid
         }
+        // Auto-assign to a calibration session: new raw calibration frames with a timestamp.
+        // Duplicates are skipped — backfillCalibrationSessions() handles them.
+        if isNew, frame.processingLevel == .raw,
+           FITSHeaderReader.calibrationFrameTypes.contains(frame.frameType),
+           let ts = meta.timestamp {
+            let sid = try await database.findOrCreateCalibrationSession(
+                frameType: frame.frameType, timestamp: ts,
+                exposureTime: meta.exposureTime,
+                temperature: meta.temperature,
+                filter: meta.filter)
+            try await database.updateSessionID(frameID: frame.id, sessionID: sid)
+            frame.sessionID = sid
+        }
         if !isNew {
             try? FileManager.default.removeItem(at: dest)
             // Return the existing frame so the caller gets a valid, stored ID.
@@ -570,6 +583,21 @@ public actor Archive {
                    let ts  = meta.timestamp ?? frame.timestamp {
                     let sid = try await database.findOrCreateSession(
                         timestamp: ts, latDeg: lat, lonDeg: lon)
+                    try await database.updateSessionID(frameID: frame.id, sessionID: sid)
+                    wroteAnything = true
+                }
+
+                // Auto-assign a calibration session if this raw calibration frame has a
+                // timestamp but was never grouped.
+                if frame.sessionID == nil,
+                   frame.processingLevel == .raw,
+                   FITSHeaderReader.calibrationFrameTypes.contains(frame.frameType),
+                   let ts = meta.timestamp ?? frame.timestamp {
+                    let sid = try await database.findOrCreateCalibrationSession(
+                        frameType: frame.frameType, timestamp: ts,
+                        exposureTime: meta.exposureTime ?? frame.exposureTime,
+                        temperature: meta.temperature ?? frame.temperature,
+                        filter: meta.filter ?? frame.filter)
                     try await database.updateSessionID(frameID: frame.id, sessionID: sid)
                     wroteAnything = true
                 }
@@ -1354,7 +1382,12 @@ public actor Archive {
 
     // MARK: - Observing sessions
 
-    /// Returns all observing sessions, most recent first.
+    /// Returns all light and calibration sessions combined, most recent first.
+    public func allSessions() async throws -> [ObservingSession] {
+        try await database.allSessions()
+    }
+
+    /// Returns light observing sessions, most recent first.
     /// - Parameter isNight: `true` for night sessions only, `false` for day only, `nil` for both.
     public func sessions(isNight: Bool? = nil) async throws -> [ObservingSession] {
         try await database.sessions(isNight: isNight)
@@ -1394,6 +1427,17 @@ public actor Archive {
     /// but have not yet been assigned to a session. Safe to call multiple times.
     public func backfillSessions() async throws {
         try await database.backfillSessions()
+    }
+
+    /// Returns all calibration sessions (dark/flat/bias sequences), newest first.
+    public func calibrationSessions() async throws -> [ObservingSession] {
+        try await database.calibrationSessions()
+    }
+
+    /// Assigns calibration sessions to all raw calibration frames with a timestamp
+    /// that have not yet been assigned to a session. Safe to call multiple times.
+    public func backfillCalibrationSessions() async throws {
+        try await database.backfillCalibrationSessions()
     }
 
     // MARK: - Removal
