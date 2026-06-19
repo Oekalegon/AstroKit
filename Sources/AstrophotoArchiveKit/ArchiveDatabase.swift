@@ -72,7 +72,7 @@ actor ArchiveDatabase {
                 switch sqlite3_column_type(stmt, Int32(col)) {
                 case SQLITE_INTEGER: row.append(Int(sqlite3_column_int(stmt, Int32(col))))
                 case SQLITE_FLOAT:   row.append(sqlite3_column_double(stmt, Int32(col)))
-                case SQLITE_TEXT:    row.append(String(cString: sqlite3_column_text(stmt, Int32(col))!))
+                case SQLITE_TEXT:    row.append(sqlite3_column_text(stmt, Int32(col)).map { String(cString: $0) })
                 default:             row.append(nil)
                 }
             }
