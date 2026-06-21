@@ -8,8 +8,14 @@
  * is O(1) (it only stores nside/order/scheme), so this carries negligible
  * overhead compared to the actual pixel computation.
  *
- * Prerequisites: run `scripts/setup_healpix.sh` to place the healpix_cxx
- * headers and sources in Sources/CHEALPix/ before building.
+ * healpix_cxx sources are vendored in Sources/CHEALPix/. No setup step
+ * required — sources are part of this package.
+ *
+ * Exception safety: healpix_cxx uses planck_fail() which throws PlanckError
+ * on invalid arguments. Every extern "C" function wraps its body in
+ * try/catch(...) because a C++ exception escaping through extern "C" is
+ * undefined behaviour. On error, pixel-returning functions return -1; cone
+ * queries return 0 with *pixels_out = nullptr.
  */
 
 #include "healpix_base.h"   // T_Healpix_Base, RING, NEST, SET_NSIDE
@@ -32,15 +38,19 @@ extern "C" {
 // ------------------------------------------------------------------ //
 
 void ang2pix_ring(long nside, double theta, double phi, long *ipix) {
-    *ipix = static_cast<long>(HP(static_cast<int64>(nside), RING, SET_NSIDE)
-                              .ang2pix(pointing(theta, phi)));
+    try {
+        *ipix = static_cast<long>(HP(static_cast<int64>(nside), RING, SET_NSIDE)
+                                  .ang2pix(pointing(theta, phi)));
+    } catch (...) { *ipix = -1; }
 }
 
 void pix2ang_ring(long nside, long ipix, double *theta, double *phi) {
-    pointing p = HP(static_cast<int64>(nside), RING, SET_NSIDE)
-                 .pix2ang(static_cast<int64>(ipix));
-    *theta = p.theta;
-    *phi   = p.phi;
+    try {
+        pointing p = HP(static_cast<int64>(nside), RING, SET_NSIDE)
+                     .pix2ang(static_cast<int64>(ipix));
+        *theta = p.theta;
+        *phi   = p.phi;
+    } catch (...) { *theta = -1; *phi = -1; }
 }
 
 // ------------------------------------------------------------------ //
@@ -48,14 +58,18 @@ void pix2ang_ring(long nside, long ipix, double *theta, double *phi) {
 // ------------------------------------------------------------------ //
 
 void vec2pix_ring(long nside, const double *vec, long *ipix) {
-    *ipix = static_cast<long>(HP(static_cast<int64>(nside), RING, SET_NSIDE)
-                              .vec2pix(vec3(vec[0], vec[1], vec[2])));
+    try {
+        *ipix = static_cast<long>(HP(static_cast<int64>(nside), RING, SET_NSIDE)
+                                  .vec2pix(vec3(vec[0], vec[1], vec[2])));
+    } catch (...) { *ipix = -1; }
 }
 
 void pix2vec_ring(long nside, long ipix, double *vec) {
-    vec3 v = HP(static_cast<int64>(nside), RING, SET_NSIDE)
-             .pix2vec(static_cast<int64>(ipix));
-    vec[0] = v.x;  vec[1] = v.y;  vec[2] = v.z;
+    try {
+        vec3 v = HP(static_cast<int64>(nside), RING, SET_NSIDE)
+                 .pix2vec(static_cast<int64>(ipix));
+        vec[0] = v.x;  vec[1] = v.y;  vec[2] = v.z;
+    } catch (...) { vec[0] = vec[1] = vec[2] = 0; }
 }
 
 // ------------------------------------------------------------------ //
@@ -63,15 +77,19 @@ void pix2vec_ring(long nside, long ipix, double *vec) {
 // ------------------------------------------------------------------ //
 
 void ang2pix_nest(long nside, double theta, double phi, long *ipix) {
-    *ipix = static_cast<long>(HP(static_cast<int64>(nside), NEST, SET_NSIDE)
-                              .ang2pix(pointing(theta, phi)));
+    try {
+        *ipix = static_cast<long>(HP(static_cast<int64>(nside), NEST, SET_NSIDE)
+                                  .ang2pix(pointing(theta, phi)));
+    } catch (...) { *ipix = -1; }
 }
 
 void pix2ang_nest(long nside, long ipix, double *theta, double *phi) {
-    pointing p = HP(static_cast<int64>(nside), NEST, SET_NSIDE)
-                 .pix2ang(static_cast<int64>(ipix));
-    *theta = p.theta;
-    *phi   = p.phi;
+    try {
+        pointing p = HP(static_cast<int64>(nside), NEST, SET_NSIDE)
+                     .pix2ang(static_cast<int64>(ipix));
+        *theta = p.theta;
+        *phi   = p.phi;
+    } catch (...) { *theta = -1; *phi = -1; }
 }
 
 // ------------------------------------------------------------------ //
@@ -79,14 +97,18 @@ void pix2ang_nest(long nside, long ipix, double *theta, double *phi) {
 // ------------------------------------------------------------------ //
 
 void vec2pix_nest(long nside, const double *vec, long *ipix) {
-    *ipix = static_cast<long>(HP(static_cast<int64>(nside), NEST, SET_NSIDE)
-                              .vec2pix(vec3(vec[0], vec[1], vec[2])));
+    try {
+        *ipix = static_cast<long>(HP(static_cast<int64>(nside), NEST, SET_NSIDE)
+                                  .vec2pix(vec3(vec[0], vec[1], vec[2])));
+    } catch (...) { *ipix = -1; }
 }
 
 void pix2vec_nest(long nside, long ipix, double *vec) {
-    vec3 v = HP(static_cast<int64>(nside), NEST, SET_NSIDE)
-             .pix2vec(static_cast<int64>(ipix));
-    vec[0] = v.x;  vec[1] = v.y;  vec[2] = v.z;
+    try {
+        vec3 v = HP(static_cast<int64>(nside), NEST, SET_NSIDE)
+                 .pix2vec(static_cast<int64>(ipix));
+        vec[0] = v.x;  vec[1] = v.y;  vec[2] = v.z;
+    } catch (...) { vec[0] = vec[1] = vec[2] = 0; }
 }
 
 // ------------------------------------------------------------------ //
@@ -94,13 +116,17 @@ void pix2vec_nest(long nside, long ipix, double *vec) {
 // ------------------------------------------------------------------ //
 
 void nest2ring(long nside, long ipnest, long *ipring) {
-    *ipring = static_cast<long>(HP(static_cast<int64>(nside), NEST, SET_NSIDE)
-                                .nest2ring(static_cast<int64>(ipnest)));
+    try {
+        *ipring = static_cast<long>(HP(static_cast<int64>(nside), NEST, SET_NSIDE)
+                                    .nest2ring(static_cast<int64>(ipnest)));
+    } catch (...) { *ipring = -1; }
 }
 
 void ring2nest(long nside, long ipring, long *ipnest) {
-    *ipnest = static_cast<long>(HP(static_cast<int64>(nside), RING, SET_NSIDE)
-                                .ring2nest(static_cast<int64>(ipring)));
+    try {
+        *ipnest = static_cast<long>(HP(static_cast<int64>(nside), RING, SET_NSIDE)
+                                    .ring2nest(static_cast<int64>(ipring)));
+    } catch (...) { *ipnest = -1; }
 }
 
 // ------------------------------------------------------------------ //
@@ -108,7 +134,9 @@ void ring2nest(long nside, long ipring, long *ipnest) {
 // ------------------------------------------------------------------ //
 
 long nside2npix(long nside) {
-    return 12L * nside * nside;
+    try {
+        return 12L * nside * nside;
+    } catch (...) { return -1; }
 }
 
 long npix2nside(long npix) {
@@ -132,34 +160,42 @@ static long fill_pixel_output(const std::vector<int64> &v, long **out) {
 
 long query_disc_ring(long nside, double theta, double phi,
                      double radius_rad, long **pixels_out) {
-    std::vector<int64> listpix;
-    HP(static_cast<int64>(nside), RING, SET_NSIDE)
-        .query_disc(pointing(theta, phi), radius_rad, listpix);
-    return fill_pixel_output(listpix, pixels_out);
+    try {
+        std::vector<int64> listpix;
+        HP(static_cast<int64>(nside), RING, SET_NSIDE)
+            .query_disc(pointing(theta, phi), radius_rad, listpix);
+        return fill_pixel_output(listpix, pixels_out);
+    } catch (...) { *pixels_out = nullptr; return 0; }
 }
 
 long query_disc_nest(long nside, double theta, double phi,
                      double radius_rad, long **pixels_out) {
-    std::vector<int64> listpix;
-    HP(static_cast<int64>(nside), NEST, SET_NSIDE)
-        .query_disc(pointing(theta, phi), radius_rad, listpix);
-    return fill_pixel_output(listpix, pixels_out);
+    try {
+        std::vector<int64> listpix;
+        HP(static_cast<int64>(nside), NEST, SET_NSIDE)
+            .query_disc(pointing(theta, phi), radius_rad, listpix);
+        return fill_pixel_output(listpix, pixels_out);
+    } catch (...) { *pixels_out = nullptr; return 0; }
 }
 
 long query_disc_inclusive_ring(long nside, double theta, double phi,
                                 double radius_rad, long **pixels_out) {
-    std::vector<int64> listpix;
-    HP(static_cast<int64>(nside), RING, SET_NSIDE)
-        .query_disc_inclusive(pointing(theta, phi), radius_rad, listpix);
-    return fill_pixel_output(listpix, pixels_out);
+    try {
+        std::vector<int64> listpix;
+        HP(static_cast<int64>(nside), RING, SET_NSIDE)
+            .query_disc_inclusive(pointing(theta, phi), radius_rad, listpix);
+        return fill_pixel_output(listpix, pixels_out);
+    } catch (...) { *pixels_out = nullptr; return 0; }
 }
 
 long query_disc_inclusive_nest(long nside, double theta, double phi,
                                 double radius_rad, long **pixels_out) {
-    std::vector<int64> listpix;
-    HP(static_cast<int64>(nside), NEST, SET_NSIDE)
-        .query_disc_inclusive(pointing(theta, phi), radius_rad, listpix);
-    return fill_pixel_output(listpix, pixels_out);
+    try {
+        std::vector<int64> listpix;
+        HP(static_cast<int64>(nside), NEST, SET_NSIDE)
+            .query_disc_inclusive(pointing(theta, phi), radius_rad, listpix);
+        return fill_pixel_output(listpix, pixels_out);
+    } catch (...) { *pixels_out = nullptr; return 0; }
 }
 
 void healpix_free_pixels(long *pixels) {
@@ -167,7 +203,9 @@ void healpix_free_pixels(long *pixels) {
 }
 
 double healpix_max_pixrad(long nside) {
-    return HP(static_cast<int64>(nside), RING, SET_NSIDE).max_pixrad();
+    try {
+        return HP(static_cast<int64>(nside), RING, SET_NSIDE).max_pixrad();
+    } catch (...) { return -1; }
 }
 
 } // extern "C"

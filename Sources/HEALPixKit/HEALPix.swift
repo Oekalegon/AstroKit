@@ -98,14 +98,16 @@ public struct HEALPix: Sendable, Equatable, Hashable, CustomStringConvertible {
     /// - Parameter vector: Direction as a named tuple `(x:y:z:)`.
     /// - Returns: Pixel index in [0, ``npix``).
     public func pixel(for vector: (x: Double, y: Double, z: Double)) -> Int64 {
-        var arr: [Double] = [vector.x, vector.y, vector.z]
-        var ipix: Int = 0
         let n = Int(resolution.nside)
-        switch scheme {
-        case .ring:   vec2pix_ring(n, &arr, &ipix)
-        case .nested: vec2pix_nest(n, &arr, &ipix)
+        return withUnsafeTemporaryAllocation(of: Double.self, capacity: 3) { buf in
+            buf[0] = vector.x; buf[1] = vector.y; buf[2] = vector.z
+            var ipix: Int = 0
+            switch scheme {
+            case .ring:   vec2pix_ring(n, buf.baseAddress!, &ipix)
+            case .nested: vec2pix_nest(n, buf.baseAddress!, &ipix)
+            }
+            return Int64(ipix)
         }
-        return Int64(ipix)
     }
 
     /// Return the unit 3-vector pointing at the centre of pixel `ipix`.
@@ -113,13 +115,14 @@ public struct HEALPix: Sendable, Equatable, Hashable, CustomStringConvertible {
     /// - Parameter ipix: Pixel index in [0, ``npix``).
     /// - Returns: Named tuple `(x: Double, y: Double, z: Double)` on the unit sphere.
     public func vector(of ipix: Int64) -> (x: Double, y: Double, z: Double) {
-        var arr = [Double](repeating: 0, count: 3)
         let n = Int(resolution.nside)
-        switch scheme {
-        case .ring:   pix2vec_ring(n, Int(ipix), &arr)
-        case .nested: pix2vec_nest(n, Int(ipix), &arr)
+        return withUnsafeTemporaryAllocation(of: Double.self, capacity: 3) { buf in
+            switch scheme {
+            case .ring:   pix2vec_ring(n, Int(ipix), buf.baseAddress!)
+            case .nested: pix2vec_nest(n, Int(ipix), buf.baseAddress!)
+            }
+            return (x: buf[0], y: buf[1], z: buf[2])
         }
-        return (x: arr[0], y: arr[1], z: arr[2])
     }
 
     // MARK: - Scheme conversion
