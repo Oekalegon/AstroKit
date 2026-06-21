@@ -1,15 +1,6 @@
 {
   "pins" : [
     {
-      "identity" : "healpixkit",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/Oekalegon/HEALPixKit.git",
-      "state" : {
-        "revision" : "3b555073a41f87aa495f41ee7044a9cd74cb4985",
-        "version" : "1.0.2"
-      }
-    },
-    {
       "identity" : "swift-argument-parser",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-argument-parser",

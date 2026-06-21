@@ -14,6 +14,9 @@ let package = Package(
             name: "AstroKit",
             targets: ["AstroKit"]),
         .library(
+            name: "HEALPixKit",
+            targets: ["HEALPixKit"]),
+        .library(
             name: "VSOP",
             targets: ["VSOP"]),
         .library(
@@ -36,7 +39,6 @@ let package = Package(
         // Dependencies declare other packages that this package depends on.
         .package(url: "https://github.com/jpsim/Yams.git", from: "5.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser", from: "1.3.0"),
-        .package(url: "https://github.com/Oekalegon/HEALPixKit.git", from: "1.0.0"),
     ],
     targets: [
         // MARK: - AstroKit (vendored ERFA C lib + Swift astronomy algorithms)
@@ -61,6 +63,22 @@ let package = Package(
             name: "VSOP",
             dependencies: ["AstroKit"],
             path: "Sources/VSOP"
+        ),
+
+        // MARK: - HEALPixKit (vendored healpix_cxx + Swift wrapper)
+
+        .target(
+            name: "CHEALPix",
+            path: "Sources/CHEALPix",
+            publicHeadersPath: "include",
+            cxxSettings: [
+                .headerSearchPath("."),
+                .define("HEALPIX_NO_OPENMP"),
+            ]
+        ),
+        .target(
+            name: "HEALPixKit",
+            dependencies: ["CHEALPix"]
         ),
 
         // MARK: - AstrophotoKit (image processing)
@@ -124,7 +142,7 @@ let package = Package(
             dependencies: [
                 "AstrophotoKit",
                 "AstroKit",
-                .product(name: "HEALPixKit", package: "HEALPixKit"),
+                "HEALPixKit",
             ],
             path: "Sources/AstrophotoArchiveKit"
         ),
@@ -158,6 +176,10 @@ let package = Package(
             dependencies: ["AstroKit"]
         ),
         .testTarget(
+            name: "HEALPixKitTests",
+            dependencies: ["HEALPixKit"]
+        ),
+        .testTarget(
             name: "VSOPTests",
             dependencies: ["VSOP"]
         ),
@@ -174,5 +196,6 @@ let package = Package(
             name: "AstrophotoArchiveKitTests",
             dependencies: ["AstrophotoArchiveKit"]
         ),
-    ]
+    ],
+    cxxLanguageStandard: .cxx17
 )
