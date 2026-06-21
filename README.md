@@ -20,6 +20,7 @@ Full documentation: [oekalegon.github.io/AstroKit](https://oekalegon.github.io/A
 |-----------|-------------|
 | `AstroKit` | Swift library — astronomy algorithms, ephemeris, coordinates, sidereal time |
 | `VSOP` | Swift library — high-precision planetary positions (VSOP87) |
+| `HEALPixKit` | Swift library — HEALPix sphere tessellation and spatial indexing |
 | `AstrophotoKit` | Swift library — FITS I/O, Metal pipelines, image processors |
 | `AstrophotoArchiveKit` | Swift library — FITS archive backed by SQLite + HEALPix, observing sessions |
 | `ap` | CLI for running processing pipelines on FITS files |
