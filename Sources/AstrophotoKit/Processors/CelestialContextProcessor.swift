@@ -28,10 +28,15 @@ public struct CelestialContextProcessor: Processor {
         device: MTLDevice,
         commandQueue: MTLCommandQueue
     ) throws {
+        guard var outputTable = outputs["celestial_context"] as? TableData else {
+            throw ProcessorExecutionError.executionFailed("Missing output placeholder for celestial_context")
+        }
+
         guard let frame = inputs["input_frame"] as? Frame,
               let filePath = frame.filePath else {
             Logger.processor.info("CelestialContextProcessor: no file path on input frame, producing empty table.")
-            outputs["celestial_context"] = TableData(dataFrame: DataFrame())
+            outputTable.dataFrame = DataFrame()
+            outputs["celestial_context"] = outputTable
             return
         }
 
@@ -41,7 +46,8 @@ public struct CelestialContextProcessor: Processor {
 
         guard let date = FITSHeaderParser.parseTimestamp(headers) else {
             Logger.processor.info("CelestialContextProcessor: no timestamp in FITS headers for \(filePath).")
-            outputs["celestial_context"] = TableData(dataFrame: DataFrame())
+            outputTable.dataFrame = DataFrame()
+            outputs["celestial_context"] = outputTable
             return
         }
 
@@ -85,7 +91,8 @@ public struct CelestialContextProcessor: Processor {
         if let v = moonSepDeg { df.append(column: Column<Double>(name: "moon_separation_deg", contents: [v])) }
         if let v = moonIllum    { df.append(column: Column<Double>(name: "moon_illumination",   contents: [v])) }
 
-        outputs["celestial_context"] = TableData(dataFrame: df)
+        outputTable.dataFrame = df
+        outputs["celestial_context"] = outputTable
 
         let sunStr   = sunAltDeg.map    { String(format: "%.1f°", $0) } ?? "n/a"
         let elongStr = moonSepDeg.map { String(format: "%.1f°", $0) } ?? "n/a"
