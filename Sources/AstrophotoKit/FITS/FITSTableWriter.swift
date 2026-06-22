@@ -115,6 +115,9 @@ private func updateQualityKeysFITSC(
     _ medianFWHM: Double,
     _ medianEccentricity: Double,
     _ backgroundADU: Double,
+    _ sunAltitudeDeg: Double,
+    _ moonElongationDeg: Double,
+    _ moonIllumination: Double,
     _ statusOut: UnsafeMutablePointer<Int32>
 ) -> Int32
 
@@ -531,6 +534,9 @@ public struct FITSTableWriter {
     ///   - medianFWHM: Median FWHM in pixels, averaged over major and minor axes.
     ///   - medianEccentricity: Median eccentricity (0 = round).
     ///   - backgroundADU: Background level in ADU.
+    ///   - sunAltitudeDeg: Sun altitude at observation time in degrees (negative = below horizon).
+    ///   - moonElongationDeg: Angular separation between the Moon and the target field in degrees.
+    ///   - moonIllumination: Moon illumination fraction 0–1 (0 = new, 1 = full).
     ///   - path: Path to the existing FITS file to update.
     public static func writeQualityKeys(
         starCount: Int?,
@@ -538,6 +544,9 @@ public struct FITSTableWriter {
         medianFWHM: Double?,
         medianEccentricity: Double?,
         backgroundADU: Double?,
+        sunAltitudeDeg: Double? = nil,
+        moonElongationDeg: Double? = nil,
+        moonIllumination: Double? = nil,
         to path: String
     ) throws {
         var statusOut: Int32 = 0
@@ -549,6 +558,9 @@ public struct FITSTableWriter {
                 medianFWHM ?? -1.0,
                 medianEccentricity ?? -1.0,
                 backgroundADU ?? -1.0,
+                sunAltitudeDeg ?? .nan,
+                moonElongationDeg ?? .nan,
+                moonIllumination ?? .nan,
                 &statusOut
             )
         }

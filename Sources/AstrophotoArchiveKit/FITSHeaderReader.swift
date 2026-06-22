@@ -43,6 +43,10 @@ struct FrameArchiveMetadata {
     var medianEccentricity: Double?  // MEDECCEN: median star eccentricity (0=circular, 1=line)
     var saturatedStarCount: Int?     // NSATSTAR: number of saturated stars
     var hotPixelCount: Int?          // NHOTPIX:  number of hot pixels (dark/bias frames)
+    // Celestial context (written by frame_quality pipeline via CelestialContextProcessor)
+    var sunAltitude: Double?         // SUNALT:   Sun altitude at obs time in degrees (neg = below horizon)
+    var moonElongation: Double?      // MOONELNG: Moon-target angular separation in degrees
+    var moonIllumination: Double?    // MOONPHSE: Moon illumination fraction 0–1
 }
 
 enum FITSHeaderReader {
@@ -166,6 +170,10 @@ enum FITSHeaderReader {
         let medianEccentricity = doubleValue(headers, keys: ["MEDECCEN"])
         let saturatedStarCount = headers["NSATSTAR"]?.intValue.map { Int($0) }
         let hotPixelCount      = headers["NHOTPIX"]?.intValue.map  { Int($0) }
+        // Celestial context — written by the frame_quality pipeline's celestial_context step.
+        let sunAltitude     = doubleValue(headers, keys: ["SUNALT"])
+        let moonElongation  = doubleValue(headers, keys: ["MOONELNG"])
+        let moonIllumination = doubleValue(headers, keys: ["MOONPHSE"])
 
         return FrameArchiveMetadata(
             objectName: objectName,
@@ -200,7 +208,10 @@ enum FITSHeaderReader {
             backgroundNoise: backgroundNoise,
             medianEccentricity: medianEccentricity,
             saturatedStarCount: saturatedStarCount,
-            hotPixelCount: hotPixelCount
+            hotPixelCount: hotPixelCount,
+            sunAltitude: sunAltitude,
+            moonElongation: moonElongation,
+            moonIllumination: moonIllumination
         )
     }
 

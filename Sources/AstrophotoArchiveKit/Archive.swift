@@ -189,7 +189,10 @@ public actor Archive {
             medianEccentricity: meta.medianEccentricity,
             saturatedStarCount: meta.saturatedStarCount,
             hotPixelCount: meta.hotPixelCount,
-            egain: resolvedEgain
+            egain: resolvedEgain,
+            sunAltitude: meta.sunAltitude,
+            moonElongation: meta.moonElongation,
+            moonIllumination: meta.moonIllumination
         )
         // Only raw frames are deduplicated by content signature, to prevent accidental
         // double-import of the same physical observation. All other levels are pipeline
@@ -693,6 +696,13 @@ public actor Archive {
     ///   - backgroundNoiseElectrons: Background level in electrons (light frames) or noise sigma
     ///     in electrons (calibration frames). Derived from backgroundNoise × egain. Only populated
     ///     when EGAIN is available. Cross-camera comparable.
+    ///   - sunAltitude: Sun altitude at observation time in degrees (negative = below horizon).
+    ///     Populated by the frame_quality pipeline's celestial_context step. Requires SITELAT/SITELONG
+    ///     and DATE-OBS in the FITS header.
+    ///   - moonElongation: Angular separation between the Moon and the target field in degrees.
+    ///     Populated by the frame_quality pipeline's celestial_context step. Requires RA/DEC and DATE-OBS.
+    ///   - moonIllumination: Moon illumination fraction 0–1 at observation time (0 = new, 1 = full).
+    ///     Populated by the frame_quality pipeline's celestial_context step. Requires DATE-OBS.
     public func updateFrameQuality(
         id: UUID,
         starCount: Int? = nil,
@@ -701,7 +711,10 @@ public actor Archive {
         medianEccentricity: Double? = nil,
         saturatedStarCount: Int? = nil,
         hotPixelCount: Int? = nil,
-        backgroundNoiseElectrons: Double? = nil
+        backgroundNoiseElectrons: Double? = nil,
+        sunAltitude: Double? = nil,
+        moonElongation: Double? = nil,
+        moonIllumination: Double? = nil
     ) async throws {
         try await database.updateFrameQuality(
             id: id,
@@ -711,7 +724,10 @@ public actor Archive {
             medianEccentricity: medianEccentricity,
             saturatedStarCount: saturatedStarCount,
             hotPixelCount: hotPixelCount,
-            backgroundNoiseElectrons: backgroundNoiseElectrons
+            backgroundNoiseElectrons: backgroundNoiseElectrons,
+            sunAltitude: sunAltitude,
+            moonElongation: moonElongation,
+            moonIllumination: moonIllumination
         )
     }
 

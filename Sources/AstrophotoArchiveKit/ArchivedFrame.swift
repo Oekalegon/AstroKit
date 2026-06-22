@@ -91,6 +91,21 @@ public struct ArchivedFrame: Sendable, Identifiable {
     /// Populated by calibration_quality pipeline or read from FITS header NHOTPIX.
     public var hotPixelCount: Int?
 
+    // MARK: - Celestial context (populated by the frame_quality pipeline)
+
+    /// Sun altitude at observation time in degrees (negative = below horizon).
+    /// Populated by the frame_quality pipeline's celestial_context step or read from FITS header SUNALT.
+    /// Requires SITELAT/SITELONG and DATE-OBS in the FITS header.
+    public var sunAltitude: Double?
+    /// Angular separation between the Moon and the target field in degrees at observation time.
+    /// Populated by the frame_quality pipeline's celestial_context step or read from FITS header MOONELNG.
+    /// Requires RA/DEC and DATE-OBS in the FITS header.
+    public var moonElongation: Double?
+    /// Moon illumination fraction 0–1 at observation time (0 = new moon, 1 = full moon).
+    /// Populated by the frame_quality pipeline's celestial_context step or read from FITS header MOONPHSE.
+    /// Requires DATE-OBS in the FITS header.
+    public var moonIllumination: Double?
+
     // MARK: - Display settings
 
     /// Saved display stretch. Nil is equivalent to `StretchSettings.identity`.
@@ -133,6 +148,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
         hotPixelCount: Int? = nil,
         egain: Double? = nil,
         backgroundNoiseElectrons: Double? = nil,
+        sunAltitude: Double? = nil,
+        moonElongation: Double? = nil,
+        moonIllumination: Double? = nil,
         stretchSettings: StretchSettings? = nil,
         sliderBlackNorm: Float? = nil,
         sliderWhiteNorm: Float? = nil
@@ -185,6 +203,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.saturatedStarCount = saturatedStarCount
         self.hotPixelCount = hotPixelCount
         self.backgroundNoiseElectrons = backgroundNoiseElectrons
+        self.sunAltitude = sunAltitude
+        self.moonElongation = moonElongation
+        self.moonIllumination = moonIllumination
         self.stretchSettings = stretchSettings
         self.sliderBlackNorm = sliderBlackNorm
         self.sliderWhiteNorm = sliderWhiteNorm

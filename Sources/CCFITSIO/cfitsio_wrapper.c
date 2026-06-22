@@ -582,10 +582,13 @@ int append_star_catalog_to_fits(
 }
 
 // ---------------------------------------------------------------------------
-// Write frame quality statistics (NSTARS, SATSTARS, MEDFWHM, MEDECC,
-// BACKNOIS) into the primary HDU header of an existing FITS file.
-// Negative sentinel values (or n < 0) mean "metric not available — skip key".
+// Write frame quality statistics into the primary HDU header of an existing
+// FITS file. Negative sentinel values (or n < 0) mean "metric not available
+// — skip key". NaN sentinel for doubles also means skip.
 // fits_update_key is idempotent: existing keys are overwritten in place.
+//
+// Quality:   NSTARS, SATSTARS, MEDFWHM, MEDECC, BACKNOIS
+// Celestial: SUNALT [deg], MOONELNG [deg], MOONPHSE [0-1]
 // ---------------------------------------------------------------------------
 int update_quality_keys_fits(
     const char *filename,
@@ -594,6 +597,9 @@ int update_quality_keys_fits(
     double      median_fwhm,        // [pix] avg of major/minor axes; <= 0 → skip
     double      median_eccentricity,// < 0 → skip
     double      background_adu,     // [ADU]; < 0 → skip
+    double      sun_altitude_deg,   // [deg] Sun alt at obs time; NaN → skip
+    double      moon_elongation_deg,// [deg] Moon-target separation; NaN → skip
+    double      moon_illumination,  // [0-1] Moon illumination fraction; NaN → skip
     int        *status_out
 ) {
     *status_out = 0;
@@ -616,6 +622,12 @@ int update_quality_keys_fits(
         fits_update_key(fptr, TDOUBLE, "MEDECC",   &median_eccentricity, "Median eccentricity (0=round)",         &status);
     if (background_adu >= 0.0)
         fits_update_key(fptr, TDOUBLE, "BACKNOIS", &background_adu,      "[ADU] Background level",                &status);
+    if (!isnan(sun_altitude_deg))
+        fits_update_key(fptr, TDOUBLE, "SUNALT",   &sun_altitude_deg,    "[deg] Sun altitude at obs time",        &status);
+    if (!isnan(moon_elongation_deg))
+        fits_update_key(fptr, TDOUBLE, "MOONELNG", &moon_elongation_deg, "[deg] Moon-target angular separation",  &status);
+    if (!isnan(moon_illumination))
+        fits_update_key(fptr, TDOUBLE, "MOONPHSE", &moon_illumination,   "Moon illumination fraction [0-1]",      &status);
 
     fits_close_file(fptr, &status);
     *status_out = status;

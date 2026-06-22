@@ -560,7 +560,8 @@ extension AP {
             let metrics = extractGlobalQuality(from: tables)
             guard metrics.starCount != nil || metrics.medianFWHM != nil || metrics.backgroundNoise != nil
                     || metrics.medianEccentricity != nil || metrics.saturatedStarCount != nil
-                    || metrics.hotPixelCount != nil else {
+                    || metrics.hotPixelCount != nil
+                    || metrics.sunAltitude != nil || metrics.moonElongation != nil || metrics.moonIllumination != nil else {
                 return
             }
 
@@ -584,7 +585,10 @@ extension AP {
                         medianEccentricity: metrics.medianEccentricity,
                         saturatedStarCount: metrics.saturatedStarCount,
                         hotPixelCount: metrics.hotPixelCount,
-                        backgroundNoiseElectrons: metrics.backgroundNoiseElectrons
+                        backgroundNoiseElectrons: metrics.backgroundNoiseElectrons,
+                        sunAltitude: metrics.sunAltitude,
+                        moonElongation: metrics.moonElongation,
+                        moonIllumination: metrics.moonIllumination
                     )
                     if !json {
                         let emit = log ?? { print($0) }
@@ -690,7 +694,7 @@ extension AP {
         /// Extracts aggregate quality metrics from single-frame analysis pipeline output tables.
         private func extractGlobalQuality(
             from tables: [TableData]
-        ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, backgroundNoiseIsADU: Bool, backgroundNoiseElectrons: Double?, medianEccentricity: Double?, saturatedStarCount: Int?, hotPixelCount: Int?) {
+        ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, backgroundNoiseIsADU: Bool, backgroundNoiseElectrons: Double?, medianEccentricity: Double?, saturatedStarCount: Int?, hotPixelCount: Int?, sunAltitude: Double?, moonElongation: Double?, moonIllumination: Double?) {
             var starCount: Int? = nil
             var medianFWHM: Double? = nil
             var backgroundNoise: Double? = nil
@@ -699,6 +703,9 @@ extension AP {
             var medianEccentricity: Double? = nil
             var saturatedStarCount: Int? = nil
             var hotPixelCount: Int? = nil
+            var sunAltitude: Double? = nil
+            var moonElongation: Double? = nil
+            var moonIllumination: Double? = nil
 
             for table in tables {
                 guard let df = table.dataFrame else { continue }
@@ -779,8 +786,15 @@ extension AP {
                    medianEccentricity == nil {
                     medianEccentricity = ecc
                 }
+                // Celestial context table — from CelestialContextProcessor.
+                if colNames.contains("sun_altitude_deg") || colNames.contains("moon_elongation_deg") || colNames.contains("moon_illumination"),
+                   let row = df.rows.first {
+                    if sunAltitude == nil,    colNames.contains("sun_altitude_deg")    { sunAltitude    = row["sun_altitude_deg"]    as? Double }
+                    if moonElongation == nil, colNames.contains("moon_elongation_deg") { moonElongation = row["moon_elongation_deg"] as? Double }
+                    if moonIllumination == nil, colNames.contains("moon_illumination") { moonIllumination = row["moon_illumination"] as? Double }
+                }
             }
-            return (starCount, medianFWHM, backgroundNoise, backgroundNoiseIsADU, backgroundNoiseElectrons, medianEccentricity, saturatedStarCount, hotPixelCount)
+            return (starCount, medianFWHM, backgroundNoise, backgroundNoiseIsADU, backgroundNoiseElectrons, medianEccentricity, saturatedStarCount, hotPixelCount, sunAltitude, moonElongation, moonIllumination)
         }
 
         /// Scans output tables for a registration table (identified by `file_path` +

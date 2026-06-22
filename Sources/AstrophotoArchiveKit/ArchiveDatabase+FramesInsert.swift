@@ -28,8 +28,9 @@ extension ArchiveDatabase {
          session_beg, session_end, temperature_min, temperature_max,
          star_count, median_fwhm, background_noise, median_eccentricity,
          saturated_star_count, hot_pixel_count, egain, background_noise_electrons,
-         telescope, site, supersedes_id, site_latitude, site_longitude, session_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         telescope, site, supersedes_id, site_latitude, site_longitude, session_id,
+         sun_altitude, moon_elongation, moon_illumination)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -86,6 +87,9 @@ extension ArchiveDatabase {
         bind(stmt, 46, frame.siteLatitude)
         bind(stmt, 47, frame.siteLongitude)
         bind(stmt, 48, frame.sessionID?.uuidString)
+        bind(stmt, 49, frame.sunAltitude)
+        bind(stmt, 50, frame.moonElongation)
+        bind(stmt, 51, frame.moonIllumination)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
