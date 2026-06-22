@@ -90,6 +90,7 @@ steps:
             - flat
             - masterFlat
         description: Master flat frame
+    parameters: []
     outputs:
       - name: calibrated_frame
         type: frame
