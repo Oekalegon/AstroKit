@@ -65,7 +65,7 @@ public struct CelestialContextProcessor: Processor {
             let obs = Observatory(longitude: lonDeg * deg2rad, latitude: latDeg * deg2rad, height: 0)
             if let sunPos = try? Sun().position(
                 at: time,
-                frame: .horizontal(observer: obs, jd: time.tt, refracted: true)
+                frame: .horizontal(observer: obs, jd: time.converted(to: .utc).jd, refracted: true)
             ) {
                 sunAltDeg = sunPos.latitude * rad2deg
             }
