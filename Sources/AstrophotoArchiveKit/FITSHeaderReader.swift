@@ -43,6 +43,10 @@ struct FrameArchiveMetadata {
     var medianEccentricity: Double?  // MEDECCEN: median star eccentricity (0=circular, 1=line)
     var saturatedStarCount: Int?     // NSATSTAR: number of saturated stars
     var hotPixelCount: Int?          // NHOTPIX:  number of hot pixels (dark/bias frames)
+    // Celestial context (written by frame_quality pipeline via CelestialContextProcessor)
+    var sunAltitude: Double?         // SUNALT:   Sun altitude at obs time in degrees (neg = below horizon)
+    var moonSeparation: Double?      // MOONSEP: Moon-target angular separation in degrees
+    var moonIllumination: Double?    // MOONPHSE: Moon illumination fraction 0–1
 }
 
 enum FITSHeaderReader {
@@ -82,7 +86,7 @@ enum FITSHeaderReader {
         width: Int, height: Int, bitpix: Int
     ) -> FrameArchiveMetadata {
 
-        let imageType = stringValue(headers, keys: ["IMAGETYP", "FRAME"]) ?? ""
+        let imageType = FITSHeaderParser.stringValue(headers, keys: ["IMAGETYP", "FRAME"]) ?? ""
         let frameType = parseFrameType(imageType.lowercased())
 
         // Calibration frames do not image a sky target: any OBJECT / RA / DEC the capture
@@ -90,52 +94,52 @@ enum FITSHeaderReader {
         // not be archived.
         let isCalibration = calibrationFrameTypes.contains(frameType)
 
-        let objectName = isCalibration ? nil : stringValue(headers, keys: ["OBJECT"])?.nilIfBlank
+        let objectName = isCalibration ? nil : FITSHeaderParser.stringValue(headers, keys: ["OBJECT"])?.nilIfBlank
 
-        let ra  = isCalibration ? nil : resolveRA(headers)
-        let dec = isCalibration ? nil : resolveDec(headers)
+        let ra  = isCalibration ? nil : FITSHeaderParser.resolveRA(headers)
+        let dec = isCalibration ? nil : FITSHeaderParser.resolveDec(headers)
 
-        let filter    = stringValue(headers, keys: ["FILTER"])?.nilIfBlank
-        let camera    = stringValue(headers, keys: ["INSTRUME"])?.nilIfBlank
-        let telescope = stringValue(headers, keys: ["TELESCOP"])?.nilIfBlank
-        let site         = stringValue(headers, keys: ["OBSERVAT"])?.nilIfBlank
+        let filter    = FITSHeaderParser.stringValue(headers, keys: ["FILTER"])?.nilIfBlank
+        let camera    = FITSHeaderParser.stringValue(headers, keys: ["INSTRUME"])?.nilIfBlank
+        let telescope = FITSHeaderParser.stringValue(headers, keys: ["TELESCOP"])?.nilIfBlank
+        let site         = FITSHeaderParser.stringValue(headers, keys: ["OBSERVAT"])?.nilIfBlank
         // All keywords store degrees, north-positive latitude, east-positive longitude.
         // SITELAT/SITELONG: KStars/EKOS (INDI), N.I.N.A., Sequence Generator Pro.
         // GPS-LAT/GPS-LON:  Telescope Live remote data (QHY cameras, east-positive confirmed).
         // LAT-OBS/LONG-OBS: older convention used by some legacy software.
         // OBSGEO-B/OBSGEO-L: formal FITS/WCS standard (geodetic lat/lon).
-        let siteLatitude  = doubleValue(headers, keys: ["SITELAT", "GPS-LAT", "LAT-OBS", "OBSGEO-B"])
-        let siteLongitude = doubleValue(headers, keys: ["SITELONG", "GPS-LON", "LONG-OBS", "OBSGEO-L"])
+        let siteLatitude  = FITSHeaderParser.doubleValue(headers, keys: ["SITELAT", "GPS-LAT", "LAT-OBS", "OBSGEO-B"])
+        let siteLongitude = FITSHeaderParser.doubleValue(headers, keys: ["SITELONG", "GPS-LON", "LONG-OBS", "OBSGEO-L"])
 
-        let focalLength   = doubleValue(headers, keys: ["FOCALLEN"])
+        let focalLength   = FITSHeaderParser.doubleValue(headers, keys: ["FOCALLEN"])
 
         // Explicit scale keyword wins; otherwise derive it from the sensor pixel
         // size and focal length. XPIXSZ is the *binned* pixel size by MaxIm DL /
         // INDI convention — no binning factor must be applied. PIXSIZE1 is the
         // physical (unbinned) size and needs XBINNING.
-        var pixelScale = doubleValue(headers, keys: ["PIXSCALE", "SCALE"])
+        var pixelScale = FITSHeaderParser.doubleValue(headers, keys: ["PIXSCALE", "SCALE"])
         if pixelScale == nil, let fl = focalLength {
-            if let binnedSize = doubleValue(headers, keys: ["XPIXSZ"]) {
+            if let binnedSize = FITSHeaderParser.doubleValue(headers, keys: ["XPIXSZ"]) {
                 pixelScale = PixelScale.arcsecPerPixel(
                     pixelSizeMicrons: binnedSize, focalLengthMm: fl
                 )
-            } else if let physicalSize = doubleValue(headers, keys: ["PIXSIZE1"]) {
+            } else if let physicalSize = FITSHeaderParser.doubleValue(headers, keys: ["PIXSIZE1"]) {
                 let binning = headers["XBINNING"]?.intValue.map { Int($0) } ?? 1
                 pixelScale = PixelScale.arcsecPerPixel(
                     pixelSizeMicrons: physicalSize, binning: binning, focalLengthMm: fl
                 )
             }
         }
-        let temperature   = doubleValue(headers, keys: ["CCD-TEMP", "CCDTEMP"])
-        let positionAngle = doubleValue(headers, keys: ["POSANGLE", "PA", "ROTATANG"])
+        let temperature   = FITSHeaderParser.doubleValue(headers, keys: ["CCD-TEMP", "CCDTEMP"])
+        let positionAngle = FITSHeaderParser.doubleValue(headers, keys: ["POSANGLE", "PA", "ROTATANG"])
 
-        let timestamp = parseTimestamp(headers)
-        let exposureTime = doubleValue(headers, keys: ["EXPTIME", "EXPOSURE"])
+        let timestamp = FITSHeaderParser.parseTimestamp(headers)
+        let exposureTime = FITSHeaderParser.doubleValue(headers, keys: ["EXPTIME", "EXPOSURE"])
         // GAIN = camera gain setting (dimensionless, model-specific, e.g. 0–300 for ZWO cameras).
         // EGAIN = electron conversion factor in e⁻/ADU — a distinct physical quantity.
-        let gain   = doubleValue(headers, keys: ["GAIN"])
-        let egain  = doubleValue(headers, keys: ["EGAIN"])
-        let offset = doubleValue(headers, keys: ["OFFSET", "PEDESTAL"])
+        let gain   = FITSHeaderParser.doubleValue(headers, keys: ["GAIN"])
+        let egain  = FITSHeaderParser.doubleValue(headers, keys: ["EGAIN"])
+        let offset = FITSHeaderParser.doubleValue(headers, keys: ["OFFSET", "PEDESTAL"])
 
         // CALIBRAT: AstrophotoKit custom keyword.
         // CALSTAT: written by MaxIm DL and compatible tools — non-empty string means calibration was applied.
@@ -156,16 +160,20 @@ enum FITSHeaderReader {
         let iso = ISO8601DateFormatter()
         let sessionBeg    = (headers["DATE-BEG"]?.stringValue).flatMap { iso.date(from: $0) }
         let sessionEnd    = (headers["DATE-END"]?.stringValue).flatMap { iso.date(from: $0) }
-        let temperatureMin = doubleValue(headers, keys: ["CCD-TMIN"])
-        let temperatureMax = doubleValue(headers, keys: ["CCD-TMAX"])
+        let temperatureMin = FITSHeaderParser.doubleValue(headers, keys: ["CCD-TMIN"])
+        let temperatureMax = FITSHeaderParser.doubleValue(headers, keys: ["CCD-TMAX"])
 
         // Quality metrics — written by AstrophotoKit analysis pipelines or compatible tools.
         let starCount          = headers["NSTARS"]?.intValue.map { Int($0) }
-        let medianFWHM         = doubleValue(headers, keys: ["MEDFWHM"])
-        let backgroundNoise    = doubleValue(headers, keys: ["BACKNOIS"])
-        let medianEccentricity = doubleValue(headers, keys: ["MEDECCEN"])
+        let medianFWHM         = FITSHeaderParser.doubleValue(headers, keys: ["MEDFWHM"])
+        let backgroundNoise    = FITSHeaderParser.doubleValue(headers, keys: ["BACKNOIS"])
+        let medianEccentricity = FITSHeaderParser.doubleValue(headers, keys: ["MEDECCEN"])
         let saturatedStarCount = headers["NSATSTAR"]?.intValue.map { Int($0) }
         let hotPixelCount      = headers["NHOTPIX"]?.intValue.map  { Int($0) }
+        // Celestial context — written by the frame_quality pipeline's celestial_context step.
+        let sunAltitude     = FITSHeaderParser.doubleValue(headers, keys: ["SUNALT"])
+        let moonSeparation  = FITSHeaderParser.doubleValue(headers, keys: ["MOONSEP"])
+        let moonIllumination = FITSHeaderParser.doubleValue(headers, keys: ["MOONPHSE"])
 
         return FrameArchiveMetadata(
             objectName: objectName,
@@ -200,44 +208,11 @@ enum FITSHeaderReader {
             backgroundNoise: backgroundNoise,
             medianEccentricity: medianEccentricity,
             saturatedStarCount: saturatedStarCount,
-            hotPixelCount: hotPixelCount
+            hotPixelCount: hotPixelCount,
+            sunAltitude: sunAltitude,
+            moonSeparation: moonSeparation,
+            moonIllumination: moonIllumination
         )
-    }
-
-    // MARK: - Coordinate resolution
-
-    private static func resolveRA(_ headers: [String: FITSHeaderValue]) -> Double? {
-        if let d = headers["RA"]?.doubleValue { return d }
-        if let s = headers["OBJCTRA"]?.stringValue { return parseSexagesimalHours(s) }
-        return nil
-    }
-
-    private static func resolveDec(_ headers: [String: FITSHeaderValue]) -> Double? {
-        if let d = headers["DEC"]?.doubleValue { return d }
-        if let s = headers["OBJCTDEC"]?.stringValue { return parseSexagesimalDegrees(s) }
-        return nil
-    }
-
-    /// Parses "HH MM SS.ss" or "HH:MM:SS.ss" to decimal degrees (× 15).
-    private static func parseSexagesimalHours(_ s: String) -> Double? {
-        let parts = s.trimmingCharacters(in: .whitespaces)
-            .components(separatedBy: CharacterSet(charactersIn: " :"))
-            .compactMap { Double($0) }
-        guard parts.count >= 2 else { return nil }
-        let hours = parts[0] + parts[1] / 60 + (parts.count > 2 ? parts[2] / 3600 : 0)
-        return hours * 15.0
-    }
-
-    /// Parses "±DD MM SS.ss" or "±DD:MM:SS.ss" to decimal degrees.
-    private static func parseSexagesimalDegrees(_ s: String) -> Double? {
-        let trimmed = s.trimmingCharacters(in: .whitespaces)
-        let negative = trimmed.hasPrefix("-")
-        let parts = trimmed.trimmingCharacters(in: CharacterSet(charactersIn: "+-"))
-            .components(separatedBy: CharacterSet(charactersIn: " :"))
-            .compactMap { Double($0) }
-        guard parts.count >= 2 else { return nil }
-        let degrees = parts[0] + parts[1] / 60 + (parts.count > 2 ? parts[2] / 3600 : 0)
-        return negative ? -degrees : degrees
     }
 
     // MARK: - Frame type
@@ -245,7 +220,7 @@ enum FITSHeaderReader {
     /// Archive labels produced by `parseFrameType` that denote calibration frames.
     /// Dark flats normalize to "dark" ("dark" is matched before "flat" below).
     /// Keep in sync with `FrameType.isCalibrationFrame` in AstrophotoKit.
-    static let calibrationFrameTypes: Set<String> = ["bias", "dark", "flat"]
+    public static let calibrationFrameTypes: Set<String> = ["bias", "dark", "flat"]
 
     private static func parseFrameType(_ lowercased: String) -> String {
         if lowercased.contains("bias")       { return "bias" }
@@ -257,50 +232,6 @@ enum FITSHeaderReader {
         return lowercased.isEmpty ? "unknown" : lowercased
     }
 
-    // MARK: - Timestamp
-
-    private static func parseTimestamp(_ headers: [String: FITSHeaderValue]) -> Date? {
-        guard let raw = stringValue(headers, keys: ["DATE-OBS", "DATE-BEG"]) else { return nil }
-        let s = raw.trimmingCharacters(in: .whitespaces)
-
-        // Try ISO 8601 with timezone first (handles "Z" and "+HH:MM" suffixes).
-        // write_result_frame_fits appends "Z", so this path covers pipeline result frames.
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = iso.date(from: s) { return d }
-        iso.formatOptions = [.withInternetDateTime]
-        if let d = iso.date(from: s) { return d }
-
-        // Fall back to bare datetime strings without timezone (treated as UTC).
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.timeZone = TimeZone(identifier: "UTC")
-        for fmt in ["yyyy-MM-dd'T'HH:mm:ss.SSS",
-                    "yyyy-MM-dd'T'HH:mm:ss.SS",
-                    "yyyy-MM-dd'T'HH:mm:ss.S",
-                    "yyyy-MM-dd'T'HH:mm:ss",
-                    "yyyy-MM-dd"] {
-            df.dateFormat = fmt
-            if let date = df.date(from: s) { return date }
-        }
-        return nil
-    }
-
-    // MARK: - Header helpers
-
-    private static func stringValue(_ headers: [String: FITSHeaderValue], keys: [String]) -> String? {
-        for key in keys {
-            if let v = headers[key]?.stringValue { return v }
-        }
-        return nil
-    }
-
-    private static func doubleValue(_ headers: [String: FITSHeaderValue], keys: [String]) -> Double? {
-        for key in keys {
-            if let v = headers[key]?.doubleValue { return v }
-        }
-        return nil
-    }
 }
 
 private extension String {

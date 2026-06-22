@@ -146,6 +146,10 @@ struct CalibrationMigrationTests {
             ALTER TABLE frames DROP COLUMN site_latitude;
             ALTER TABLE frames DROP COLUMN site_longitude;
             ALTER TABLE frames DROP COLUMN session_id;
+            -- v34 added celestial context columns; drop them so the replay can re-add them.
+            ALTER TABLE frames DROP COLUMN sun_altitude;
+            ALTER TABLE frames DROP COLUMN moon_separation;
+            ALTER TABLE frames DROP COLUMN moon_illumination;
             PRAGMA user_version = 24;
             """, on: url)
 
@@ -208,6 +212,10 @@ struct CalibrationMigrationTests {
             ALTER TABLE frames DROP COLUMN site_latitude;
             ALTER TABLE frames DROP COLUMN site_longitude;
             ALTER TABLE frames DROP COLUMN session_id;
+            -- v34 added celestial context columns; drop them so the replay can re-add them.
+            ALTER TABLE frames DROP COLUMN sun_altitude;
+            ALTER TABLE frames DROP COLUMN moon_separation;
+            ALTER TABLE frames DROP COLUMN moon_illumination;
             PRAGMA user_version = 25;
             """, on: url)
 

@@ -168,6 +168,11 @@ public actor ProcessorRegistry {
         if implementations[fitsQualityWriter.id] == nil {
             register(fitsQualityWriter)
         }
+
+        let celestialContext = CelestialContextProcessor()
+        if implementations[celestialContext.id] == nil {
+            register(celestialContext)
+        }
     }
 
     /// Register a processor using its `id` property

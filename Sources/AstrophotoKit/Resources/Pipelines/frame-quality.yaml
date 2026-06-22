@@ -248,10 +248,32 @@ steps:
           processing_stage: "quality_assessment"
           table_type: "quality_summary"
 
+  - id: celestial_context
+    type: celestial_context
+    name: Celestial Context
+    description: Computes Sun altitude, Moon-target elongation, and Moon illumination from FITS headers (DATE-OBS, SITELAT/SITELONG, RA/DEC). All metrics are optional — missing header keywords produce an empty table without failing the pipeline.
+    dataInputs:
+      - name: input_frame
+        type: frame
+        from: input_frame
+        metadata_restrictions:
+          frame_type:
+            - light
+            - diagnostic
+        description: The input light or diagnostic frame (provides the FITS file path to read headers from)
+    parameters: []
+    outputs:
+      - name: celestial_context
+        type: table
+        description: Sun altitude (sun_altitude_deg), moon-target separation (moon_separation_deg), and moon illumination fraction (moon_illumination)
+        metadata:
+          processing_stage: "celestial_context"
+          table_type: "celestial_summary"
+
   - id: write_quality
     type: fits_quality_writer
     name: FITS Quality Writer
-    description: Writes the quality summary (NSTARS, SATSTARS, MEDFWHM, MEDECC, BACKNOIS) to the primary HDU header of the source FITS file
+    description: Writes the quality summary (NSTARS, SATSTARS, MEDFWHM, MEDECC, BACKNOIS, SUNALT, MOONSEP, MOONPHSE) to the primary HDU header of the source FITS file
     dataInputs:
       - name: input_frame
         type: frame
@@ -264,5 +286,9 @@ steps:
         type: table
         from: quality.frame_quality
         description: Quality summary table to persist into the FITS header
+      - name: celestial_context
+        type: table
+        from: celestial_context.celestial_context
+        description: Celestial context table (sun altitude, moon elongation, moon illumination)
     parameters: []
     outputs: []

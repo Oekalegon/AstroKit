@@ -294,7 +294,10 @@ extension ArchiveDatabase {
         medianEccentricity: Double? = nil,
         saturatedStarCount: Int? = nil,
         hotPixelCount: Int? = nil,
-        backgroundNoiseElectrons: Double? = nil
+        backgroundNoiseElectrons: Double? = nil,
+        sunAltitude: Double? = nil,
+        moonSeparation: Double? = nil,
+        moonIllumination: Double? = nil
     ) throws {
         // Build SET clause dynamically so we never overwrite a metric with NULL.
         var setClauses: [String] = []
@@ -306,6 +309,9 @@ extension ArchiveDatabase {
         if let v = saturatedStarCount        { setClauses.append("saturated_star_count = ?");          values.append(Int64(v)) }
         if let v = hotPixelCount             { setClauses.append("hot_pixel_count = ?");               values.append(Int64(v)) }
         if let v = backgroundNoiseElectrons  { setClauses.append("background_noise_electrons = ?");    values.append(v) }
+        if let v = sunAltitude               { setClauses.append("sun_altitude = ?");                  values.append(v) }
+        if let v = moonSeparation            { setClauses.append("moon_separation = ?");               values.append(v) }
+        if let v = moonIllumination          { setClauses.append("moon_illumination = ?");             values.append(v) }
         guard !setClauses.isEmpty else { return }
 
         let sql = "UPDATE frames SET \(setClauses.joined(separator: ", ")) WHERE id = ?"
@@ -440,6 +446,10 @@ extension ArchiveDatabase {
         frame.siteLatitude  = columnDouble(stmt, 48)
         frame.siteLongitude = columnDouble(stmt, 49)
         frame.sessionID     = columnText(stmt, 50).flatMap { UUID(uuidString: $0) }
+        // sun_altitude (col 51), moon_separation (col 52), moon_illumination (col 53) added in migration v34.
+        frame.sunAltitude    = columnDouble(stmt, 51)
+        frame.moonSeparation = columnDouble(stmt, 52)
+        frame.moonIllumination = columnDouble(stmt, 53)
         return frame
     }
 }

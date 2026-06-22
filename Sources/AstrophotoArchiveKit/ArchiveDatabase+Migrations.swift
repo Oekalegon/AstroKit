@@ -360,6 +360,16 @@ extension ArchiveDatabase {
         """
         UPDATE sessions SET frame_type = 'light' WHERE frame_type IS NULL;
         """,
+        // v34: celestial context metrics computed by the frame_quality pipeline's
+        // celestial_context step. sun_altitude is the Sun's altitude in degrees at
+        // observation time (negative = below horizon). moon_separation is the angular
+        // separation between the Moon and the target field in degrees. moon_illumination
+        // is the Moon's illuminated fraction 0–1 (0 = new, 1 = full).
+        """
+        ALTER TABLE frames ADD COLUMN sun_altitude REAL;
+        ALTER TABLE frames ADD COLUMN moon_separation REAL;
+        ALTER TABLE frames ADD COLUMN moon_illumination REAL;
+        """,
     ]
 
     static func applyMigrations(db: OpaquePointer) throws {

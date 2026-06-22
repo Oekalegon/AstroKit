@@ -47,12 +47,28 @@ public struct FITSQualityWriterProcessor: Processor {
         let medianEcc  = hasStars ? row["median_eccentricity"] as? Double : nil
         let backgroundADU = row["background_level_adu"] as? Double
 
+        // Celestial context (optional — absent when headers lacked lat/lon or RA/Dec)
+        var sunAltDeg: Double? = nil
+        var moonSepDeg: Double? = nil
+        var moonIllum: Double? = nil
+        if let celestialTable = inputs["celestial_context"] as? TableData,
+           let cdf = celestialTable.dataFrame,
+           let crow = cdf.rows.first {
+            let cCols = Set(cdf.columns.map { $0.name })
+            if cCols.contains("sun_altitude_deg")    { sunAltDeg   = crow["sun_altitude_deg"]    as? Double }
+            if cCols.contains("moon_separation_deg") { moonSepDeg = crow["moon_separation_deg"] as? Double }
+            if cCols.contains("moon_illumination")   { moonIllum   = crow["moon_illumination"]   as? Double }
+        }
+
         try FITSTableWriter.writeQualityKeys(
             starCount: starCount,
             saturatedStarCount: saturated,
             medianFWHM: medianFWHM,
             medianEccentricity: medianEcc,
             backgroundADU: backgroundADU,
+            sunAltitudeDeg: sunAltDeg,
+            moonSeparationDeg: moonSepDeg,
+            moonIllumination: moonIllum,
             to: filePath
         )
     }

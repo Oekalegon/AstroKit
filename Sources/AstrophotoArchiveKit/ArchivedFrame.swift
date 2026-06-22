@@ -10,6 +10,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var dec: Double?             // degrees
     public var healpixPixel: Int64?     // HEALPix nside=64 ring-scheme pixel index
     public var frameType: String
+    /// True for bias, dark, flat, and their master/calibrated variants.
+    /// Celestial context and star-quality metrics are not meaningful for these frames.
+    public var isCalibrationFrame: Bool { FITSHeaderReader.calibrationFrameTypes.contains(frameType) }
     public var filter: String?
     public var camera: String?
     public var telescope: String?
@@ -91,6 +94,21 @@ public struct ArchivedFrame: Sendable, Identifiable {
     /// Populated by calibration_quality pipeline or read from FITS header NHOTPIX.
     public var hotPixelCount: Int?
 
+    // MARK: - Celestial context (populated by the frame_quality pipeline)
+
+    /// Sun altitude at observation time in degrees (negative = below horizon).
+    /// Populated by the frame_quality pipeline's celestial_context step or read from FITS header SUNALT.
+    /// Requires SITELAT/SITELONG and DATE-OBS in the FITS header.
+    public var sunAltitude: Double?
+    /// Angular separation between the Moon and the target field in degrees at observation time.
+    /// Populated by the frame_quality pipeline's celestial_context step or read from FITS header MOONSEP.
+    /// Requires RA/DEC and DATE-OBS in the FITS header.
+    public var moonSeparation: Double?
+    /// Moon illumination fraction 0–1 at observation time (0 = new moon, 1 = full moon).
+    /// Populated by the frame_quality pipeline's celestial_context step or read from FITS header MOONPHSE.
+    /// Requires DATE-OBS in the FITS header.
+    public var moonIllumination: Double?
+
     // MARK: - Display settings
 
     /// Saved display stretch. Nil is equivalent to `StretchSettings.identity`.
@@ -133,6 +151,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
         hotPixelCount: Int? = nil,
         egain: Double? = nil,
         backgroundNoiseElectrons: Double? = nil,
+        sunAltitude: Double? = nil,
+        moonSeparation: Double? = nil,
+        moonIllumination: Double? = nil,
         stretchSettings: StretchSettings? = nil,
         sliderBlackNorm: Float? = nil,
         sliderWhiteNorm: Float? = nil
@@ -185,6 +206,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.saturatedStarCount = saturatedStarCount
         self.hotPixelCount = hotPixelCount
         self.backgroundNoiseElectrons = backgroundNoiseElectrons
+        self.sunAltitude = sunAltitude
+        self.moonSeparation = moonSeparation
+        self.moonIllumination = moonIllumination
         self.stretchSettings = stretchSettings
         self.sliderBlackNorm = sliderBlackNorm
         self.sliderWhiteNorm = sliderWhiteNorm

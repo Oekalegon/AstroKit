@@ -126,6 +126,26 @@ extension ArchiveToolHandler {
             if let v = f.hotPixelCount      { lines.append(row("Hot pixels",   "≈\(v)")) }
         }
 
+        let hasCelestial = f.sunAltitude != nil || f.moonSeparation != nil || f.moonIllumination != nil
+        if hasCelestial {
+            lines.append("")
+            lines.append("Celestial context")
+            lines.append(String(repeating: "─", count: 60))
+            if let v = f.sunAltitude {
+                let label: String
+                switch v {
+                case let a where a >= 0:   label = "daytime"
+                case let a where a >= -6:  label = "civil twilight"
+                case let a where a >= -12: label = "nautical twilight"
+                case let a where a >= -18: label = "astronomical twilight"
+                default:                   label = "astronomical night"
+                }
+                lines.append(row("Sun altitude", String(format: "%.1f°  (%@)", v, label)))
+            }
+            if let v = f.moonSeparation  { lines.append(row("Moon sep.",   String(format: "%.1f°", v))) }
+            if let v = f.moonIllumination { lines.append(row("Moon phase",  String(format: "%.0f%%", v * 100))) }
+        }
+
         let hasStretch = f.stretchSettings.map { !$0.isIdentity } == true
             || f.sliderBlackNorm != nil || f.sliderWhiteNorm != nil
         if hasStretch {

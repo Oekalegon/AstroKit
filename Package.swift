@@ -116,7 +116,7 @@ let package = Package(
         // Swift target that depends on the C library and wrapper
         .target(
             name: "AstrophotoKit",
-            dependencies: ["CCFITSIO", "CCFITSIOWrapper", "Yams"],
+            dependencies: ["CCFITSIO", "CCFITSIOWrapper", "Yams", "AstroKit"],
             exclude: [
                 "Pipelines/_archive_v1"  // Exclude archived pipeline code from compilation to prevent naming conflicts
             ],
