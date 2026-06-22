@@ -10,6 +10,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var dec: Double?             // degrees
     public var healpixPixel: Int64?     // HEALPix nside=64 ring-scheme pixel index
     public var frameType: String
+    /// True for bias, dark, flat, and their master/calibrated variants.
+    /// Celestial context and star-quality metrics are not meaningful for these frames.
+    public var isCalibrationFrame: Bool { FITSHeaderReader.calibrationFrameTypes.contains(frameType) }
     public var filter: String?
     public var camera: String?
     public var telescope: String?

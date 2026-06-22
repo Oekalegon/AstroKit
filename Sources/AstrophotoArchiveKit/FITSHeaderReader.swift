@@ -220,7 +220,7 @@ enum FITSHeaderReader {
     /// Archive labels produced by `parseFrameType` that denote calibration frames.
     /// Dark flats normalize to "dark" ("dark" is matched before "flat" below).
     /// Keep in sync with `FrameType.isCalibrationFrame` in AstrophotoKit.
-    static let calibrationFrameTypes: Set<String> = ["bias", "dark", "flat"]
+    public static let calibrationFrameTypes: Set<String> = ["bias", "dark", "flat"]
 
     private static func parseFrameType(_ lowercased: String) -> String {
         if lowercased.contains("bias")       { return "bias" }

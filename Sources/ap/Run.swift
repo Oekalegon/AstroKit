@@ -574,26 +574,33 @@ extension AP {
 
             for path in inputPaths {
                 guard let af = try? await archive.frame(filePath: path) else { continue }
+                // Star-quality and celestial-context metrics are meaningless for
+                // calibration frames — suppress them so a mistaken `ap run frame_quality`
+                // on a dark/flat/bias doesn't pollute the archive with hot-pixel counts
+                // passed off as star detections, or moon phase for an indoor dark frame.
+                // Background noise and hot-pixel count (from calibration_quality) are
+                // still written because those ARE valid calibration-frame metrics.
+                let isCalibration = af.isCalibrationFrame
                 do {
                     try await archive.updateFrameQuality(
                         id: af.id,
-                        starCount: metrics.starCount,
-                        medianFWHM: metrics.medianFWHM,
-                        backgroundNoise: metrics.backgroundNoise,
-                        medianEccentricity: metrics.medianEccentricity,
-                        saturatedStarCount: metrics.saturatedStarCount,
-                        hotPixelCount: metrics.hotPixelCount,
+                        starCount:            isCalibration ? nil : metrics.starCount,
+                        medianFWHM:           isCalibration ? nil : metrics.medianFWHM,
+                        backgroundNoise:      metrics.backgroundNoise,
+                        medianEccentricity:   isCalibration ? nil : metrics.medianEccentricity,
+                        saturatedStarCount:   isCalibration ? nil : metrics.saturatedStarCount,
+                        hotPixelCount:        metrics.hotPixelCount,
                         backgroundNoiseElectrons: metrics.backgroundNoiseElectrons,
-                        sunAltitude: metrics.sunAltitude,
-                        moonSeparation: metrics.moonSeparation,
-                        moonIllumination: metrics.moonIllumination
+                        sunAltitude:          isCalibration ? nil : metrics.sunAltitude,
+                        moonSeparation:       isCalibration ? nil : metrics.moonSeparation,
+                        moonIllumination:     isCalibration ? nil : metrics.moonIllumination
                     )
                     if !json {
                         let emit = log ?? { print($0) }
                         var parts: [String] = []
-                        if let v = metrics.starCount          { parts.append("stars: \(v)") }
-                        if let v = metrics.saturatedStarCount { parts.append("sat: \(v)") }
-                        if let v = metrics.medianFWHM         { parts.append(String(format: "FWHM: %.2fpx", v)) }
+                        if !isCalibration, let v = metrics.starCount          { parts.append("stars: \(v)") }
+                        if !isCalibration, let v = metrics.saturatedStarCount { parts.append("sat: \(v)") }
+                        if !isCalibration, let v = metrics.medianFWHM         { parts.append(String(format: "FWHM: %.2fpx", v)) }
                         if let v = metrics.backgroundNoiseElectrons {
                             parts.append(String(format: "bg: %.2f e⁻", v))
                         } else if let v = metrics.backgroundNoise {
@@ -603,7 +610,7 @@ extension AP {
                                 parts.append(String(format: "bg: %.4f", v))
                             }
                         }
-                        if let v = metrics.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
+                        if !isCalibration, let v = metrics.medianEccentricity { parts.append(String(format: "ecc: %.3f", v)) }
                         if let v = metrics.hotPixelCount      { parts.append("hot_px: \(v)") }
                         emit("Quality → \(af.id): \(parts.joined(separator: ", "))")
                     }
