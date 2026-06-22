@@ -233,6 +233,26 @@ struct HEALPixKitTests {
         #expect(asNested == nestedPixels)
     }
 
+    @Test("pixels(inConeAround:) with radius=0 returns the containing pixel")
+    func coneQueryZeroRadius() {
+        let coord  = AngularCoordinate(theta: .pi / 2, phi: 1.0)
+        let centre = ring64.pixel(at: coord)
+        let result = ring64.pixels(inConeAround: coord, radius: 0)
+        // radius=0 may return the single containing pixel or nothing,
+        // but must never return a pixel other than the containing one.
+        #expect(result.count <= 1)
+        #expect(result.isEmpty || result[0] == centre)
+    }
+
+    @Test("RING: ang2pix / pix2ang round-trip at south pole")
+    func ang2pixRingSouthPole() {
+        let south = AngularCoordinate(theta: .pi - 0.01, phi: 0.5)
+        let ipix  = ring64.pixel(at: south)
+        let back  = ring64.angularCoordinate(of: ipix)
+        #expect(abs(back.theta - south.theta) < 0.05)
+        #expect(ipix >= 0 && ipix < ring64.npix)
+    }
+
     @Test("maxPixelRadius is positive and decreases with resolution")
     func maxPixelRadiusDecreases() {
         let coarse = HEALPix(resolution: .nside32,  scheme: .ring).maxPixelRadius

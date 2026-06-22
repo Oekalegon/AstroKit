@@ -1,5 +1,3 @@
-import Foundation
-
 // MARK: - AngularCoordinate
 
 /// A point on the unit sphere in HEALPix angular convention.
@@ -62,6 +60,6 @@ public struct AngularCoordinate: Sendable, Equatable, Hashable,
     // MARK: CustomStringConvertible
 
     public var description: String {
-        String(format: "(θ=%.6f rad, φ=%.6f rad)", theta, phi)
+        "(θ=\(theta) rad, φ=\(phi) rad)"
     }
 }
