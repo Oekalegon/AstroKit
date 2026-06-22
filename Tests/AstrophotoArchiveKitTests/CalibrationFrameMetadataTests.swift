@@ -57,7 +57,7 @@ struct CalibrationFrameMetadataTests {
         ("Bias Frame", "bias"),
         ("Dark Frame", "dark"),
         ("Flat Field", "flat"),
-        ("Dark Flat",  "dark"),   // dark flats normalize to "dark"
+        ("Dark Flat",  "darkFlat"),
     ])
     func calibrationDropsTargetMetadata(imageType: String, expectedType: String) throws {
         let url = tempFITSURL("cal")
