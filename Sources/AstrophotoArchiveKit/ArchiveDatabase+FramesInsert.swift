@@ -29,7 +29,7 @@ extension ArchiveDatabase {
          star_count, median_fwhm, background_noise, median_eccentricity,
          saturated_star_count, hot_pixel_count, egain, background_noise_electrons,
          telescope, site, supersedes_id, site_latitude, site_longitude, session_id,
-         sun_altitude, moon_elongation, moon_illumination)
+         sun_altitude, moon_separation, moon_illumination)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
@@ -88,7 +88,7 @@ extension ArchiveDatabase {
         bind(stmt, 47, frame.siteLongitude)
         bind(stmt, 48, frame.sessionID?.uuidString)
         bind(stmt, 49, frame.sunAltitude)
-        bind(stmt, 50, frame.moonElongation)
+        bind(stmt, 50, frame.moonSeparation)
         bind(stmt, 51, frame.moonIllumination)
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {

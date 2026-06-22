@@ -191,7 +191,7 @@ public actor Archive {
             hotPixelCount: meta.hotPixelCount,
             egain: resolvedEgain,
             sunAltitude: meta.sunAltitude,
-            moonElongation: meta.moonElongation,
+            moonSeparation: meta.moonSeparation,
             moonIllumination: meta.moonIllumination
         )
         // Only raw frames are deduplicated by content signature, to prevent accidental
@@ -699,7 +699,7 @@ public actor Archive {
     ///   - sunAltitude: Sun altitude at observation time in degrees (negative = below horizon).
     ///     Populated by the frame_quality pipeline's celestial_context step. Requires SITELAT/SITELONG
     ///     and DATE-OBS in the FITS header.
-    ///   - moonElongation: Angular separation between the Moon and the target field in degrees.
+    ///   - moonSeparation: Angular separation between the Moon and the target field in degrees.
     ///     Populated by the frame_quality pipeline's celestial_context step. Requires RA/DEC and DATE-OBS.
     ///   - moonIllumination: Moon illumination fraction 0–1 at observation time (0 = new, 1 = full).
     ///     Populated by the frame_quality pipeline's celestial_context step. Requires DATE-OBS.
@@ -713,7 +713,7 @@ public actor Archive {
         hotPixelCount: Int? = nil,
         backgroundNoiseElectrons: Double? = nil,
         sunAltitude: Double? = nil,
-        moonElongation: Double? = nil,
+        moonSeparation: Double? = nil,
         moonIllumination: Double? = nil
     ) async throws {
         try await database.updateFrameQuality(
@@ -726,7 +726,7 @@ public actor Archive {
             hotPixelCount: hotPixelCount,
             backgroundNoiseElectrons: backgroundNoiseElectrons,
             sunAltitude: sunAltitude,
-            moonElongation: moonElongation,
+            moonSeparation: moonSeparation,
             moonIllumination: moonIllumination
         )
     }

@@ -98,9 +98,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
     /// Requires SITELAT/SITELONG and DATE-OBS in the FITS header.
     public var sunAltitude: Double?
     /// Angular separation between the Moon and the target field in degrees at observation time.
-    /// Populated by the frame_quality pipeline's celestial_context step or read from FITS header MOONELNG.
+    /// Populated by the frame_quality pipeline's celestial_context step or read from FITS header MOONSEP.
     /// Requires RA/DEC and DATE-OBS in the FITS header.
-    public var moonElongation: Double?
+    public var moonSeparation: Double?
     /// Moon illumination fraction 0–1 at observation time (0 = new moon, 1 = full moon).
     /// Populated by the frame_quality pipeline's celestial_context step or read from FITS header MOONPHSE.
     /// Requires DATE-OBS in the FITS header.
@@ -149,7 +149,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         egain: Double? = nil,
         backgroundNoiseElectrons: Double? = nil,
         sunAltitude: Double? = nil,
-        moonElongation: Double? = nil,
+        moonSeparation: Double? = nil,
         moonIllumination: Double? = nil,
         stretchSettings: StretchSettings? = nil,
         sliderBlackNorm: Float? = nil,
@@ -204,7 +204,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.hotPixelCount = hotPixelCount
         self.backgroundNoiseElectrons = backgroundNoiseElectrons
         self.sunAltitude = sunAltitude
-        self.moonElongation = moonElongation
+        self.moonSeparation = moonSeparation
         self.moonIllumination = moonIllumination
         self.stretchSettings = stretchSettings
         self.sliderBlackNorm = sliderBlackNorm

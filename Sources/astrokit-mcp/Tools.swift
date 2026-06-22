@@ -727,7 +727,7 @@ struct Tools {
         guard metrics.starCount != nil || metrics.medianFWHM != nil || metrics.backgroundNoise != nil
                 || metrics.medianEccentricity != nil || metrics.saturatedStarCount != nil
                 || metrics.hotPixelCount != nil
-                || metrics.sunAltitude != nil || metrics.moonElongation != nil || metrics.moonIllumination != nil else {
+                || metrics.sunAltitude != nil || metrics.moonSeparation != nil || metrics.moonIllumination != nil else {
             return nil
         }
         do {
@@ -750,7 +750,7 @@ struct Tools {
                 saturatedStarCount: metrics.saturatedStarCount,
                 hotPixelCount: metrics.hotPixelCount,
                 sunAltitude: metrics.sunAltitude,
-                moonElongation: metrics.moonElongation,
+                moonSeparation: metrics.moonSeparation,
                 moonIllumination: metrics.moonIllumination
             )
             var parts: [String] = []
@@ -814,7 +814,7 @@ struct Tools {
     /// Returns `backgroundNoiseIsADU = true` when the background value was read from an ADU column.
     static func extractGlobalQuality(
         from tables: [TableData]
-    ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, backgroundNoiseIsADU: Bool, medianEccentricity: Double?, saturatedStarCount: Int?, hotPixelCount: Int?, sunAltitude: Double?, moonElongation: Double?, moonIllumination: Double?) {
+    ) -> (starCount: Int?, medianFWHM: Double?, backgroundNoise: Double?, backgroundNoiseIsADU: Bool, medianEccentricity: Double?, saturatedStarCount: Int?, hotPixelCount: Int?, sunAltitude: Double?, moonSeparation: Double?, moonIllumination: Double?) {
         var starCount: Int? = nil
         var medianFWHM: Double? = nil
         var backgroundNoise: Double? = nil
@@ -823,7 +823,7 @@ struct Tools {
         var saturatedStarCount: Int? = nil
         var hotPixelCount: Int? = nil
         var sunAltitude: Double? = nil
-        var moonElongation: Double? = nil
+        var moonSeparation: Double? = nil
         var moonIllumination: Double? = nil
 
         for table in tables {
@@ -896,14 +896,14 @@ struct Tools {
                 medianEccentricity = ecc
             }
             // Celestial context table — from CelestialContextProcessor.
-            if colNames.contains("sun_altitude_deg") || colNames.contains("moon_elongation_deg") || colNames.contains("moon_illumination"),
+            if colNames.contains("sun_altitude_deg") || colNames.contains("moon_separation_deg") || colNames.contains("moon_illumination"),
                let row = df.rows.first {
                 if sunAltitude == nil,    colNames.contains("sun_altitude_deg")    { sunAltitude    = row["sun_altitude_deg"]    as? Double }
-                if moonElongation == nil, colNames.contains("moon_elongation_deg") { moonElongation = row["moon_elongation_deg"] as? Double }
+                if moonSeparation == nil, colNames.contains("moon_separation_deg") { moonSeparation = row["moon_separation_deg"] as? Double }
                 if moonIllumination == nil, colNames.contains("moon_illumination") { moonIllumination = row["moon_illumination"] as? Double }
             }
         }
-        return (starCount, medianFWHM, backgroundNoise, backgroundNoiseIsADU, medianEccentricity, saturatedStarCount, hotPixelCount, sunAltitude, moonElongation, moonIllumination)
+        return (starCount, medianFWHM, backgroundNoise, backgroundNoiseIsADU, medianEccentricity, saturatedStarCount, hotPixelCount, sunAltitude, moonSeparation, moonIllumination)
     }
 
     private func stackSummaryLine(pixels: [Float], registrationTable df: DataFrame, inputFrameSet: FrameSet?) -> String? {

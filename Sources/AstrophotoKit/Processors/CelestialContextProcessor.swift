@@ -8,7 +8,7 @@ import os
 ///
 /// - **sun_altitude_deg**: Sun altitude at observation time (degrees; negative = below horizon).
 ///   Requires `SITELAT`/`SITELONG` and `DATE-OBS`.
-/// - **moon_elongation_deg**: Angular separation between the Moon and the target field
+/// - **moon_separation_deg**: Angular separation between the Moon and the target field
 ///   (degrees). Requires `RA`/`DEC` (or `OBJCTRA`/`OBJCTDEC`) and `DATE-OBS`.
 /// - **moon_illumination**: Moon illumination fraction 0–1 (0 = new, 1 = full).
 ///   Requires only `DATE-OBS`.
@@ -50,7 +50,7 @@ public struct CelestialContextProcessor: Processor {
         let rad2deg = 180.0 / Double.pi
 
         var sunAltDeg: Double? = nil
-        var moonElongDeg: Double? = nil
+        var moonSepDeg: Double? = nil
         var moonIllum: Double? = nil
 
         // Sun altitude — requires observer lat/lon
@@ -73,7 +73,7 @@ public struct CelestialContextProcessor: Processor {
                 frame: .equatorial(.icrs)
             )
             if let moonPos = try? Moon().position(at: time) {
-                moonElongDeg = SphericalPosition.angularSeparation(moonPos, targetPos) * rad2deg
+                moonSepDeg = SphericalPosition.angularSeparation(moonPos, targetPos) * rad2deg
             }
         }
 
@@ -82,15 +82,15 @@ public struct CelestialContextProcessor: Processor {
 
         var df = DataFrame()
         if let v = sunAltDeg    { df.append(column: Column<Double>(name: "sun_altitude_deg",    contents: [v])) }
-        if let v = moonElongDeg { df.append(column: Column<Double>(name: "moon_elongation_deg", contents: [v])) }
+        if let v = moonSepDeg { df.append(column: Column<Double>(name: "moon_separation_deg", contents: [v])) }
         if let v = moonIllum    { df.append(column: Column<Double>(name: "moon_illumination",   contents: [v])) }
 
         outputs["celestial_context"] = TableData(dataFrame: df)
 
         let sunStr   = sunAltDeg.map    { String(format: "%.1f°", $0) } ?? "n/a"
-        let elongStr = moonElongDeg.map { String(format: "%.1f°", $0) } ?? "n/a"
+        let elongStr = moonSepDeg.map { String(format: "%.1f°", $0) } ?? "n/a"
         let illumStr = moonIllum.map    { String(format: "%.2f", $0)  } ?? "n/a"
-        Logger.processor.info("CelestialContextProcessor: sunAlt=\(sunStr) moonElong=\(elongStr) moonIllum=\(illumStr)")
+        Logger.processor.info("CelestialContextProcessor: sunAlt=\(sunStr) moonSep=\(elongStr) moonIllum=\(illumStr)")
     }
 
     // MARK: - FITS header helpers (subset of FITSHeaderReader, inlined for target independence)

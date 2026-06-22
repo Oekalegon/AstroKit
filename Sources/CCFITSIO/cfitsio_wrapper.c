@@ -588,7 +588,7 @@ int append_star_catalog_to_fits(
 // fits_update_key is idempotent: existing keys are overwritten in place.
 //
 // Quality:   NSTARS, SATSTARS, MEDFWHM, MEDECC, BACKNOIS
-// Celestial: SUNALT [deg], MOONELNG [deg], MOONPHSE [0-1]
+// Celestial: SUNALT [deg], MOONSEP [deg], MOONPHSE [0-1]
 // ---------------------------------------------------------------------------
 int update_quality_keys_fits(
     const char *filename,
@@ -598,7 +598,7 @@ int update_quality_keys_fits(
     double      median_eccentricity,// < 0 → skip
     double      background_adu,     // [ADU]; < 0 → skip
     double      sun_altitude_deg,   // [deg] Sun alt at obs time; NaN → skip
-    double      moon_elongation_deg,// [deg] Moon-target separation; NaN → skip
+    double      moon_separation_deg, // [deg] Moon-target separation; NaN → skip
     double      moon_illumination,  // [0-1] Moon illumination fraction; NaN → skip
     int        *status_out
 ) {
@@ -624,8 +624,8 @@ int update_quality_keys_fits(
         fits_update_key(fptr, TDOUBLE, "BACKNOIS", &background_adu,      "[ADU] Background level",                &status);
     if (!isnan(sun_altitude_deg))
         fits_update_key(fptr, TDOUBLE, "SUNALT",   &sun_altitude_deg,    "[deg] Sun altitude at obs time",        &status);
-    if (!isnan(moon_elongation_deg))
-        fits_update_key(fptr, TDOUBLE, "MOONELNG", &moon_elongation_deg, "[deg] Moon-target angular separation",  &status);
+    if (!isnan(moon_separation_deg))
+        fits_update_key(fptr, TDOUBLE, "MOONSEP",  &moon_separation_deg, "[deg] Moon-target angular separation",  &status);
     if (!isnan(moon_illumination))
         fits_update_key(fptr, TDOUBLE, "MOONPHSE", &moon_illumination,   "Moon illumination fraction [0-1]",      &status);
 
