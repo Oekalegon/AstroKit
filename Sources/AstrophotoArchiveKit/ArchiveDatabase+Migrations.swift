@@ -379,6 +379,34 @@ extension ArchiveDatabase {
         // v36: backfill camera_hint and rebuild names for calibration sessions that were
         // created before v35. Handled by Swift code in codeSteps below; SQL is a no-op.
         "SELECT 1",
+        // v37: is_master on frames. Master calibration frames (combined bias/dark/flat stacks)
+        // are now stored with the base frame_type (bias/dark/flat/darkflat) and is_master = 1,
+        // rather than as separate frame_type values (masterbias/masterdark/…). The frame_signature
+        // is updated in the same pass so re-importing the same file stays a deduplication no-op.
+        """
+        ALTER TABLE frames ADD COLUMN is_master BOOLEAN NOT NULL DEFAULT 0;
+        UPDATE frames SET is_master = 1, frame_type = 'bias',
+            frame_signature = REPLACE(frame_signature, '|masterbias|', '|bias|')
+            WHERE LOWER(frame_type) = 'masterbias';
+        UPDATE frames SET is_master = 1, frame_type = 'dark',
+            frame_signature = REPLACE(frame_signature, '|masterdark|', '|dark|')
+            WHERE LOWER(frame_type) = 'masterdark';
+        UPDATE frames SET is_master = 1, frame_type = 'flat',
+            frame_signature = REPLACE(frame_signature, '|masterflat|', '|flat|')
+            WHERE LOWER(frame_type) = 'masterflat';
+        UPDATE frames SET is_master = 1, frame_type = 'darkflat',
+            frame_signature = REPLACE(frame_signature, '|masterdarkflat|', '|darkflat|')
+            WHERE LOWER(frame_type) = 'masterdarkflat';
+        """,
+        // v38: is_master on sessions. Mirrors v37: master calibration sessions are stored
+        // with the base frame_type and is_master = 1.
+        """
+        ALTER TABLE sessions ADD COLUMN is_master BOOLEAN NOT NULL DEFAULT 0;
+        UPDATE sessions SET is_master = 1, frame_type = 'bias'    WHERE LOWER(frame_type) = 'masterbias';
+        UPDATE sessions SET is_master = 1, frame_type = 'dark'    WHERE LOWER(frame_type) = 'masterdark';
+        UPDATE sessions SET is_master = 1, frame_type = 'flat'    WHERE LOWER(frame_type) = 'masterflat';
+        UPDATE sessions SET is_master = 1, frame_type = 'darkflat' WHERE LOWER(frame_type) = 'masterdarkflat';
+        """,
     ]
 
     // Swift-code steps keyed by schema version. Run immediately after the SQL migration
@@ -453,7 +481,19 @@ extension ArchiveDatabase {
             let filter: String? = sqlite3_column_type(stmt, 4) != SQLITE_NULL
                 ? sqlite3_column_text(stmt, 4).map { String(cString: $0) } : nil
 
-            let name = calibrationSessionName(frameType: ft, dateString: date,
+            // At v36 time, frame_type may still contain "masterbias" etc. (v37 normalises it).
+            let lc = ft.lowercased()
+            let isMaster: Bool
+            let baseFt: String
+            switch lc {
+            case "masterbias":     (isMaster, baseFt) = (true, "bias")
+            case "masterdark":     (isMaster, baseFt) = (true, "dark")
+            case "masterflat":     (isMaster, baseFt) = (true, "flat")
+            case "masterdarkflat": (isMaster, baseFt) = (true, "darkflat")
+            default:               (isMaster, baseFt) = (false, lc)
+            }
+            let name = calibrationSessionName(frameType: baseFt, isMaster: isMaster,
+                                              dateString: date,
                                               temperature: temp, filter: filter, camera: camera)
 
             sqlite3_reset(updStmt)

@@ -389,11 +389,19 @@ struct CalibrationSessionTests {
         let biasNoCamID = try await db.findOrCreateCalibrationSession(
             frameType: "bias", timestamp: ts,
             exposureTime: 0, temperature: nil, filter: nil)
+        let masterBiasID = try await db.findOrCreateCalibrationSession(
+            frameType: "bias", isMaster: true, timestamp: ts,
+            exposureTime: 0, temperature: nil, filter: nil, camera: cam)
+        let masterDarkID = try await db.findOrCreateCalibrationSession(
+            frameType: "dark", isMaster: true, timestamp: ts,
+            exposureTime: 300, temperature: -10, filter: nil, camera: cam)
 
-        let darkSession    = try await db.session(id: darkID)
-        let flatSession    = try await db.session(id: flatID)
-        let biasSession    = try await db.session(id: biasID)
+        let darkSession      = try await db.session(id: darkID)
+        let flatSession      = try await db.session(id: flatID)
+        let biasSession      = try await db.session(id: biasID)
         let biasNoCamSession = try await db.session(id: biasNoCamID)
+        let masterBiasSession = try await db.session(id: masterBiasID)
+        let masterDarkSession = try await db.session(id: masterDarkID)
 
         // Format: "{Type} [{qualifier}] - {Camera} - {Date}"
         // Use hasPrefix to avoid timezone-dependent date rendering.
@@ -403,6 +411,10 @@ struct CalibrationSessionTests {
         // Without camera: "{Type} - {Date}" (no camera component)
         #expect(biasNoCamSession?.name.hasPrefix("Bias - ") == true)
         #expect(biasNoCamSession?.name.contains("ZWO") == false)
+        // Master variants get the "Master " prefix; raw and master sessions are distinct.
+        #expect(masterBiasSession?.name.hasPrefix("Master Bias - ZWO CCD ASI290MM - ") == true)
+        #expect(masterDarkSession?.name.hasPrefix("Master Dark -10°C - ZWO CCD ASI290MM - ") == true)
+        #expect(masterBiasID != biasID, "master and raw bias must be separate sessions")
     }
 
     @Test("backfillCalibrationSessions assigns sessions to unassigned calibration frames")

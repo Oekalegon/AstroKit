@@ -10,7 +10,10 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var dec: Double?             // degrees
     public var healpixPixel: Int64?     // HEALPix nside=64 ring-scheme pixel index
     public var frameType: String
-    /// True for bias, dark, flat, and their master/calibrated variants.
+    /// True when this is a combined/master calibration frame (bias, dark, flat stack).
+    /// Stored as the `is_master` column; set from the `ISMASTER` FITS keyword on import.
+    public var isMaster: Bool = false
+    /// True for bias, dark, flat, and dark-flat frames (both raw and master).
     /// Celestial context and star-quality metrics are not meaningful for these frames.
     public var isCalibrationFrame: Bool { FITSHeaderReader.calibrationFrameTypes.contains(frameType) }
     public var filter: String?
@@ -124,7 +127,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
 
     public init(
         id: UUID, filePath: String, objectName: String?, ra: Double?, dec: Double?,
-        healpixPixel: Int64?, frameType: String, filter: String?, camera: String?,
+        healpixPixel: Int64?, frameType: String, isMaster: Bool = false, filter: String?, camera: String?,
         telescope: String? = nil, site: String? = nil,
         siteLatitude: Double? = nil, siteLongitude: Double? = nil,
         focalLength: Double?, pixelScale: Double?, temperature: Double?, timestamp: Date?,
@@ -165,6 +168,7 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.dec = dec
         self.healpixPixel = healpixPixel
         self.frameType = frameType
+        self.isMaster = isMaster
         self.filter = filter
         self.camera = camera
         self.telescope = telescope

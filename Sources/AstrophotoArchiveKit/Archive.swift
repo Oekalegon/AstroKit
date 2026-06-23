@@ -154,6 +154,7 @@ public actor Archive {
             ra: meta.ra, dec: meta.dec,
             healpixPixel: healpixPixel,
             frameType: meta.frameType,
+            isMaster: meta.isMaster,
             filter: ArchiveDatabase.canonicalFilterName(meta.filter),
             camera: meta.camera,
             telescope: meta.telescope,
@@ -218,7 +219,7 @@ public actor Archive {
            FITSHeaderReader.calibrationFrameTypes.contains(frame.frameType),
            let ts = meta.timestamp {
             let sid = try await database.findOrCreateCalibrationSession(
-                frameType: frame.frameType, timestamp: ts,
+                frameType: frame.frameType, isMaster: frame.isMaster, timestamp: ts,
                 exposureTime: meta.exposureTime,
                 temperature: meta.temperature,
                 filter: meta.filter,
@@ -597,7 +598,7 @@ public actor Archive {
                    FITSHeaderReader.calibrationFrameTypes.contains(frame.frameType),
                    let ts = meta.timestamp ?? frame.timestamp {
                     let sid = try await database.findOrCreateCalibrationSession(
-                        frameType: frame.frameType, timestamp: ts,
+                        frameType: frame.frameType, isMaster: frame.isMaster, timestamp: ts,
                         exposureTime: meta.exposureTime ?? frame.exposureTime,
                         temperature: meta.temperature ?? frame.temperature,
                         filter: meta.filter ?? frame.filter,

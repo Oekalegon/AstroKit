@@ -7,6 +7,8 @@ struct FrameArchiveMetadata {
     var ra: Double?             // degrees
     var dec: Double?            // degrees
     var frameType: String
+    /// True when the FITS header carries `ISMASTER = T`, indicating a combined/master calibration frame.
+    var isMaster: Bool = false
     var filter: String?
     var camera: String?
     var telescope: String?
@@ -88,7 +90,7 @@ enum FITSHeaderReader {
 
         let imageType = FITSHeaderParser.stringValue(headers, keys: ["IMAGETYP", "FRAME"]) ?? ""
         let isMaster  = headers["ISMASTER"]?.boolValue ?? false
-        let frameType = parseFrameType(imageType.lowercased(), isMaster: isMaster)
+        let frameType = parseFrameType(imageType.lowercased())
 
         // Calibration frames do not image a sky target: any OBJECT / RA / DEC the capture
         // software wrote is leftover mount state from the preceding light frames and must
@@ -180,6 +182,7 @@ enum FITSHeaderReader {
             objectName: objectName,
             ra: ra, dec: dec,
             frameType: frameType,
+            isMaster: isMaster,
             filter: filter,
             camera: camera,
             telescope: telescope,
@@ -221,29 +224,25 @@ enum FITSHeaderReader {
     /// Archive labels produced by `parseFrameType` that denote calibration frames.
     /// Keep in sync with `FrameType.isCalibrationFrame` in AstrophotoKit.
     public static let calibrationFrameTypes: Set<String> = [
-        "bias", "masterBias",
-        "dark", "masterDark",
-        "flat", "masterFlat",
-        "darkFlat", "masterDarkFlat"
+        "bias", "dark", "flat", "darkFlat"
     ]
 
-    private static func parseFrameType(_ lowercased: String, isMaster: Bool) -> String {
-        // Explicit "Master *" IMAGETYP from other software or old AstrophotoKit files.
+    private static func parseFrameType(_ lowercased: String) -> String {
+        // "Master *" IMAGETYP from external software: strip the qualifier and return the base type.
+        // The master flag is carried separately via the ISMASTER keyword → FrameArchiveMetadata.isMaster.
         if lowercased.contains("master") {
-            if lowercased.contains("dark") && lowercased.contains("flat") { return "masterDarkFlat" }
-            if lowercased.contains("dark")  { return "masterDark" }
-            if lowercased.contains("flat")  { return "masterFlat" }
-            if lowercased.contains("bias")  { return "masterBias" }
+            if lowercased.contains("dark") && lowercased.contains("flat") { return "darkFlat" }
+            if lowercased.contains("dark")  { return "dark" }
+            if lowercased.contains("flat")  { return "flat" }
+            if lowercased.contains("bias")  { return "bias" }
         }
         // Dark flat must be checked before either word alone.
         let dark = lowercased.contains("dark")
         let flat = lowercased.contains("flat")
-        if dark && flat { return isMaster ? "masterDarkFlat" : "darkFlat" }
-        if lowercased.contains("bias") || lowercased == "zero" || lowercased == "offset" {
-            return isMaster ? "masterBias" : "bias"
-        }
-        if dark { return isMaster ? "masterDark" : "dark" }
-        if flat { return isMaster ? "masterFlat" : "flat" }
+        if dark && flat { return "darkFlat" }
+        if lowercased.contains("bias") || lowercased == "zero" || lowercased == "offset" { return "bias" }
+        if dark { return "dark" }
+        if flat { return "flat" }
         if lowercased.contains("diagnostic") { return "diagnostic" }
         if lowercased.contains("light")      { return "light" }
         if lowercased.contains("science")    { return "light" }
