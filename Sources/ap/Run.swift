@@ -813,47 +813,49 @@ extension AP {
                         ? stride(from: 0, to: rawPixels.count, by: bytesPerPixel).map { rawPixels[$0] }
                         : rawPixels
 
-                    // Reuse the user's output file if there's exactly one result frame.
-                    let tempURL: URL?
+                    // Write a rich-metadata FITS. When the user specified --output, write
+                    // directly to that path (overwriting the pipeline's bare output) so
+                    // INSTRUME and other provenance headers are present in the archived file.
+                    let resolvedImageType = FITSTableWriter.resultFrameImageType(for: frame, in: pipeline)
+                    let isMaster          = FITSTableWriter.resultFrameIsMaster(for: frame, in: pipeline)
+                    let tmp = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("ap_result_\(UUID().uuidString).fits")
                     let fileToArchive: URL
+                    let tempURL: URL?
                     if let outPath = existingOutputPath, frames.count == 1 {
                         fileToArchive = URL(fileURLWithPath: outPath)
                         tempURL = nil
                     } else {
-                        let tmp = FileManager.default.temporaryDirectory
-                            .appendingPathComponent("ap_result_\(UUID().uuidString).fits")
-                        let resolvedImageType = FITSTableWriter.resultFrameImageType(for: frame, in: pipeline)
-                    let isMaster          = FITSTableWriter.resultFrameIsMaster(for: frame, in: pipeline)
-                    try FITSTableWriter.writeResultFrame(
-                            pixelData: pixels, width: w, height: h,
-                            pipelineID: pipelineID,
-                            imageType: resolvedImageType,
-                            filterName: stackFilter ?? frame.filterName,
-                            stacked: pipelineID == "frame_stacking" || isMaster,
-                            isMaster: isMaster,
-                            nframes: inputCount > 0 ? inputCount : nil,
-                            totalExposure: stackExposure,
-                            gain: stackGain,
-                            offset: stackOffset,
-                            temperature: stackTempMean,
-                            objectName: stackObjectName,
-                            camera: stackCamera,
-                            telescope: stackTelescope,
-                            site: stackSite,
-                            ra: refRA,
-                            dec: refDec,
-                            pixelScale: stackPixelScale,
-                            focalLength: stackFocalLength,
-                            tempMin: stackTempMin,
-                            tempMax: stackTempMax,
-                            dateObs: refDate,
-                            dateBeg: dateBeg,
-                            dateEnd: dateEnd,
-                            to: tmp.path
-                        )
                         fileToArchive = tmp
                         tempURL = tmp
                     }
+                    try FITSTableWriter.writeResultFrame(
+                        pixelData: pixels, width: w, height: h,
+                        pipelineID: pipelineID,
+                        imageType: resolvedImageType,
+                        filterName: stackFilter ?? frame.filterName,
+                        stacked: pipelineID == "frame_stacking" || isMaster,
+                        isMaster: isMaster,
+                        nframes: inputCount > 0 ? inputCount : nil,
+                        totalExposure: stackExposure,
+                        gain: stackGain,
+                        offset: stackOffset,
+                        temperature: stackTempMean,
+                        objectName: stackObjectName,
+                        camera: stackCamera,
+                        telescope: stackTelescope,
+                        site: stackSite,
+                        ra: refRA,
+                        dec: refDec,
+                        pixelScale: stackPixelScale,
+                        focalLength: stackFocalLength,
+                        tempMin: stackTempMin,
+                        tempMax: stackTempMax,
+                        dateObs: refDate,
+                        dateBeg: dateBeg,
+                        dateEnd: dateEnd,
+                        to: fileToArchive.path
+                    )
 
                     let (archived, isNew) = try await archive.add(fitsFile: fileToArchive, processingRunID: run.id)
                     if let tmp = tempURL { try? FileManager.default.removeItem(at: tmp) }

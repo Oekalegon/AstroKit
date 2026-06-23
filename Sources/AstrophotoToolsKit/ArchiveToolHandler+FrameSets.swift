@@ -26,6 +26,7 @@ extension ArchiveToolHandler {
 
         let objectName = args["object_name"] as? String
         let frameType  = args["frame_type"]  as? String
+        let camera     = args["camera"]      as? String
         let filters    = args["filters"]     as? [String]
         let fromDate   = args["from_date"]   as? String
         let toDate     = args["to_date"]     as? String
@@ -37,6 +38,7 @@ extension ArchiveToolHandler {
             var parts: [String] = []
             if let v = objectName       { parts.append(v) }
             if let v = frameType        { parts.append(v) }
+            if let v = camera           { parts.append(v) }
             if let v = filters?.first   { parts.append(v) }
             if let f = fromDate, let t = toDate { parts.append("\(f)–\(t)") }
             setName = parts.isEmpty ? "frameset" : parts.joined(separator: " ")

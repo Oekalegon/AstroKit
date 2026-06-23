@@ -370,6 +370,22 @@ extension ArchiveDatabase {
         ALTER TABLE frames ADD COLUMN moon_separation REAL;
         ALTER TABLE frames ADD COLUMN moon_illumination REAL;
         """,
+        // v35: camera_hint on calibration sessions. Calibration frames are camera-specific
+        // (bias, dark, flat readout patterns differ per sensor), so the camera is stored
+        // alongside temperature and filter as a grouping key and appears in the session name.
+        """
+        ALTER TABLE sessions ADD COLUMN camera_hint TEXT;
+        """,
+        // v36: backfill camera_hint and rebuild names for calibration sessions that were
+        // created before v35. Handled by Swift code in codeSteps below; SQL is a no-op.
+        "SELECT 1",
+    ]
+
+    // Swift-code steps keyed by schema version. Run immediately after the SQL migration
+    // for the same version. Use for logic that cannot be expressed in a single SQL statement
+    // (e.g. Swift date formatting, complex name generation).
+    private static let codeSteps: [Int: (OpaquePointer) -> Void] = [
+        36: v36BackfillCalibrationSessionCameras,
     ]
 
     static func applyMigrations(db: OpaquePointer) throws {
@@ -390,8 +406,62 @@ extension ArchiveDatabase {
                 sqlite3_free(errmsg)
                 throw ArchiveError.databaseError("Migration v\(targetVersion) failed: \(msg)")
             }
+            codeSteps[targetVersion]?(db)
             // PRAGMA user_version doesn't support ? binding; integer interpolation is safe.
             sqlite3_exec(db, "PRAGMA user_version = \(targetVersion)", nil, nil, nil)
+        }
+    }
+
+    // MARK: - v36: backfill camera_hint on calibration sessions
+
+    /// For each calibration session that has no camera_hint yet, finds the most common
+    /// non-null camera among its member frames, stores it as camera_hint, and rebuilds
+    /// the session name using the current naming convention.
+    private static func v36BackfillCalibrationSessionCameras(_ db: OpaquePointer) {
+        let findSQL = """
+            SELECT s.id, s.frame_type, s.date, s.temperature_hint, s.filter_hint,
+                   (SELECT camera FROM frames
+                    WHERE session_id = s.id AND camera IS NOT NULL
+                    GROUP BY camera ORDER BY COUNT(*) DESC LIMIT 1) AS cam
+            FROM sessions s
+            WHERE LOWER(s.frame_type) IN ('bias','dark','flat','darkflat',
+                                           'masterbias','masterdark','masterflat','masterdarkflat')
+              AND s.camera_hint IS NULL
+            """
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, findSQL, -1, &stmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(stmt) }
+
+        let updSQL = "UPDATE sessions SET camera_hint = ?, name = ? WHERE id = ?"
+        var updStmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, updSQL, -1, &updStmt, nil) == SQLITE_OK else { return }
+        defer { sqlite3_finalize(updStmt) }
+
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            guard sqlite3_column_type(stmt, 5) != SQLITE_NULL,  // skip sessions with no camera in frames
+                  let idRaw   = sqlite3_column_text(stmt, 0),
+                  let ftRaw   = sqlite3_column_text(stmt, 1),
+                  let dateRaw = sqlite3_column_text(stmt, 2),
+                  let camRaw  = sqlite3_column_text(stmt, 5) else { continue }
+
+            let id     = String(cString: idRaw)
+            let ft     = String(cString: ftRaw)
+            let date   = String(cString: dateRaw)
+            let camera = String(cString: camRaw)
+            let temp: Double? = sqlite3_column_type(stmt, 3) != SQLITE_NULL
+                ? sqlite3_column_double(stmt, 3) : nil
+            let filter: String? = sqlite3_column_type(stmt, 4) != SQLITE_NULL
+                ? sqlite3_column_text(stmt, 4).map { String(cString: $0) } : nil
+
+            let name = calibrationSessionName(frameType: ft, dateString: date,
+                                              temperature: temp, filter: filter, camera: camera)
+
+            sqlite3_reset(updStmt)
+            sqlite3_clear_bindings(updStmt)
+            sqlite3_bind_text(updStmt, 1, camera, -1, sqliteTransient)
+            sqlite3_bind_text(updStmt, 2, name, -1, sqliteTransient)
+            sqlite3_bind_text(updStmt, 3, id, -1, sqliteTransient)
+            sqlite3_step(updStmt)
         }
     }
 
