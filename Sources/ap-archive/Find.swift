@@ -190,9 +190,7 @@ struct Search: AsyncParsableCommand {
         let showFrames    = kind == .both || kind == .frames
         let showFrameSets = kind == .both || kind == .framesets
 
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-        df.timeZone = TimeZone(identifier: "UTC")
+        let df = ymdFormatter
         let dateRange: DateInterval? = {
             guard let fromStr = from, let toStr = to,
                   let fromDate = df.date(from: fromStr),
@@ -210,37 +208,19 @@ struct Search: AsyncParsableCommand {
             query.focalLength = focalLength
             query.gain        = gain
             query.offset      = offset
-            if let lo = minExposure, let hi = maxExposure { query.exposureTimeRange = lo...hi }
-            else if let lo = minExposure { query.exposureTimeRange = lo...Double.infinity }
-            else if let hi = maxExposure { query.exposureTimeRange = 0...hi }
+            query.exposureTimeRange  = doubleRange(lo: minExposure,      hi: maxExposure)
             if masterOnly { query.isMaster = true }
             if let sid = sessionId { query.sessionID = UUID(uuidString: sid) }
-            if let lo = minFocalLength, let hi = maxFocalLength { query.focalLengthRange = lo...hi }
-            else if let lo = minFocalLength { query.focalLengthRange = lo...Double.infinity }
-            else if let hi = maxFocalLength { query.focalLengthRange = 0...hi }
-            if let lo = minAperture, let hi = maxAperture { query.apertureRange = lo...hi }
-            else if let lo = minAperture { query.apertureRange = lo...Double.infinity }
-            else if let hi = maxAperture { query.apertureRange = 0...hi }
-            if let lo = minPixelSize, let hi = maxPixelSize { query.pixelSizeRange = lo...hi }
-            else if let lo = minPixelSize { query.pixelSizeRange = lo...Double.infinity }
-            else if let hi = maxPixelSize { query.pixelSizeRange = 0...hi }
-            query.binning     = binning
-            if let lo = minPixelScale, let hi = maxPixelScale { query.pixelScaleRange = lo...hi }
-            else if let lo = minPixelScale { query.pixelScaleRange = lo...Double.infinity }
-            else if let hi = maxPixelScale { query.pixelScaleRange = 0...hi }
-            if let lo = minWidth, let hi = maxWidth { query.widthRange = lo...hi }
-            else if let lo = minWidth { query.widthRange = lo...Int.max }
-            else if let hi = maxWidth { query.widthRange = 0...hi }
-            if let lo = minHeight, let hi = maxHeight { query.heightRange = lo...hi }
-            else if let lo = minHeight { query.heightRange = lo...Int.max }
-            else if let hi = maxHeight { query.heightRange = 0...hi }
-            query.bitpix = bitpix
-            if let lo = minEgain, let hi = maxEgain { query.egainRange = lo...hi }
-            else if let lo = minEgain { query.egainRange = lo...Double.infinity }
-            else if let hi = maxEgain { query.egainRange = 0...hi }
-            if let lo = minPositionAngle, let hi = maxPositionAngle { query.positionAngleRange = lo...hi }
-            else if let lo = minPositionAngle { query.positionAngleRange = lo...360.0 }
-            else if let hi = maxPositionAngle { query.positionAngleRange = 0...hi }
+            query.focalLengthRange   = doubleRange(lo: minFocalLength,  hi: maxFocalLength)
+            query.apertureRange      = doubleRange(lo: minAperture,     hi: maxAperture)
+            query.pixelSizeRange     = doubleRange(lo: minPixelSize,    hi: maxPixelSize)
+            query.binning            = binning
+            query.pixelScaleRange    = doubleRange(lo: minPixelScale,   hi: maxPixelScale)
+            query.widthRange         = intRange(lo: minWidth,           hi: maxWidth)
+            query.heightRange        = intRange(lo: minHeight,          hi: maxHeight)
+            query.bitpix             = bitpix
+            query.egainRange         = doubleRange(lo: minEgain,        hi: maxEgain)
+            query.positionAngleRange = doubleRange(lo: minPositionAngle, hi: maxPositionAngle, hiOpen: 360.0)
             query.addedAfter  = addedAfter.flatMap  { df.date(from: $0) }
             query.addedBefore = addedBefore.flatMap { df.date(from: $0) }
             query.limit       = limit
