@@ -197,14 +197,11 @@ extension ArchiveToolHandler {
         let showFrames    = kindStr == "both" || kindStr == "frames"
         let showFrameSets = kindStr == "both" || kindStr == "framesets"
 
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-        df.timeZone = TimeZone(identifier: "UTC")
         let dateRange: DateInterval? = {
             guard let fromStr = args["from_date"] as? String,
                   let toStr   = args["to_date"]   as? String,
-                  let fromDate = df.date(from: fromStr),
-                  let toDate   = df.date(from: toStr) else { return nil }
+                  let fromDate = ymdFormatter.date(from: fromStr),
+                  let toDate   = ymdFormatter.date(from: toStr) else { return nil }
             return DateInterval(start: fromDate, end: toDate)
         }()
 
@@ -253,9 +250,8 @@ extension ArchiveToolHandler {
             query.egainRange         = doubleRange(args, min: "min_egain",           max: "max_egain")
             query.positionAngleRange = doubleRange(args, min: "min_position_angle",  max: "max_position_angle",
                                                    hiOpen: 360.0)
-            let df = ymdFormatter
-            query.addedAfter  = (args["added_after"]  as? String).flatMap { df.date(from: $0) }
-            query.addedBefore = (args["added_before"] as? String).flatMap { df.date(from: $0) }
+            query.addedAfter  = (args["added_after"]  as? String).flatMap { ymdFormatter.date(from: $0) }
+            query.addedBefore = (args["added_before"] as? String).flatMap { ymdFormatter.date(from: $0) }
             query.maxFWHM                = args["max_fwhm"]                as? Double
             query.minStarCount           = args["min_stars"]               as? Int
             query.maxBackgroundNoise     = args["max_background_noise"]    as? Double
