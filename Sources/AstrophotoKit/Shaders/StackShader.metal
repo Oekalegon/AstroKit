@@ -2,8 +2,8 @@
 using namespace metal;
 
 // Maximum frames per stack — determines thread-local array size (4 bytes × N per thread).
-// Raise in powers of 2 if needed; 128 is sufficient for virtually all amateur stacks.
-#define STACK_MAX_FRAMES 128
+// Raise in powers of 2 if needed.
+#define STACK_MAX_FRAMES 256
 
 struct StackParams {
     uint  nFrames;
@@ -11,6 +11,7 @@ struct StackParams {
     uint  rejMode;     // 0=none 1=sigma_clip 2=winsorized
     float rejLow;
     float rejHigh;
+    uint  yOffset;     // strip-based dispatch: actual y = thread_y + yOffset
 };
 
 struct FrameNorm {
@@ -38,7 +39,9 @@ kernel void stack_frames(
     constant FrameNorm                   *normParams [[buffer(1)]],
     uint2 gid [[thread_position_in_grid]]
 ) {
-    if (gid.x >= output.get_width() || gid.y >= output.get_height()) { return; }
+    // Strip dispatch: actual pixel position in the output texture
+    uint2 pid = uint2(gid.x, gid.y + params.yOffset);
+    if (pid.x >= output.get_width() || pid.y >= output.get_height()) { return; }
 
     const uint n = min(params.nFrames, (uint)STACK_MAX_FRAMES);
 
@@ -46,7 +49,7 @@ kernel void stack_frames(
     float vals[STACK_MAX_FRAMES];
     uint count = 0u;
     for (uint i = 0u; i < n; i++) {
-        float v = frames.read(gid, i).r;
+        float v = frames.read(pid, i).r;
         if (v < 0.0f) continue;   // sentinel: this frame doesn't cover this pixel
         vals[count++] = v * normParams[i].mulFactor + normParams[i].addOffset;
     }
@@ -160,5 +163,5 @@ kernel void stack_frames(
         }
     }
 
-    output.write(float4(result, 0.0f, 0.0f, 0.0f), gid);
+    output.write(float4(result, 0.0f, 0.0f, 0.0f), pid);
 }

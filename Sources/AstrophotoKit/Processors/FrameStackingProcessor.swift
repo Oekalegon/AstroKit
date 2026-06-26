@@ -18,6 +18,7 @@ private struct StackParams {
     var rejMode:   UInt32  // 0=none 1=sigma_clip 2=winsorized
     var rejLow:    Float
     var rejHigh:   Float
+    var yOffset:   UInt32  // strip dispatch: shader adds this to gid.y
 }
 
 private struct FrameNorm {
@@ -26,7 +27,7 @@ private struct FrameNorm {
 }
 
 // Must match STACK_MAX_FRAMES in StackShader.metal
-private let stackMaxFrames = 128
+private let stackMaxFrames = 256
 
 // MARK: - Processor
 
@@ -572,23 +573,7 @@ public struct FrameStackingProcessor: Processor {
             throw ProcessorExecutionError.executionFailed("Failed to create stacked output texture")
         }
 
-        // StackParams buffer
-        var stackParams = StackParams(
-            nFrames:   UInt32(nFrames),
-            stackMode: UInt32(stackModeIndex(method)),
-            rejMode:   UInt32(rejModeIndex(rejection)),
-            rejLow:    rejLow,
-            rejHigh:   rejHigh
-        )
-        guard let paramsBuf = device.makeBuffer(
-            bytes: &stackParams,
-            length: MemoryLayout<StackParams>.size,
-            options: .storageModeShared
-        ) else {
-            throw ProcessorExecutionError.executionFailed("Failed to create stack params buffer")
-        }
-
-        // FrameNorm buffer
+        // FrameNorm buffer (shared across all strip dispatches)
         var normData = normCoeffs.map { FrameNorm(mulFactor: $0.mulFactor, addOffset: $0.addOffset) }
         guard let normBuf = device.makeBuffer(
             bytes: &normData,
@@ -598,22 +583,61 @@ public struct FrameStackingProcessor: Processor {
             throw ProcessorExecutionError.executionFailed("Failed to create norm params buffer")
         }
 
-        // Dispatch
-        guard let cmdBuf = commandQueue.makeCommandBuffer(),
-              let enc = cmdBuf.makeComputeCommandEncoder() else {
-            throw ProcessorExecutionError.executionFailed("Failed to create stack compute encoder")
+        let execWidth = pipeline.threadExecutionWidth
+        let tgW = execWidth          // 32 on Apple Silicon
+        let tgH = execWidth          // 32 on Apple Silicon  → 32×32 = 1024 threads/TG
+        let tg  = MTLSize(width: tgW, height: tgH, depth: 1)
+
+        // Split the image into horizontal strips so each command buffer dispatches a
+        // manageable number of threadgroups.  Empirically, Apple GPUs silently drop TGs
+        // when a single dispatch exceeds ~1 500 threadgroups; strips of ≤ 512 TGs are safe.
+        let maxTGsPerStrip = 512
+        let tgsInX    = (width + tgW - 1) / tgW          // 61 for 1936-wide image
+        let stripRows = max(tgH, (maxTGsPerStrip / tgsInX) * tgH) // rows per strip
+        var yStart = 0
+        while yStart < height {
+            let stripH = min(stripRows, height - yStart)
+
+            var stripParams = StackParams(
+                nFrames:   UInt32(nFrames),
+                stackMode: UInt32(stackModeIndex(method)),
+                rejMode:   UInt32(rejModeIndex(rejection)),
+                rejLow:    rejLow,
+                rejHigh:   rejHigh,
+                yOffset:   UInt32(yStart)
+            )
+            guard let paramsBuf = device.makeBuffer(
+                bytes: &stripParams,
+                length: MemoryLayout<StackParams>.size,
+                options: .storageModeShared
+            ) else {
+                throw ProcessorExecutionError.executionFailed("Failed to create stack params buffer")
+            }
+
+            guard let cmdBuf = commandQueue.makeCommandBuffer(),
+                  let enc = cmdBuf.makeComputeCommandEncoder() else {
+                throw ProcessorExecutionError.executionFailed("Failed to create stack compute encoder")
+            }
+            enc.setComputePipelineState(pipeline)
+            enc.setTexture(arrayTex, index: 0)
+            enc.setTexture(outTex,   index: 1)
+            enc.setBuffer(paramsBuf, offset: 0, index: 0)
+            enc.setBuffer(normBuf,   offset: 0, index: 1)
+            enc.dispatchThreads(
+                MTLSize(width: width, height: stripH, depth: 1),
+                threadsPerThreadgroup: tg
+            )
+            enc.endEncoding()
+            cmdBuf.commit()
+            cmdBuf.waitUntilCompleted()
+
+            if let err = cmdBuf.error {
+                Logger.processor.error(
+                    "FrameStacking strip y=\(yStart)..\(yStart+stripH-1) GPU error: \(err.localizedDescription)"
+                )
+            }
+            yStart += stripH
         }
-        enc.setComputePipelineState(pipeline)
-        enc.setTexture(arrayTex, index: 0)
-        enc.setTexture(outTex,   index: 1)
-        enc.setBuffer(paramsBuf, offset: 0, index: 0)
-        enc.setBuffer(normBuf,   offset: 0, index: 1)
-        let tg = MTLSize(width: 16, height: 16, depth: 1)
-        let gc = MTLSize(width: (width + 15) / 16, height: (height + 15) / 16, depth: 1)
-        enc.dispatchThreadgroups(gc, threadsPerThreadgroup: tg)
-        enc.endEncoding()
-        cmdBuf.commit()
-        cmdBuf.waitUntilCompleted()
 
         return outTex
     }
