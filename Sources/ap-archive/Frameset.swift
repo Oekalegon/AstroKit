@@ -26,8 +26,47 @@ struct Frameset: AsyncParsableCommand {
         @Option(name: .long, help: "Camera name (exact match).")
         var camera: String?
 
+        @Option(name: .long, help: "Telescope name, exact match (FITS TELESCOP).")
+        var telescope: String?
+
+        @Option(name: .long, help: "Observatory site name, exact match (FITS OBSERVAT).")
+        var site: String?
+
         @Option(name: .long, help: "Focal length in mm (exact match).")
         var focalLength: Double?
+
+        @Option(name: .long, help: "Focal length ≥ this value (mm).")
+        var minFocalLength: Double?
+
+        @Option(name: .long, help: "Focal length ≤ this value (mm).")
+        var maxFocalLength: Double?
+
+        @Option(name: .long, help: "Telescope aperture ≥ this value (mm, FITS APTDIA).")
+        var minAperture: Double?
+
+        @Option(name: .long, help: "Telescope aperture ≤ this value (mm, FITS APTDIA).")
+        var maxAperture: Double?
+
+        @Option(name: .long, help: "Physical (unbinned) pixel size ≥ this value (µm).")
+        var minPixelSize: Double?
+
+        @Option(name: .long, help: "Physical (unbinned) pixel size ≤ this value (µm).")
+        var maxPixelSize: Double?
+
+        @Option(name: .long, help: "Pixel binning factor, exact match (FITS XBINNING; 1 = unbinned).")
+        var binning: Int?
+
+        @Option(name: .long, help: "Camera gain setting, exact match (FITS GAIN).")
+        var gain: Double?
+
+        @Option(name: .long, help: "Camera offset/pedestal setting, exact match (FITS OFFSET/PEDESTAL).")
+        var offset: Double?
+
+        @Option(name: .long, help: "Minimum exposure time in seconds.")
+        var minExposure: Double?
+
+        @Option(name: .long, help: "Maximum exposure time in seconds.")
+        var maxExposure: Double?
 
         @Option(name: .long, help: "Start date (YYYY-MM-DD).")
         var from: String?
@@ -59,11 +98,82 @@ struct Frameset: AsyncParsableCommand {
         @Option(name: .long, help: "Only include frames with mean star eccentricity ≤ this value (0=circular). Frames without quality data are excluded.")
         var maxEccentricity: Double?
 
+        @Option(name: .long, help: "Pixel scale ≥ this value (arcsec/px).")
+        var minPixelScale: Double?
+
+        @Option(name: .long, help: "Pixel scale ≤ this value (arcsec/px).")
+        var maxPixelScale: Double?
+
+        @Option(name: .long, help: "Image width ≥ this value (pixels).")
+        var minWidth: Int?
+
+        @Option(name: .long, help: "Image width ≤ this value (pixels).")
+        var maxWidth: Int?
+
+        @Option(name: .long, help: "Image height ≥ this value (pixels).")
+        var minHeight: Int?
+
+        @Option(name: .long, help: "Image height ≤ this value (pixels).")
+        var maxHeight: Int?
+
+        @Option(name: .long, help: "FITS BITPIX bit depth, exact match (e.g. 16, 32, -32).")
+        var bitpix: Int?
+
+        @Option(name: .long, help: "Electron conversion factor ≥ this value (e⁻/ADU, FITS EGAIN).")
+        var minEgain: Double?
+
+        @Option(name: .long, help: "Electron conversion factor ≤ this value (e⁻/ADU, FITS EGAIN).")
+        var maxEgain: Double?
+
+        @Option(name: .long, help: "Field rotation position angle ≥ this value (degrees east of north).")
+        var minPositionAngle: Double?
+
+        @Option(name: .long, help: "Field rotation position angle ≤ this value (degrees east of north).")
+        var maxPositionAngle: Double?
+
+        @Option(name: .long, help: "Only frames added to the archive on or after this date (YYYY-MM-DD).")
+        var addedAfter: String?
+
+        @Option(name: .long, help: "Only frames added to the archive on or before this date (YYYY-MM-DD).")
+        var addedBefore: String?
+
+        @Option(name: .long, help: "At most this many saturated stars.")
+        var maxSaturatedStars: Int?
+
+        @Option(name: .long, help: "At most this many hot pixels (calibration frames).")
+        var maxHotPixels: Int?
+
+        @Option(name: .long, help: "Sun altitude at capture time ≤ this value (degrees; use -18 for astronomical night).")
+        var maxSunAltitude: Double?
+
+        @Option(name: .long, help: "Moon separation from target ≥ this value (degrees).")
+        var minMoonSeparation: Double?
+
+        @Option(name: .long, help: "Moon illumination ≤ this fraction (0–1).")
+        var maxMoonIllumination: Double?
+
         func makeQuery() -> FrameQuery {
             var query = FrameQuery()
             query.objectName = object
             query.camera = camera
+            query.telescope = telescope
+            query.site = site
             query.focalLength = focalLength
+            query.gain = gain
+            query.offset = offset
+            if let lo = minExposure, let hi = maxExposure { query.exposureTimeRange = lo...hi }
+            else if let lo = minExposure { query.exposureTimeRange = lo...Double.infinity }
+            else if let hi = maxExposure { query.exposureTimeRange = 0...hi }
+            if let lo = minFocalLength, let hi = maxFocalLength { query.focalLengthRange = lo...hi }
+            else if let lo = minFocalLength { query.focalLengthRange = lo...Double.infinity }
+            else if let hi = maxFocalLength { query.focalLengthRange = 0...hi }
+            if let lo = minAperture, let hi = maxAperture { query.apertureRange = lo...hi }
+            else if let lo = minAperture { query.apertureRange = lo...Double.infinity }
+            else if let hi = maxAperture { query.apertureRange = 0...hi }
+            if let lo = minPixelSize, let hi = maxPixelSize { query.pixelSizeRange = lo...hi }
+            else if let lo = minPixelSize { query.pixelSizeRange = lo...Double.infinity }
+            else if let hi = maxPixelSize { query.pixelSizeRange = 0...hi }
+            query.binning = binning
             if let t = type   { query.frameTypes = [t] }
             if let f = filter { query.filters    = [f] }
             if let lvl = level { query.processingLevel = ProcessingLevel(rawValue: lvl) }
@@ -79,13 +189,36 @@ struct Frameset: AsyncParsableCommand {
                 let tol = tempTolerance ?? 2.0
                 query.temperatureRange = (center - tol)...(center + tol)
             }
+            if let lo = minPixelScale, let hi = maxPixelScale { query.pixelScaleRange = lo...hi }
+            else if let lo = minPixelScale { query.pixelScaleRange = lo...Double.infinity }
+            else if let hi = maxPixelScale { query.pixelScaleRange = 0...hi }
+            if let lo = minWidth, let hi = maxWidth { query.widthRange = lo...hi }
+            else if let lo = minWidth { query.widthRange = lo...Int.max }
+            else if let hi = maxWidth { query.widthRange = 0...hi }
+            if let lo = minHeight, let hi = maxHeight { query.heightRange = lo...hi }
+            else if let lo = minHeight { query.heightRange = lo...Int.max }
+            else if let hi = maxHeight { query.heightRange = 0...hi }
+            query.bitpix = bitpix
+            if let lo = minEgain, let hi = maxEgain { query.egainRange = lo...hi }
+            else if let lo = minEgain { query.egainRange = lo...Double.infinity }
+            else if let hi = maxEgain { query.egainRange = 0...hi }
+            if let lo = minPositionAngle, let hi = maxPositionAngle { query.positionAngleRange = lo...hi }
+            else if let lo = minPositionAngle { query.positionAngleRange = lo...360.0 }
+            else if let hi = maxPositionAngle { query.positionAngleRange = 0...hi }
+            query.addedAfter  = addedAfter.flatMap  { df.date(from: $0) }
+            query.addedBefore = addedBefore.flatMap { df.date(from: $0) }
             // maxFwhm and maxEccentricity are NOT added to the query for frameset creation —
             // they become per-member exclusion thresholds instead (include-but-exclude semantics).
             // They ARE still added here so the same QueryOptions can be used for general queries.
-            query.maxFWHM            = maxFwhm
-            query.minStarCount       = minStars
-            query.maxBackgroundNoise = maxBackgroundNoise
-            query.maxEccentricity    = maxEccentricity
+            query.maxFWHM                = maxFwhm
+            query.minStarCount           = minStars
+            query.maxBackgroundNoise     = maxBackgroundNoise
+            query.maxEccentricity        = maxEccentricity
+            query.maxSaturatedStarCount  = maxSaturatedStars
+            query.maxHotPixelCount       = maxHotPixels
+            query.maxSunAltitude         = maxSunAltitude
+            query.minMoonSeparation      = minMoonSeparation
+            query.maxMoonIllumination    = maxMoonIllumination
             return query
         }
 

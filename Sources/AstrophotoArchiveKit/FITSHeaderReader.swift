@@ -16,6 +16,13 @@ struct FrameArchiveMetadata {
     var siteLatitude: Double?   // degrees, north positive
     var siteLongitude: Double?  // degrees, east positive
     var focalLength: Double?
+    /// Telescope aperture diameter in mm (FITS `APTDIA`).
+    var aperture: Double?
+    /// Physical (unbinned) sensor pixel size in µm.
+    /// Sourced from `PIXSIZE1` directly, or `XPIXSZ / XBINNING` when only the binned size is available.
+    var pixelSizeUm: Double?
+    /// Pixel binning factor (FITS `XBINNING`; 1 = unbinned).
+    var binning: Int?
     var pixelScale: Double?
     var temperature: Double?
     var timestamp: Date?
@@ -114,7 +121,21 @@ enum FITSHeaderReader {
         let siteLatitude  = FITSHeaderParser.doubleValue(headers, keys: ["SITELAT", "GPS-LAT", "LAT-OBS", "OBSGEO-B"])
         let siteLongitude = FITSHeaderParser.doubleValue(headers, keys: ["SITELONG", "GPS-LON", "LONG-OBS", "OBSGEO-L"])
 
-        let focalLength   = FITSHeaderParser.doubleValue(headers, keys: ["FOCALLEN"])
+        let focalLength = FITSHeaderParser.doubleValue(headers, keys: ["FOCALLEN"])
+        let aperture    = FITSHeaderParser.doubleValue(headers, keys: ["APTDIA"])
+
+        // Pixel size and binning. Normalize to the physical (unbinned) pixel size in µm.
+        // XPIXSZ (MaxIm DL / INDI): binned pixel size → divide by XBINNING to get physical.
+        // PIXSIZE1 (FITS standard): physical unbinned pixel size → use directly.
+        let binning: Int? = headers["XBINNING"]?.intValue.map { Int($0) }
+        let pixelSizeUm: Double?
+        if let physicalSize = FITSHeaderParser.doubleValue(headers, keys: ["PIXSIZE1"]) {
+            pixelSizeUm = physicalSize
+        } else if let binnedSize = FITSHeaderParser.doubleValue(headers, keys: ["XPIXSZ"]) {
+            pixelSizeUm = binnedSize / Double(binning ?? 1)
+        } else {
+            pixelSizeUm = nil
+        }
 
         // Explicit scale keyword wins; otherwise derive it from the sensor pixel
         // size and focal length. XPIXSZ is the *binned* pixel size by MaxIm DL /
@@ -127,9 +148,9 @@ enum FITSHeaderReader {
                     pixelSizeMicrons: binnedSize, focalLengthMm: fl
                 )
             } else if let physicalSize = FITSHeaderParser.doubleValue(headers, keys: ["PIXSIZE1"]) {
-                let binning = headers["XBINNING"]?.intValue.map { Int($0) } ?? 1
+                let bin = binning ?? 1
                 pixelScale = PixelScale.arcsecPerPixel(
-                    pixelSizeMicrons: physicalSize, binning: binning, focalLengthMm: fl
+                    pixelSizeMicrons: physicalSize, binning: bin, focalLengthMm: fl
                 )
             }
         }
@@ -190,6 +211,9 @@ enum FITSHeaderReader {
             siteLatitude: siteLatitude,
             siteLongitude: siteLongitude,
             focalLength: focalLength,
+            aperture: aperture,
+            pixelSizeUm: pixelSizeUm,
+            binning: binning,
             pixelScale: pixelScale,
             temperature: temperature,
             timestamp: timestamp,

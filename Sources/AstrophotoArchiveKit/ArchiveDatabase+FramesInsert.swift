@@ -29,8 +29,9 @@ extension ArchiveDatabase {
          star_count, median_fwhm, background_noise, median_eccentricity,
          saturated_star_count, hot_pixel_count, egain, background_noise_electrons,
          telescope, site, supersedes_id, site_latitude, site_longitude, session_id,
-         sun_altitude, moon_separation, moon_illumination, is_master)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         sun_altitude, moon_separation, moon_illumination, is_master,
+         aperture, pixel_size, binning)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """
         let stmt = try prepare(sql)
         defer { sqlite3_finalize(stmt) }
@@ -91,6 +92,9 @@ extension ArchiveDatabase {
         bind(stmt, 50, frame.moonSeparation)
         bind(stmt, 51, frame.moonIllumination)
         sqlite3_bind_int(stmt, 52, frame.isMaster ? 1 : 0)
+        bind(stmt, 53, frame.aperture)
+        bind(stmt, 54, frame.pixelSizeUm)
+        bind(stmt, 55, frame.binning.map { Int64($0) })
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())

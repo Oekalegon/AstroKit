@@ -407,6 +407,15 @@ extension ArchiveDatabase {
         UPDATE sessions SET is_master = 1, frame_type = 'flat'    WHERE LOWER(frame_type) = 'masterflat';
         UPDATE sessions SET is_master = 1, frame_type = 'darkflat' WHERE LOWER(frame_type) = 'masterdarkflat';
         """,
+        // v39: optics metadata on frames.
+        // aperture = telescope aperture diameter in mm (FITS APTDIA).
+        // pixel_size = physical (unbinned) sensor pixel size in µm — from PIXSIZE1, or XPIXSZ / XBINNING.
+        // binning = pixel binning factor (FITS XBINNING; 1 = unbinned).
+        """
+        ALTER TABLE frames ADD COLUMN aperture REAL;
+        ALTER TABLE frames ADD COLUMN pixel_size REAL;
+        ALTER TABLE frames ADD COLUMN binning INTEGER;
+        """,
     ]
 
     // Swift-code steps keyed by schema version. Run immediately after the SQL migration

@@ -153,6 +153,10 @@ struct CalibrationMigrationTests {
             -- v35 added camera_hint to sessions; v37/v38 added is_master to frames/sessions.
             -- sessions table was already dropped above (v31 rewind), so only frames needs cleanup.
             ALTER TABLE frames DROP COLUMN is_master;
+            -- v39 added optics columns to frames; drop them so the replay can re-add them.
+            ALTER TABLE frames DROP COLUMN aperture;
+            ALTER TABLE frames DROP COLUMN pixel_size;
+            ALTER TABLE frames DROP COLUMN binning;
             PRAGMA user_version = 24;
             """, on: url)
 
@@ -222,6 +226,10 @@ struct CalibrationMigrationTests {
             -- v35 added camera_hint to sessions; v37 added is_master to frames.
             -- sessions table was already dropped above (v31 rewind), so only frames needs cleanup.
             ALTER TABLE frames DROP COLUMN is_master;
+            -- v39 added optics columns to frames; drop them so the replay can re-add them.
+            ALTER TABLE frames DROP COLUMN aperture;
+            ALTER TABLE frames DROP COLUMN pixel_size;
+            ALTER TABLE frames DROP COLUMN binning;
             PRAGMA user_version = 25;
             """, on: url)
 
