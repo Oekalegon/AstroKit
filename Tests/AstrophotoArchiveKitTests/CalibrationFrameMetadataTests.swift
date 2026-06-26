@@ -305,6 +305,87 @@ struct CalibrationBackfillTests {
     }
 }
 
+// MARK: - isMaster filter
+
+@Suite("FrameQuery.isMaster filter")
+struct IsMasterFilterTests {
+
+    private func makeTestDatabase() throws -> (ArchiveDatabase, URL) {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ismaster-\(UUID().uuidString).sqlite")
+        return (try ArchiveDatabase(url: url, archiveRootPath: FileManager.default.temporaryDirectory.path), url)
+    }
+
+    private func makeFrame(isMaster: Bool, timestamp: Double) -> ArchivedFrame {
+        ArchivedFrame(
+            id: UUID(),
+            filePath: "/tmp/mock-\(UUID().uuidString).fits",
+            objectName: nil,
+            ra: nil, dec: nil,
+            healpixPixel: nil,
+            frameType: "dark",
+            isMaster: isMaster,
+            filter: nil,
+            camera: "ZWO ASI533MM",
+            focalLength: nil, pixelScale: nil,
+            temperature: -10.0,
+            timestamp: Date(timeIntervalSince1970: timestamp),
+            exposureTime: 300,
+            gain: 100, offset: nil,
+            width: 4096, height: 3000, bitpix: 16,
+            calibrated: false, stacked: false, stretched: false,
+            processingLevel: .raw,
+            addedAt: Date(),
+            fileDate: Date(timeIntervalSince1970: timestamp)
+        )
+    }
+
+    @Test("isMaster: false returns only non-master frames")
+    func isMasterFalseFiltersCorrectly() async throws {
+        let (db, url) = try makeTestDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        // Different timestamps → different frame signatures → both rows inserted.
+        _ = try await db.insertFrame(makeFrame(isMaster: false, timestamp: 1_740_000_000))
+        _ = try await db.insertFrame(makeFrame(isMaster: true,  timestamp: 1_740_000_300))
+
+        var query = FrameQuery()
+        query.isMaster = false
+        let results = try await db.queryFrames(query, healpixPixels: nil)
+
+        #expect(results.count == 1)
+        #expect(results.first?.isMaster == false)
+    }
+
+    @Test("isMaster: true returns only master frames")
+    func isMasterTrueFiltersCorrectly() async throws {
+        let (db, url) = try makeTestDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        _ = try await db.insertFrame(makeFrame(isMaster: false, timestamp: 1_740_000_000))
+        _ = try await db.insertFrame(makeFrame(isMaster: true,  timestamp: 1_740_000_300))
+
+        var query = FrameQuery()
+        query.isMaster = true
+        let results = try await db.queryFrames(query, healpixPixels: nil)
+
+        #expect(results.count == 1)
+        #expect(results.first?.isMaster == true)
+    }
+
+    @Test("isMaster: nil returns all frames regardless of master status")
+    func isMasterNilReturnsAll() async throws {
+        let (db, url) = try makeTestDatabase()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        _ = try await db.insertFrame(makeFrame(isMaster: false, timestamp: 1_740_000_000))
+        _ = try await db.insertFrame(makeFrame(isMaster: true,  timestamp: 1_740_000_300))
+
+        let results = try await db.queryFrames(FrameQuery(), healpixPixels: nil)
+        #expect(results.count == 2)
+    }
+}
+
 // MARK: - FrameType.isCalibrationFrame
 
 @Suite("FrameType.isCalibrationFrame")

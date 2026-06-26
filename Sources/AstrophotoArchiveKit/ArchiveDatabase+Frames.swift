@@ -37,7 +37,9 @@ extension ArchiveDatabase {
             conditions.append("exposure_time <= ?"); bindings.append(etr.upperBound)
         }
         if let master = query.isMaster {
-            conditions.append("is_master = ?"); bindings.append(master ? 1 : 0)
+            // COALESCE treats pre-v37 NULL rows as 0 (non-master) so isMaster: false
+            // does not silently exclude frames archived before migration v37.
+            conditions.append("COALESCE(is_master, 0) = ?"); bindings.append(master ? 1 : 0)
         }
         if let sid = query.sessionID {
             conditions.append("session_id = ?"); bindings.append(sid.uuidString)
