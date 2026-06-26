@@ -29,6 +29,9 @@ struct Search: AsyncParsableCommand {
     @Option(name: .long, help: "Camera name, exact match. Applies to both.")
     var camera: String?
 
+    @Option(name: .long, help: "Focal length in mm, exact match. Applies to frames.")
+    var focalLength: Double?
+
     @Option(name: .long, help: "Start date YYYY-MM-DD. Applies to both.")
     var from: String?
 
@@ -100,9 +103,10 @@ struct Search: AsyncParsableCommand {
         var frames: [ArchivedFrame] = []
         if showFrames {
             var query = FrameQuery()
-            query.objectName = object
-            query.camera     = camera
-            query.limit      = limit
+            query.objectName  = object
+            query.camera      = camera
+            query.focalLength = focalLength
+            query.limit       = limit
             if let t = type {
                 query.frameTypes = t.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
             }

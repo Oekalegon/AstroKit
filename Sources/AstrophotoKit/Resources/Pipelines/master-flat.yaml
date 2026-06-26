@@ -1,0 +1,47 @@
+id: master_flat
+name: Master Flat Pipeline
+description: |
+  Stacks calibrated flat frames (output of calibrate_flats) into a master flat.
+
+  The master flat is used in calibrate_lights to correct for vignetting and
+  pixel-to-pixel sensitivity variations.
+
+  The flat filter must match the filter used for the light frames it will correct —
+  filter mismatches are logged as warnings during calibrate_lights.
+
+  Flats should be taken as close in time to the imaging session as possible (same
+  night is ideal) because dust and vignetting patterns can change.
+
+  Output:
+  - master_frame — master flat frame ready to use in calibrate_lights
+
+steps:
+  - id: stack_flat
+    type: stack_calibration_frames
+    name: Stack Flat Frames
+    description: Combines calibrated flat frames into a master flat using median or mean.
+    dataInputs:
+      - name: input_frames
+        type: frameSet
+        from: flat_frames
+        is_collection: true
+        collection_mode: together
+        metadata_restrictions:
+          frame_type:
+            - flat
+          processing_level:
+            - calibrated
+        description: Calibrated flat frames to stack (from calibrate_flats)
+    parameters:
+      - name: method
+        from: stacking_method
+        default_value: "median"
+        description: Combine method — median (default) or mean
+    outputs:
+      - name: master_frame
+        type: frame
+        description: Master flat frame
+        metadata:
+          frame_type: "masterFlat"
+          processing_stage: "calibration"
+          image_type: "grayscale"

@@ -18,9 +18,10 @@ actor ArchiveDatabase {
             withIntermediateDirectories: true
         )
         var ptr: OpaquePointer?
-        guard sqlite3_open_v2(url.path, &ptr, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil) == SQLITE_OK,
-              let database = ptr else {
-            throw ArchiveError.databaseError("Cannot open database at \(url.path)")
+        let openRC = sqlite3_open_v2(url.path, &ptr, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nil)
+        guard openRC == SQLITE_OK, let database = ptr else {
+            let msg = ptr.map { String(cString: sqlite3_errmsg($0)) } ?? "unknown error"
+            throw ArchiveError.databaseError("Cannot open database at \(url.path) (SQLite \(openRC): \(msg))")
         }
         db = database
         // Enforce referential integrity so ON DELETE CASCADE/SET NULL work correctly.

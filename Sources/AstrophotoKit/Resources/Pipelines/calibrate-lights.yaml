@@ -3,11 +3,9 @@ name: Calibrate Light Frames Pipeline
 description: |
   Applies pre-made master calibration frames to a set of light frames.
 
-  Requires master frames produced by the individual calibration pipelines:
-    bias_calibration   → master_bias
-    dark_calibration   → master_dark
-    darkflat_calibration → master_darkflat
-    flat_calibration   → master_flat
+  Requires:
+    master_dark  — from master_dark pipeline
+    master_flat  — from master_flat pipeline (which requires calibrate_flats first)
 
   Calibration applied to each light frame:
     1. Subtract master_dark  (removes dark current and bias pedestal)
@@ -21,8 +19,8 @@ description: |
 
   Inputs:
   - light_frames  (FrameSet) — light frames to calibrate
-  - master_dark   (Frame)    — master dark from dark_calibration
-  - master_flat   (Frame)    — master flat from flat_calibration
+  - master_dark   (Frame)    — master dark from master_dark
+  - master_flat   (Frame)    — master flat from master_flat
 
   Output:
   - calibrated_frame (Frame) — one calibrated light frame per input light
@@ -96,6 +94,6 @@ steps:
         type: frame
         description: Fully calibrated light frame
         metadata:
-          frame_type: "callibratedLight"
+          frame_type: "light"
           processing_stage: "calibration"
           image_type: "grayscale"

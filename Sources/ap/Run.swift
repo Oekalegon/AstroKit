@@ -15,7 +15,7 @@ extension AP {
               ap run star-detection --input image.fits
 
             Multi-input pipeline (name:path):
-              ap run dark-calibration --input light_frame:light.fits --input dark_frame:dark.fits
+              ap run calibrate_lights --input light_frames:light.fits --input master_dark:master_dark.fits --input master_flat:master_flat.fits
 
             Multi-frame (FrameSet) pipeline — repeat the same name:
               ap run frame_registration_quad --input input_frames:frame1.fits --input input_frames:frame2.fits
@@ -738,12 +738,16 @@ extension AP {
 
                 for (name, value) in pipelineInputs.sorted(by: { $0.key < $1.key }) {
                     let pathsAndFrames: [(String, Frame?)]
+                    let isFrameSetInput: Bool
                     if let frameSet = value as? FrameSet {
                         pathsAndFrames = frameSet.frames.compactMap { f in f.filePath.map { ($0, f) } }
+                        isFrameSetInput = true
                     } else if let frame = value as? Frame {
                         pathsAndFrames = frame.filePath.map { [($0, frame as Frame?)] } ?? []
+                        isFrameSetInput = false
                     } else {
                         pathsAndFrames = []
+                        isFrameSetInput = false
                     }
                     var pos = 0
                     for (path, inputFrame) in pathsAndFrames {
@@ -756,12 +760,17 @@ extension AP {
                         ))
                         if refRA == nil { refRA = af?.ra; refDec = af?.dec }
                         pos += 1
-                        inputCount += 1
+                        // Only count frames from FrameSet inputs toward inputCount/totalExposure.
+                        // Single-Frame inputs (e.g. master_bias, master_dark) are auxiliary
+                        // calibration references, not frames being stacked.
+                        if isFrameSetInput {
+                            inputCount += 1
+                            let exp = af?.exposureTime ?? inputFrame?.exposureTime
+                            if let exp { totalExposure += exp }
+                        }
                         if let v = af?.objectName ?? inputFrame?.objectName { objectNamesSet.insert(v) }
                         let fn = af?.filter ?? inputFrame?.filterName
                         if let fn { filterNamesSet.insert(fn) }
-                        let exp = af?.exposureTime ?? inputFrame?.exposureTime
-                        if let exp { totalExposure += exp }
                         if let g = af?.gain ?? inputFrame?.gain { gainsSet.insert(g) }
                         if let o = af?.offset ?? inputFrame?.offset { offsetsSet.insert(o) }
                         if let t = af?.temperature { temperatures.append(t) }
@@ -818,6 +827,22 @@ extension AP {
                     // INSTRUME and other provenance headers are present in the archived file.
                     let resolvedImageType = FITSTableWriter.resultFrameImageType(for: frame, in: pipeline)
                     let isMaster          = FITSTableWriter.resultFrameIsMaster(for: frame, in: pipeline)
+                    let isCalibrated      = FITSTableWriter.resultFrameIsCalibrated(for: frame, in: pipeline)
+                    let isStacking        = pipelineID == "frame_stacking" || isMaster
+                    // Master calibration frames: store per-frame exposure so they can be matched
+                    // against lights with the same exposure.
+                    // Light stacks: store total integration time.
+                    // Per-frame calibration (calibrate_flats, calibrate_lights): use the frame's
+                    // own exposure time; fall back to per-frame average from the input set.
+                    let frameExposure: Double?
+                    if isMaster && inputCount > 0 {
+                        frameExposure = stackExposure.map { $0 / Double(inputCount) }
+                    } else if isCalibrated {
+                        frameExposure = frame.exposureTime
+                            ?? stackExposure.map { $0 / Double(max(inputCount, 1)) }
+                    } else {
+                        frameExposure = stackExposure
+                    }
                     let tmp = FileManager.default.temporaryDirectory
                         .appendingPathComponent("ap_result_\(UUID().uuidString).fits")
                     let fileToArchive: URL
@@ -834,10 +859,11 @@ extension AP {
                         pipelineID: pipelineID,
                         imageType: resolvedImageType,
                         filterName: stackFilter ?? frame.filterName,
-                        stacked: pipelineID == "frame_stacking" || isMaster,
+                        stacked: isStacking,
                         isMaster: isMaster,
-                        nframes: inputCount > 0 ? inputCount : nil,
-                        totalExposure: stackExposure,
+                        calibrated: isCalibrated,
+                        nframes: isStacking && inputCount > 0 ? inputCount : nil,
+                        totalExposure: frameExposure,
                         gain: stackGain,
                         offset: stackOffset,
                         temperature: stackTempMean,

@@ -1,0 +1,57 @@
+id: calibrate_flats
+name: Calibrate Flat Frames Pipeline
+description: |
+  Subtracts a calibration frame from each raw flat frame to produce individual
+  calibrated flat frames.
+
+  Provide either a master dark flat (preferred — taken at the same exposure time as
+  the flat frames, removes bias and thermal noise) or a master bias (sufficient when
+  flat exposures are short enough that thermal noise is negligible).
+
+  Run master_darkflat or master_bias first, or provide your own master frame.
+
+  Stack the calibrated flat frames into a master flat using master_flat.
+
+  Output:
+  - calibrated_frame — one calibrated flat frame per input flat
+
+steps:
+  - id: subtract_calibration_from_flat
+    type: subtract_frames
+    name: Subtract Calibration Frame from Flat Frames
+    description: >
+      Removes the bias pedestal (and, if a dark flat is used, thermal noise) from each
+      flat frame. Provide either a master dark flat or a master bias.
+    dataInputs:
+      - name: input_frame
+        type: frameSet
+        from: flat_frames
+        is_collection: true
+        collection_mode: individually
+        metadata_restrictions:
+          frame_type:
+            - flat
+        description: Raw flat frames (one process per frame)
+      - name: subtract_frame
+        type: frame
+        from: calibration_frame
+        metadata_restrictions:
+          frame_type:
+            - bias
+            - masterBias
+            - darkFlat
+            - masterDarkFlat
+        description: Master dark flat or master bias to subtract from each flat frame
+    parameters:
+      - name: clip_to_zero
+        from: clip_to_zero
+        default_value: false
+        description: Clamp negative values to zero after subtraction
+    outputs:
+      - name: calibrated_frame
+        type: frame
+        description: Calibrated flat frame
+        metadata:
+          frame_type: "flat"
+          processing_stage: "calibration"
+          image_type: "grayscale"

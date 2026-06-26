@@ -1,0 +1,43 @@
+id: master_dark
+name: Master Dark Pipeline
+description: |
+  Stacks raw dark frames into a master dark frame.
+
+  The master dark retains the bias pedestal so that subtracting it from light
+  frames in calibrate_lights removes both dark current and bias in one step.
+
+  Dark frames must be taken at the same exposure time and sensor temperature as
+  the light frames they will be applied to — mismatches are logged as warnings
+  during calibrate_lights.
+
+  Output:
+  - master_frame — master dark frame ready to use in calibrate_lights
+
+steps:
+  - id: stack_dark
+    type: stack_calibration_frames
+    name: Stack Dark Frames
+    description: Combines raw dark frames into a master dark using median or mean.
+    dataInputs:
+      - name: input_frames
+        type: frameSet
+        from: dark_frames
+        is_collection: true
+        collection_mode: together
+        metadata_restrictions:
+          frame_type:
+            - dark
+        description: Raw dark frames to stack
+    parameters:
+      - name: method
+        from: stacking_method
+        default_value: "median"
+        description: Combine method — median (default) or mean
+    outputs:
+      - name: master_frame
+        type: frame
+        description: Master dark frame
+        metadata:
+          frame_type: "masterDark"
+          processing_stage: "calibration"
+          image_type: "grayscale"

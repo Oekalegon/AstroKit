@@ -69,9 +69,27 @@ public actor PipelineRunner {
         // Run the pipeline.
         try await self.runPipeline(device: device, commandQueue: commandQueue, registry: registry)
 
-        // Get all the output data from the data stack.
+        // Return only data produced by pipeline steps — exclude initial inputs.
+        // Initial inputs are stored with stepLinkID "initial.<name>"; split sub-processes
+        // also re-add individual frames with those same IDs. Filtering them out ensures
+        // autoArchiveResults only archives genuine pipeline outputs, not re-archived inputs.
         let outputData = await dataStack.getAll()
-        return outputData
+        return outputData.filter { data in
+            let stepLinkID: String?
+            if let frame = data as? Frame, let link = frame.outputLink,
+               case .output(_, _, _, let slid) = link {
+                stepLinkID = slid
+            } else if let frameSet = data as? FrameSet, let link = frameSet.outputLink,
+                      case .output(_, _, _, let slid) = link {
+                stepLinkID = slid
+            } else if let table = data as? TableData, let link = table.outputLink,
+                      case .output(_, _, _, let slid) = link {
+                stepLinkID = slid
+            } else {
+                stepLinkID = nil
+            }
+            return !(stepLinkID?.hasPrefix("initial.") ?? false)
+        }
     }
 
     private func runPipeline(
@@ -101,7 +119,7 @@ public actor PipelineRunner {
             )
 
             Logger.pipeline.debug("Iteration \(iterationCount): Found \(readyProcesses.count) ready processes")
-            
+
             if readyProcesses.isEmpty {
                 // Log why we're stopping
                 let pendingCount = await processStack.getPending().count
@@ -162,6 +180,12 @@ public actor PipelineRunner {
                 executedProcessIDs.insert(process.identifier)
             }
 
+            // After each execution batch, proactively synthesize any .together FrameSet / TableSet
+            // inputs that are still pending but whose individual frames/tables are now all available.
+            // This must happen before the next getReadyPending call; synthesis inside
+            // prepareProcessInputs is too late because it only runs after a process is ready.
+            await synthesizePendingCollectionInputs()
+
             // Check if we should complete after this iteration
             let processesExecutedThisIteration = processesToExecute.count
             if processesExecutedThisIteration == 0 {
@@ -180,6 +204,35 @@ public actor PipelineRunner {
         }
 
         Logger.pipeline.info("Pipeline execution complete after \(iterationCount) iterations")
+    }
+
+    /// Proactively synthesizes FrameSets and TableSets for all pending processes that
+    /// have collection inputs whose individual items are now all in the data stack.
+    /// Handles both `collection_mode: together` (explicit merge) and `collection_mode: individually`
+    /// when the input comes from a prior step that was itself split — in that case the N individually-
+    /// produced frames need to be re-assembled into a FrameSet so the next step can split them again.
+    /// Must be called after each execution batch so that `getReadyPending` finds the synthesized
+    /// collections on the next iteration.
+    private func synthesizePendingCollectionInputs() async {
+        let pending = await processStack.getPending()
+        for process in pending {
+            for inputLink in process.inputData {
+                guard case .input(_, let linkName, let type, _, let stepLinkID) = inputLink else { continue }
+                // Only synthesize FrameSet/TableSet inputs that come from a prior step output,
+                // not from the pipeline's initial user-supplied inputs.
+                guard !stepLinkID.hasPrefix("initial.") else { continue }
+                // Skip if the data is already in the stack.
+                guard await dataStack.get(by: inputLink) == nil else { continue }
+                switch type {
+                case .frameSet:
+                    _ = await synthesizeFrameSetFromFrames(stepLinkID: stepLinkID, linkName: linkName)
+                case .tableSet:
+                    _ = await synthesizeTableSetFromTables(stepLinkID: stepLinkID, linkName: linkName)
+                default:
+                    break
+                }
+            }
+        }
     }
 
     /// Filters ready processes into those with available processors and those without
@@ -259,36 +312,34 @@ public actor PipelineRunner {
                         if frames.count > 1 {
                             // We need to split - create one process per frame
                             var splitProcesses: [Process] = []
-                            
+
                             for (index, frame) in frames.enumerated() {
-                                // Create individual Frame data items for each frame in the FrameSet
-                                // Each frame needs to be added to the data stack with an outputLink
-                                // that matches the stepLinkID the split process will look for
+                                // Each individual frame gets a UUID-based stepLinkID so that the
+                                // corresponding split process can locate exactly this frame in the
+                                // data stack — shared stepLinkIDs cause all split processes to
+                                // resolve to the same (first) entry.
                                 var individualFrame = frame
-                                // Set the outputLink to match what the split process will look for
-                                // The stepLinkID should match the input link's stepLinkID
+                                let uniqueStepLinkID = "split-frame.\(individualFrame.identifier)"
                                 individualFrame.outputLink = .output(
-                                    process: UUID(), // Synthetic process ID for the split
+                                    process: UUID(),
                                     link: linkName,
                                     type: .frame,
-                                    stepLinkID: stepLinkID // Use the stepLinkID from the input link
+                                    stepLinkID: uniqueStepLinkID
                                 )
-                                // Add the individual frame to the data stack
                                 await dataStack.add(data: individualFrame)
 
                                 // Create a new process for this frame
-                                // Modify the input link to be a frame instead of frameSet
+                                // Modify the input link to be a frame instead of frameSet,
+                                // pointing to the unique stepLinkID for this specific frame.
                                 let modifiedInputData = process.inputData.map { inputLink in
-                                    if case .input(let processId, let inputLinkName, _, let inputCollectionMode, let inputStepLinkID) = inputLink {
+                                    if case .input(let processId, let inputLinkName, _, let inputCollectionMode, _) = inputLink {
                                         if inputLinkName == linkName {
-                                            // Change this input to be a frame (not frameSet) for the split process
-                                            // Use the same stepLinkID so it matches the individual frame we just created
                                             return ProcessDataLink.input(
                                                 process: processId,
                                                 link: inputLinkName,
                                                 type: .frame,
                                                 collectionMode: inputCollectionMode,
-                                                stepLinkID: inputStepLinkID
+                                                stepLinkID: uniqueStepLinkID
                                             )
                                         }
                                     }
@@ -403,8 +454,9 @@ public actor PipelineRunner {
                     frameBaseStepLinkID = frameStepLinkID
                 }
 
-                // Match on base stepLinkID
-                if frameBaseStepLinkID == baseStepLinkID {
+                // Match on base stepLinkID; exclude uninstantiated placeholders
+                // (e.g. the original pre-split process output that was never executed).
+                if frameBaseStepLinkID == baseStepLinkID && frame.isInstantiated {
                     matchingFrames.append(frame)
                 }
             }
@@ -644,6 +696,20 @@ public actor PipelineRunner {
                     if !allowed.contains(actual) {
                         throw ProcessorExecutionError.executionFailed(
                             "Input '\(dataInput.name)': frame type '\(actual)' is not allowed. " +
+                            "Expected one of: \(allowed.joined(separator: ", "))."
+                        )
+                    }
+                }
+            }
+
+            if let plRestriction = restrictions["processing_level"],
+               case .allowedValues(let allowed) = plRestriction,
+               !allowed.isEmpty {
+                for frame in frames {
+                    let actual = frame.processingLevel
+                    if !allowed.contains(actual) {
+                        throw ProcessorExecutionError.executionFailed(
+                            "Input '\(dataInput.name)': processing level '\(actual)' is not allowed. " +
                             "Expected one of: \(allowed.joined(separator: ", "))."
                         )
                     }
