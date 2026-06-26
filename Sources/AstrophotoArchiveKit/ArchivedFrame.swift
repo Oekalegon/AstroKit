@@ -23,6 +23,12 @@ public struct ArchivedFrame: Sendable, Identifiable {
     public var siteLatitude: Double?    // degrees, north positive
     public var siteLongitude: Double?   // degrees, east positive
     public var focalLength: Double?     // mm
+    /// Telescope aperture diameter in mm (FITS `APTDIA`).
+    public var aperture: Double?
+    /// Physical (unbinned) sensor pixel size in µm.
+    public var pixelSizeUm: Double?
+    /// Pixel binning factor used during capture (FITS `XBINNING`; 1 = unbinned).
+    public var binning: Int?
     public var pixelScale: Double?      // arcsec/pixel
     public var temperature: Double?     // sensor °C
     public var timestamp: Date?
@@ -130,7 +136,8 @@ public struct ArchivedFrame: Sendable, Identifiable {
         healpixPixel: Int64?, frameType: String, isMaster: Bool = false, filter: String?, camera: String?,
         telescope: String? = nil, site: String? = nil,
         siteLatitude: Double? = nil, siteLongitude: Double? = nil,
-        focalLength: Double?, pixelScale: Double?, temperature: Double?, timestamp: Date?,
+        focalLength: Double?, aperture: Double? = nil, pixelSizeUm: Double? = nil, binning: Int? = nil,
+        pixelScale: Double?, temperature: Double?, timestamp: Date?,
         exposureTime: Double?, gain: Double?, offset: Double?,
         width: Int?, height: Int?, bitpix: Int?,
         calibrated: Bool, stacked: Bool, stretched: Bool,
@@ -176,6 +183,9 @@ public struct ArchivedFrame: Sendable, Identifiable {
         self.siteLatitude = siteLatitude
         self.siteLongitude = siteLongitude
         self.focalLength = focalLength
+        self.aperture = aperture
+        self.pixelSizeUm = pixelSizeUm
+        self.binning = binning
         self.pixelScale = pixelScale
         self.temperature = temperature
         self.timestamp = timestamp

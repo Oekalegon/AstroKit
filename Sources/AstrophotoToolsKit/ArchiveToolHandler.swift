@@ -53,27 +53,51 @@ public struct ArchiveToolHandler {
         var query = FrameQuery()
         query.objectName = args["object_name"] as? String
         query.camera     = args["camera"]      as? String
+        query.telescope  = args["telescope"]   as? String
+        query.site       = args["site"]        as? String
+        query.gain       = args["gain"]        as? Double
+        query.offset     = args["offset"]      as? Double
+        query.exposureTimeRange = doubleRange(args, min: "min_exposure",      max: "max_exposure")
+        query.focalLengthRange  = doubleRange(args, min: "min_focal_length",  max: "max_focal_length")
+        query.apertureRange     = doubleRange(args, min: "min_aperture",      max: "max_aperture")
+        query.pixelSizeRange    = doubleRange(args, min: "min_pixel_size",    max: "max_pixel_size")
+        query.binning    = args["binning"]     as? Int
         query.filters    = args["filters"]     as? [String]
         if let t = args["frame_type"] as? String { query.frameTypes = [t] }
         if let lvl = args["processing_level"] as? String {
             query.processingLevel = ProcessingLevel(rawValue: lvl)
         }
         if let cal = args["calibrated"] as? Bool { query.calibrated = cal }
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-        df.timeZone = TimeZone(identifier: "UTC")
+        if let master = args["is_master"] as? Bool { query.isMaster = master }
+        if let sid = args["session_id"] as? String { query.sessionID = UUID(uuidString: sid) }
         if let fromStr = args["from_date"] as? String,
            let toStr   = args["to_date"]   as? String,
-           let fromDate = df.date(from: fromStr),
-           let toDate   = df.date(from: toStr) {
+           let fromDate = ymdFormatter.date(from: fromStr),
+           let toDate   = ymdFormatter.date(from: toStr) {
             query.dateRange = DateInterval(start: fromDate, end: toDate)
         }
         if let center = args["temp_center"] as? Double {
             let tol = args["temp_tolerance"] as? Double ?? 2.0
             query.temperatureRange = (center - tol)...(center + tol)
         }
-        query.minStarCount       = args["min_stars"]            as? Int
-        query.maxBackgroundNoise = args["max_background_noise"] as? Double
+        query.pixelScaleRange   = doubleRange(args, min: "min_pixel_scale",    max: "max_pixel_scale")
+        query.widthRange        = intRange(args,    min: "min_width",           max: "max_width")
+        query.heightRange       = intRange(args,    min: "min_height",          max: "max_height")
+        query.bitpix            = args["bitpix"] as? Int
+        query.egainRange        = doubleRange(args, min: "min_egain",           max: "max_egain")
+        query.positionAngleRange = doubleRange(args, min: "min_position_angle", max: "max_position_angle",
+                                               hiOpen: 360.0)
+        query.addedAfter  = (args["added_after"]  as? String).flatMap { ymdFormatter.date(from: $0) }
+        query.addedBefore = (args["added_before"] as? String).flatMap { ymdFormatter.date(from: $0) }
+        query.maxFWHM                = args["max_fwhm"]                 as? Double
+        query.maxEccentricity        = args["max_eccentricity"]         as? Double
+        query.minStarCount           = args["min_stars"]                as? Int
+        query.maxBackgroundNoise     = args["max_background_noise"]     as? Double
+        query.maxSaturatedStarCount  = args["max_saturated_star_count"] as? Int
+        query.maxHotPixelCount       = args["max_hot_pixel_count"]      as? Int
+        query.maxSunAltitude         = args["max_sun_altitude"]         as? Double
+        query.minMoonSeparation      = args["min_moon_separation"]      as? Double
+        query.maxMoonIllumination    = args["max_moon_illumination"]    as? Double
         return query
     }
 

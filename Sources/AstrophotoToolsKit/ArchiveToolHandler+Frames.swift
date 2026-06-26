@@ -197,14 +197,11 @@ extension ArchiveToolHandler {
         let showFrames    = kindStr == "both" || kindStr == "frames"
         let showFrameSets = kindStr == "both" || kindStr == "framesets"
 
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-        df.timeZone = TimeZone(identifier: "UTC")
         let dateRange: DateInterval? = {
             guard let fromStr = args["from_date"] as? String,
                   let toStr   = args["to_date"]   as? String,
-                  let fromDate = df.date(from: fromStr),
-                  let toDate   = df.date(from: toStr) else { return nil }
+                  let fromDate = ymdFormatter.date(from: fromStr),
+                  let toDate   = ymdFormatter.date(from: toStr) else { return nil }
             return DateInterval(start: fromDate, end: toDate)
         }()
 
@@ -219,6 +216,17 @@ extension ArchiveToolHandler {
             var query = FrameQuery()
             query.objectName = args["object_name"] as? String
             query.camera     = args["camera"]      as? String
+            query.telescope  = args["telescope"]   as? String
+            query.site       = args["site"]        as? String
+            query.gain       = args["gain"]        as? Double
+            query.offset     = args["offset"]      as? Double
+            query.exposureTimeRange = doubleRange(args, min: "min_exposure",      max: "max_exposure")
+            query.isMaster   = args["is_master"]   as? Bool
+            if let sidStr = args["session_id"] as? String { query.sessionID = UUID(uuidString: sidStr) }
+            query.focalLengthRange  = doubleRange(args, min: "min_focal_length",  max: "max_focal_length")
+            query.apertureRange     = doubleRange(args, min: "min_aperture",      max: "max_aperture")
+            query.pixelSizeRange    = doubleRange(args, min: "min_pixel_size",    max: "max_pixel_size")
+            query.binning    = args["binning"]     as? Int
             query.limit      = args["limit"]       as? Int
             query.frameTypes = args["frame_types"] as? [String]
             query.filters    = args["filters"]     as? [String]
@@ -235,10 +243,24 @@ extension ArchiveToolHandler {
             } else if args["include_rejected"] as? Bool == true {
                 query.rejectionFilter = .includeAll
             }
-            query.maxFWHM            = args["max_fwhm"]             as? Double
-            query.minStarCount       = args["min_stars"]            as? Int
-            query.maxBackgroundNoise = args["max_background_noise"] as? Double
-            query.maxEccentricity    = args["max_eccentricity"]     as? Double
+            query.pixelScaleRange    = doubleRange(args, min: "min_pixel_scale",    max: "max_pixel_scale")
+            query.widthRange         = intRange(args,    min: "min_width",           max: "max_width")
+            query.heightRange        = intRange(args,    min: "min_height",          max: "max_height")
+            query.bitpix             = args["bitpix"] as? Int
+            query.egainRange         = doubleRange(args, min: "min_egain",           max: "max_egain")
+            query.positionAngleRange = doubleRange(args, min: "min_position_angle",  max: "max_position_angle",
+                                                   hiOpen: 360.0)
+            query.addedAfter  = (args["added_after"]  as? String).flatMap { ymdFormatter.date(from: $0) }
+            query.addedBefore = (args["added_before"] as? String).flatMap { ymdFormatter.date(from: $0) }
+            query.maxFWHM                = args["max_fwhm"]                as? Double
+            query.minStarCount           = args["min_stars"]               as? Int
+            query.maxBackgroundNoise     = args["max_background_noise"]    as? Double
+            query.maxEccentricity        = args["max_eccentricity"]        as? Double
+            query.maxSaturatedStarCount  = args["max_saturated_star_count"] as? Int
+            query.maxHotPixelCount       = args["max_hot_pixel_count"]     as? Int
+            query.maxSunAltitude         = args["max_sun_altitude"]        as? Double
+            query.minMoonSeparation      = args["min_moon_separation"]     as? Double
+            query.maxMoonIllumination    = args["max_moon_illumination"]   as? Double
 
             let frames = try await archive.frames(matching: query)
             lines.append("Frames (\(frames.count)):")
@@ -265,6 +287,8 @@ extension ArchiveToolHandler {
             query.name       = args["name"]        as? String
             query.objectName = args["object_name"] as? String
             query.camera     = args["camera"]      as? String
+            query.telescope  = args["telescope"]   as? String
+            query.site       = args["site"]        as? String
             query.frameTypes = args["frame_types"] as? [String]
             query.filters    = args["filters"]     as? [String]
             if let lvl = args["processing_level"] as? String { query.processingLevel = ProcessingLevel(rawValue: lvl) }

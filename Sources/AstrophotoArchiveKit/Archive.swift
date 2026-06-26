@@ -162,6 +162,9 @@ public actor Archive {
             siteLatitude: meta.siteLatitude,
             siteLongitude: meta.siteLongitude,
             focalLength: meta.focalLength,
+            aperture: meta.aperture,
+            pixelSizeUm: meta.pixelSizeUm,
+            binning: meta.binning,
             pixelScale: meta.pixelScale,
             temperature: meta.temperature,
             timestamp: meta.timestamp,
@@ -503,6 +506,8 @@ public actor Archive {
             let needsNumeric = frame.exposureTime == nil || frame.gain == nil
                             || frame.offset == nil || frame.temperature == nil
                             || frame.egain == nil || frame.focalLength == nil
+                            || frame.aperture == nil || frame.pixelSizeUm == nil
+                            || frame.binning == nil
                             || frame.pixelScale == nil || frame.positionAngle == nil
                             || frame.siteLatitude == nil || frame.siteLongitude == nil
 
@@ -537,19 +542,23 @@ public actor Archive {
                     wroteAnything = true
                 }
 
-                let newExp   = frame.exposureTime  == nil ? meta.exposureTime  : nil
-                let newGain  = frame.gain          == nil ? meta.gain          : nil
-                let newOff   = frame.offset        == nil ? meta.offset        : nil
-                let newTemp  = frame.temperature   == nil ? meta.temperature   : nil
-                let newEgain = frame.egain         == nil ? meta.egain         : nil
-                let newFL    = frame.focalLength   == nil ? meta.focalLength   : nil
-                let newPS    = frame.pixelScale    == nil ? meta.pixelScale    : nil
-                let newPA    = frame.positionAngle == nil ? meta.positionAngle : nil
-                let newLat   = frame.siteLatitude  == nil ? meta.siteLatitude  : nil
-                let newLon   = frame.siteLongitude == nil ? meta.siteLongitude : nil
+                let newExp     = frame.exposureTime  == nil ? meta.exposureTime  : nil
+                let newGain    = frame.gain          == nil ? meta.gain          : nil
+                let newOff     = frame.offset        == nil ? meta.offset        : nil
+                let newTemp    = frame.temperature   == nil ? meta.temperature   : nil
+                let newEgain   = frame.egain         == nil ? meta.egain         : nil
+                let newFL      = frame.focalLength   == nil ? meta.focalLength   : nil
+                let newApt     = frame.aperture      == nil ? meta.aperture      : nil
+                let newPxSize  = frame.pixelSizeUm   == nil ? meta.pixelSizeUm   : nil
+                let newBin     = frame.binning       == nil ? meta.binning       : nil
+                let newPS      = frame.pixelScale    == nil ? meta.pixelScale    : nil
+                let newPA      = frame.positionAngle == nil ? meta.positionAngle : nil
+                let newLat     = frame.siteLatitude  == nil ? meta.siteLatitude  : nil
+                let newLon     = frame.siteLongitude == nil ? meta.siteLongitude : nil
                 if newExp != nil || newGain != nil || newOff != nil || newTemp != nil
-                    || newEgain != nil || newFL != nil || newPS != nil || newPA != nil
-                    || newLat != nil || newLon != nil {
+                    || newEgain != nil || newFL != nil || newApt != nil
+                    || newPxSize != nil || newBin != nil
+                    || newPS != nil || newPA != nil || newLat != nil || newLon != nil {
                     // If exposureTime is being written, recompute frame_signature so the
                     // deduplication index stays consistent with the corrected value.
                     let newSig: String? = newExp.map { exp in
@@ -568,6 +577,9 @@ public actor Archive {
                         temperature: newTemp,
                         egain: newEgain,
                         focalLength: newFL,
+                        aperture: newApt,
+                        pixelSizeUm: newPxSize,
+                        binning: newBin,
                         pixelScale: newPS,
                         positionAngle: newPA,
                         siteLatitude: newLat,

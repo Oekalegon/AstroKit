@@ -18,9 +18,50 @@ extension ArchiveDatabase {
             conditions.append("camera = ?")
             bindings.append(cam)
         }
+        if let scope = query.telescope {
+            conditions.append("telescope = ?")
+            bindings.append(scope)
+        }
+        if let s = query.site {
+            conditions.append("site = ?")
+            bindings.append(s)
+        }
+        if let g = query.gain {
+            conditions.append("gain = ?"); bindings.append(g)
+        }
+        if let o = query.offset {
+            conditions.append("offset = ?"); bindings.append(o)
+        }
+        if let etr = query.exposureTimeRange {
+            conditions.append("exposure_time >= ?"); bindings.append(etr.lowerBound)
+            conditions.append("exposure_time <= ?"); bindings.append(etr.upperBound)
+        }
+        if let master = query.isMaster {
+            // COALESCE treats pre-v37 NULL rows as 0 (non-master) so isMaster: false
+            // does not silently exclude frames archived before migration v37.
+            conditions.append("COALESCE(is_master, 0) = ?"); bindings.append(master ? 1 : 0)
+        }
+        if let sid = query.sessionID {
+            conditions.append("session_id = ?"); bindings.append(sid.uuidString)
+        }
         if let fl = query.focalLength {
             conditions.append("focal_length = ?")
             bindings.append(fl)
+        }
+        if let flr = query.focalLengthRange {
+            conditions.append("focal_length >= ?"); bindings.append(flr.lowerBound)
+            conditions.append("focal_length <= ?"); bindings.append(flr.upperBound)
+        }
+        if let ar = query.apertureRange {
+            conditions.append("aperture >= ?"); bindings.append(ar.lowerBound)
+            conditions.append("aperture <= ?"); bindings.append(ar.upperBound)
+        }
+        if let psr = query.pixelSizeRange {
+            conditions.append("pixel_size >= ?"); bindings.append(psr.lowerBound)
+            conditions.append("pixel_size <= ?"); bindings.append(psr.upperBound)
+        }
+        if let b = query.binning {
+            conditions.append("binning = ?"); bindings.append(Int64(b))
         }
         if let pixels = healpixPixels, !pixels.isEmpty {
             conditions.append("healpix_pixel IN (\(pixels.map { _ in "?" }.joined(separator: ",")))")
@@ -61,6 +102,36 @@ extension ArchiveDatabase {
         case .onlyRejected:    conditions.append("rejected = 1")
         case .includeAll:      break
         }
+        // Optics / sensor filters. NULL rows excluded implicitly by comparison semantics.
+        if let psr = query.pixelScaleRange {
+            conditions.append("pixel_scale >= ?"); bindings.append(psr.lowerBound)
+            conditions.append("pixel_scale <= ?"); bindings.append(psr.upperBound)
+        }
+        if let wr = query.widthRange {
+            conditions.append("width >= ?"); bindings.append(Int64(wr.lowerBound))
+            conditions.append("width <= ?"); bindings.append(Int64(wr.upperBound))
+        }
+        if let hr = query.heightRange {
+            conditions.append("height >= ?"); bindings.append(Int64(hr.lowerBound))
+            conditions.append("height <= ?"); bindings.append(Int64(hr.upperBound))
+        }
+        if let bp = query.bitpix {
+            conditions.append("bitpix = ?"); bindings.append(Int64(bp))
+        }
+        if let er = query.egainRange {
+            conditions.append("egain >= ?"); bindings.append(er.lowerBound)
+            conditions.append("egain <= ?"); bindings.append(er.upperBound)
+        }
+        if let par = query.positionAngleRange {
+            conditions.append("position_angle >= ?"); bindings.append(par.lowerBound)
+            conditions.append("position_angle <= ?"); bindings.append(par.upperBound)
+        }
+        if let after = query.addedAfter {
+            conditions.append("added_at >= ?"); bindings.append(iso.string(from: after))
+        }
+        if let before = query.addedBefore {
+            conditions.append("added_at <= ?"); bindings.append(iso.string(from: before))
+        }
         // Quality filters: NULL rows are implicitly excluded by the comparison (NULL <= x is NULL → false).
         if let maxFWHM = query.maxFWHM {
             conditions.append("median_fwhm <= ?"); bindings.append(maxFWHM)
@@ -73,6 +144,22 @@ extension ArchiveDatabase {
         }
         if let maxEcc = query.maxEccentricity {
             conditions.append("median_eccentricity <= ?"); bindings.append(maxEcc)
+        }
+        if let maxSat = query.maxSaturatedStarCount {
+            conditions.append("saturated_star_count <= ?"); bindings.append(Int64(maxSat))
+        }
+        if let maxHot = query.maxHotPixelCount {
+            conditions.append("hot_pixel_count <= ?"); bindings.append(Int64(maxHot))
+        }
+        // Celestial context filters. NULL rows excluded implicitly.
+        if let maxSun = query.maxSunAltitude {
+            conditions.append("sun_altitude <= ?"); bindings.append(maxSun)
+        }
+        if let minMoon = query.minMoonSeparation {
+            conditions.append("moon_separation >= ?"); bindings.append(minMoon)
+        }
+        if let maxPhase = query.maxMoonIllumination {
+            conditions.append("moon_illumination <= ?"); bindings.append(maxPhase)
         }
 
         var sql = "SELECT * FROM frames"
@@ -203,6 +290,9 @@ extension ArchiveDatabase {
         temperature: Double?,
         egain: Double?,
         focalLength: Double?,
+        aperture: Double? = nil,
+        pixelSizeUm: Double? = nil,
+        binning: Int? = nil,
         pixelScale: Double?,
         positionAngle: Double?,
         siteLatitude: Double? = nil,
@@ -211,6 +301,7 @@ extension ArchiveDatabase {
     ) throws {
         var setClauses: [String] = []
         var doubles: [(String, Double)] = []
+        var ints: [(String, Int64)] = []
         var strings: [(String, String)] = []
         if let v = exposureTime  { setClauses.append("exposure_time = ?");  doubles.append(("exposure_time",  v)) }
         if let v = gain          { setClauses.append("gain = ?");            doubles.append(("gain",           v)) }
@@ -218,6 +309,9 @@ extension ArchiveDatabase {
         if let v = temperature   { setClauses.append("temperature = ?");     doubles.append(("temperature",    v)) }
         if let v = egain         { setClauses.append("egain = ?");           doubles.append(("egain",          v)) }
         if let v = focalLength   { setClauses.append("focal_length = ?");    doubles.append(("focal_length",   v)) }
+        if let v = aperture      { setClauses.append("aperture = ?");        doubles.append(("aperture",       v)) }
+        if let v = pixelSizeUm   { setClauses.append("pixel_size = ?");      doubles.append(("pixel_size",     v)) }
+        if let v = binning       { setClauses.append("binning = ?");         ints.append(("binning", Int64(v))) }
         if let v = pixelScale    { setClauses.append("pixel_scale = ?");     doubles.append(("pixel_scale",    v)) }
         if let v = positionAngle { setClauses.append("position_angle = ?");  doubles.append(("position_angle", v)) }
         if let v = siteLatitude  { setClauses.append("site_latitude = ?");   doubles.append(("site_latitude",  v)) }
@@ -230,6 +324,7 @@ extension ArchiveDatabase {
         defer { sqlite3_finalize(stmt) }
         var pos: Int32 = 1
         for (_, v) in doubles { sqlite3_bind_double(stmt, pos, v); pos += 1 }
+        for (_, v) in ints    { sqlite3_bind_int64(stmt, pos, v);  pos += 1 }
         for (_, v) in strings { bind(stmt, pos, v); pos += 1 }
         bind(stmt, pos, id.uuidString)
         guard sqlite3_step(stmt) == SQLITE_DONE else {
@@ -456,6 +551,10 @@ extension ArchiveDatabase {
         frame.moonIllumination = columnDouble(stmt, 53)
         // is_master (col 54) added in migration v37.
         frame.isMaster = sqlite3_column_int(stmt, 54) != 0
+        // aperture (col 55), pixel_size (col 56), binning (col 57) added in migration v39.
+        frame.aperture    = columnDouble(stmt, 55)
+        frame.pixelSizeUm = columnDouble(stmt, 56)
+        frame.binning     = sqlite3_column_type(stmt, 57) != SQLITE_NULL ? Int(sqlite3_column_int(stmt, 57)) : nil
         return frame
     }
 }

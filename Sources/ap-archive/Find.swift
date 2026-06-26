@@ -29,8 +29,53 @@ struct Search: AsyncParsableCommand {
     @Option(name: .long, help: "Camera name, exact match. Applies to both.")
     var camera: String?
 
+    @Option(name: .long, help: "Telescope name, exact match (FITS TELESCOP). Applies to both.")
+    var telescope: String?
+
+    @Option(name: .long, help: "Observatory site name, exact match (FITS OBSERVAT). Applies to both.")
+    var site: String?
+
     @Option(name: .long, help: "Focal length in mm, exact match. Applies to frames.")
     var focalLength: Double?
+
+    @Option(name: .long, help: "Frames only: focal length ≥ this value (mm).")
+    var minFocalLength: Double?
+
+    @Option(name: .long, help: "Frames only: focal length ≤ this value (mm).")
+    var maxFocalLength: Double?
+
+    @Option(name: .long, help: "Frames only: telescope aperture ≥ this value (mm, FITS APTDIA).")
+    var minAperture: Double?
+
+    @Option(name: .long, help: "Frames only: telescope aperture ≤ this value (mm, FITS APTDIA).")
+    var maxAperture: Double?
+
+    @Option(name: .long, help: "Frames only: physical (unbinned) pixel size ≥ this value (µm).")
+    var minPixelSize: Double?
+
+    @Option(name: .long, help: "Frames only: physical (unbinned) pixel size ≤ this value (µm).")
+    var maxPixelSize: Double?
+
+    @Option(name: .long, help: "Frames only: pixel binning factor, exact match (FITS XBINNING; 1 = unbinned).")
+    var binning: Int?
+
+    @Option(name: .long, help: "Frames only: camera gain setting, exact match (FITS GAIN).")
+    var gain: Double?
+
+    @Option(name: .long, help: "Frames only: camera offset/pedestal setting, exact match (FITS OFFSET/PEDESTAL).")
+    var offset: Double?
+
+    @Option(name: .long, help: "Frames only: minimum exposure time in seconds.")
+    var minExposure: Double?
+
+    @Option(name: .long, help: "Frames only: maximum exposure time in seconds.")
+    var maxExposure: Double?
+
+    @Flag(name: .long, help: "Frames only: include only master calibration frames.")
+    var masterOnly: Bool = false
+
+    @Option(name: .long, help: "Frames only: filter by observing session UUID.")
+    var sessionId: String?
 
     @Option(name: .long, help: "Start date YYYY-MM-DD. Applies to both.")
     var from: String?
@@ -40,6 +85,45 @@ struct Search: AsyncParsableCommand {
 
     @Option(name: .long, help: "Partial match on frame set name (frame sets only).")
     var name: String?
+
+    @Option(name: .long, help: "Frames only: pixel scale ≥ this value (arcsec/px).")
+    var minPixelScale: Double?
+
+    @Option(name: .long, help: "Frames only: pixel scale ≤ this value (arcsec/px).")
+    var maxPixelScale: Double?
+
+    @Option(name: .long, help: "Frames only: image width ≥ this value (pixels).")
+    var minWidth: Int?
+
+    @Option(name: .long, help: "Frames only: image width ≤ this value (pixels).")
+    var maxWidth: Int?
+
+    @Option(name: .long, help: "Frames only: image height ≥ this value (pixels).")
+    var minHeight: Int?
+
+    @Option(name: .long, help: "Frames only: image height ≤ this value (pixels).")
+    var maxHeight: Int?
+
+    @Option(name: .long, help: "Frames only: FITS BITPIX bit depth, exact match (e.g. 16, 32, -32).")
+    var bitpix: Int?
+
+    @Option(name: .long, help: "Frames only: electron conversion factor ≥ this value (e⁻/ADU, FITS EGAIN).")
+    var minEgain: Double?
+
+    @Option(name: .long, help: "Frames only: electron conversion factor ≤ this value (e⁻/ADU, FITS EGAIN).")
+    var maxEgain: Double?
+
+    @Option(name: .long, help: "Frames only: field rotation position angle ≥ this value (degrees east of north).")
+    var minPositionAngle: Double?
+
+    @Option(name: .long, help: "Frames only: field rotation position angle ≤ this value (degrees east of north).")
+    var maxPositionAngle: Double?
+
+    @Option(name: .long, help: "Frames only: only frames added on or after this date (YYYY-MM-DD).")
+    var addedAfter: String?
+
+    @Option(name: .long, help: "Frames only: only frames added on or before this date (YYYY-MM-DD).")
+    var addedBefore: String?
 
     // Frames-only quality filters
     @Option(name: .long, help: "Frames only: median FWHM ≤ this value (pixels).")
@@ -53,6 +137,22 @@ struct Search: AsyncParsableCommand {
 
     @Option(name: .long, help: "Frames only: mean star eccentricity ≤ this value (0=circular).")
     var maxEccentricity: Double?
+
+    @Option(name: .long, help: "Frames only: at most this many saturated stars.")
+    var maxSaturatedStars: Int?
+
+    @Option(name: .long, help: "Frames only: at most this many hot pixels.")
+    var maxHotPixels: Int?
+
+    // Frames-only celestial context filters
+    @Option(name: .long, help: "Frames only: Sun altitude at capture time ≤ this value (degrees; use -18 for astronomical night).")
+    var maxSunAltitude: Double?
+
+    @Option(name: .long, help: "Frames only: Moon separation from target ≥ this value (degrees).")
+    var minMoonSeparation: Double?
+
+    @Option(name: .long, help: "Frames only: Moon illumination ≤ this fraction (0–1).")
+    var maxMoonIllumination: Double?
 
     @Flag(name: .long, help: "Frames only: only stacked (master) frames. Shorthand for --level stacked.")
     var stacked: Bool = false
@@ -90,9 +190,7 @@ struct Search: AsyncParsableCommand {
         let showFrames    = kind == .both || kind == .frames
         let showFrameSets = kind == .both || kind == .framesets
 
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-        df.timeZone = TimeZone(identifier: "UTC")
+        let df = ymdFormatter
         let dateRange: DateInterval? = {
             guard let fromStr = from, let toStr = to,
                   let fromDate = df.date(from: fromStr),
@@ -105,7 +203,26 @@ struct Search: AsyncParsableCommand {
             var query = FrameQuery()
             query.objectName  = object
             query.camera      = camera
+            query.telescope   = telescope
+            query.site        = site
             query.focalLength = focalLength
+            query.gain        = gain
+            query.offset      = offset
+            query.exposureTimeRange  = doubleRange(lo: minExposure,      hi: maxExposure)
+            if masterOnly { query.isMaster = true }
+            if let sid = sessionId { query.sessionID = UUID(uuidString: sid) }
+            query.focalLengthRange   = doubleRange(lo: minFocalLength,  hi: maxFocalLength)
+            query.apertureRange      = doubleRange(lo: minAperture,     hi: maxAperture)
+            query.pixelSizeRange     = doubleRange(lo: minPixelSize,    hi: maxPixelSize)
+            query.binning            = binning
+            query.pixelScaleRange    = doubleRange(lo: minPixelScale,   hi: maxPixelScale)
+            query.widthRange         = intRange(lo: minWidth,           hi: maxWidth)
+            query.heightRange        = intRange(lo: minHeight,          hi: maxHeight)
+            query.bitpix             = bitpix
+            query.egainRange         = doubleRange(lo: minEgain,        hi: maxEgain)
+            query.positionAngleRange = doubleRange(lo: minPositionAngle, hi: maxPositionAngle, hiOpen: 360.0)
+            query.addedAfter  = addedAfter.flatMap  { df.date(from: $0) }
+            query.addedBefore = addedBefore.flatMap { df.date(from: $0) }
             query.limit       = limit
             if let t = type {
                 query.frameTypes = t.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
@@ -121,10 +238,15 @@ struct Search: AsyncParsableCommand {
             }
             if rejectedOnly         { query.rejectionFilter = .onlyRejected }
             else if includeRejected { query.rejectionFilter = .includeAll }
-            query.maxFWHM            = maxFwhm
-            query.minStarCount       = minStars
-            query.maxBackgroundNoise = maxBackgroundNoise
-            query.maxEccentricity    = maxEccentricity
+            query.maxFWHM                = maxFwhm
+            query.minStarCount           = minStars
+            query.maxBackgroundNoise     = maxBackgroundNoise
+            query.maxEccentricity        = maxEccentricity
+            query.maxSaturatedStarCount  = maxSaturatedStars
+            query.maxHotPixelCount       = maxHotPixels
+            query.maxSunAltitude         = maxSunAltitude
+            query.minMoonSeparation      = minMoonSeparation
+            query.maxMoonIllumination    = maxMoonIllumination
             frames = try await archive.frames(matching: query)
         }
 
@@ -134,6 +256,8 @@ struct Search: AsyncParsableCommand {
             query.name       = name
             query.objectName = object
             query.camera     = camera
+            query.telescope  = telescope
+            query.site       = site
             if let t = type {
                 query.frameTypes = t.split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) }
             }
