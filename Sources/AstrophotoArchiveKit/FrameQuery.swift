@@ -19,6 +19,8 @@ public struct FrameQuery: Sendable, Codable {
     public var camera: String?
     public var telescope: String?
     public var site: String?
+    /// Exact match on focal length in mm. Prefer `focalLengthRange` for new callers;
+    /// kept for compatibility. Stored as REAL — integer values round-trip safely.
     public var focalLength: Double?
     /// Only include frames whose focal length is within this range (mm).
     public var focalLengthRange: ClosedRange<Double>?
@@ -29,8 +31,11 @@ public struct FrameQuery: Sendable, Codable {
     /// Exact match on binning factor (FITS `XBINNING`).
     public var binning: Int?
     /// Exact match on camera gain setting (FITS `GAIN` keyword).
+    /// Stored as REAL in SQLite — prefer integer values (e.g. 100.0) to avoid
+    /// floating-point equality mismatches for non-integer gains.
     public var gain: Double?
     /// Exact match on camera offset/pedestal setting (FITS `OFFSET`/`PEDESTAL` keyword).
+    /// Stored as REAL in SQLite — prefer integer values to avoid floating-point equality mismatches.
     public var offset: Double?
     /// Only include frames whose exposure time is within this range (seconds).
     public var exposureTimeRange: ClosedRange<Double>?
