@@ -152,6 +152,12 @@ struct Frameset: AsyncParsableCommand {
         @Option(name: .long, help: "Moon illumination ≤ this fraction (0–1).")
         var maxMoonIllumination: Double?
 
+        @Flag(name: .long, help: "Include only master calibration frames.")
+        var masterOnly: Bool = false
+
+        @Option(name: .long, help: "Only frames belonging to this observing session UUID.")
+        var sessionId: String?
+
         func makeQuery() -> FrameQuery {
             var query = FrameQuery()
             query.objectName = object
@@ -170,9 +176,11 @@ struct Frameset: AsyncParsableCommand {
             if let f = filter { query.filters    = [f] }
             if let lvl = level { query.processingLevel = ProcessingLevel(rawValue: lvl) }
             if calibrated { query.calibrated = true }
-            let df = ymdFormatter
+            if masterOnly { query.isMaster = true }
+            if let sid = sessionId { query.sessionID = UUID(uuidString: sid) }
             if let fromStr = from, let toStr = to,
-               let fromDate = df.date(from: fromStr), let toDate = df.date(from: toStr) {
+               let fromDate = ymdFormatter.date(from: fromStr),
+               let toDate   = ymdFormatter.date(from: toStr) {
                 query.dateRange = DateInterval(start: fromDate, end: toDate)
             }
             if let center = tempCenter {
@@ -185,8 +193,8 @@ struct Frameset: AsyncParsableCommand {
             query.bitpix             = bitpix
             query.egainRange         = doubleRange(lo: minEgain,         hi: maxEgain)
             query.positionAngleRange = doubleRange(lo: minPositionAngle, hi: maxPositionAngle, hiOpen: 360.0)
-            query.addedAfter  = addedAfter.flatMap  { df.date(from: $0) }
-            query.addedBefore = addedBefore.flatMap { df.date(from: $0) }
+            query.addedAfter  = addedAfter.flatMap  { ymdFormatter.date(from: $0) }
+            query.addedBefore = addedBefore.flatMap { ymdFormatter.date(from: $0) }
             // maxFwhm and maxEccentricity are NOT added to the query for frameset creation —
             // they become per-member exclusion thresholds instead (include-but-exclude semantics).
             // They ARE still added here so the same QueryOptions can be used for general queries.

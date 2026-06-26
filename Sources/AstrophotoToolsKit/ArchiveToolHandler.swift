@@ -89,6 +89,8 @@ public struct ArchiveToolHandler {
                                                hiOpen: 360.0)
         query.addedAfter  = (args["added_after"]  as? String).flatMap { ymdFormatter.date(from: $0) }
         query.addedBefore = (args["added_before"] as? String).flatMap { ymdFormatter.date(from: $0) }
+        query.maxFWHM                = args["max_fwhm"]                 as? Double
+        query.maxEccentricity        = args["max_eccentricity"]         as? Double
         query.minStarCount           = args["min_stars"]                as? Int
         query.maxBackgroundNoise     = args["max_background_noise"]     as? Double
         query.maxSaturatedStarCount  = args["max_saturated_star_count"] as? Int
