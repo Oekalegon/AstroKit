@@ -17,6 +17,9 @@ let package = Package(
             name: "HEALPixKit",
             targets: ["HEALPixKit"]),
         .library(
+            name: "AstroKitUI",
+            targets: ["AstroKitUI"]),
+        .library(
             name: "VSOP",
             targets: ["VSOP"]),
         .library(
@@ -58,6 +61,11 @@ let package = Package(
                 // across module boundaries, producing wrong rise/transit/set results in release builds.
                 .unsafeFlags(["-Xfrontend", "-disable-cmo"], .when(configuration: .release))
             ]
+        ),
+        .target(
+            name: "AstroKitUI",
+            dependencies: ["AstroKit"],
+            path: "Sources/AstroKitUI"
         ),
         .target(
             name: "VSOP",
