@@ -136,7 +136,8 @@ extension ArchiveDatabase {
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at, frame_type
             FROM sessions
             WHERE frame_type = 'light'
-               OR (frame_type IN ('dark', 'flat', 'bias') AND frame_count >= 2)
+               OR (frame_type IN ('dark', 'flat', 'bias', 'darkflat') AND frame_count >= 2 AND is_master = 0)
+               OR (frame_type IN ('dark', 'flat', 'bias', 'darkflat') AND is_master = 1)
             ORDER BY date DESC, start_time DESC
             """)
         defer { sqlite3_finalize(stmt) }
@@ -167,7 +168,9 @@ extension ArchiveDatabase {
     func calibrationSessions() throws -> [ObservingSession] {
         let stmt = try prepare("""
             SELECT id, name, date, is_night, latitude, longitude, frame_count, start_time, end_time, added_at, frame_type
-            FROM sessions WHERE frame_type IN ('dark', 'flat', 'bias') AND frame_count >= 2
+            FROM sessions
+            WHERE (frame_type IN ('dark', 'flat', 'bias', 'darkflat') AND frame_count >= 2 AND is_master = 0)
+               OR (frame_type IN ('dark', 'flat', 'bias', 'darkflat') AND is_master = 1)
             ORDER BY date DESC, start_time DESC
             """)
         defer { sqlite3_finalize(stmt) }

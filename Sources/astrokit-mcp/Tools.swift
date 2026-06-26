@@ -634,12 +634,20 @@ struct Tools {
                 } else {
                     let tmp = FileManager.default.temporaryDirectory
                         .appendingPathComponent("ap_result_\(UUID().uuidString).fits")
+                    let resolvedPipeline  = PipelineRegistry.shared.get(id: pipelineID)
+                    let resolvedImageType = resolvedPipeline.map {
+                        FITSTableWriter.resultFrameImageType(for: frame, in: $0)
+                    } ?? "Light Frame"
+                    let isMaster = resolvedPipeline.map {
+                        FITSTableWriter.resultFrameIsMaster(for: frame, in: $0)
+                    } ?? false
                     try FITSTableWriter.writeResultFrame(
                         pixelData: pixels, width: w, height: h,
                         pipelineID: pipelineID,
-                        imageType: "Light Frame",
+                        imageType: resolvedImageType,
                         filterName: stackFilter ?? frame.filterName,
-                        stacked: pipelineID == "frame_stacking",
+                        stacked: pipelineID == "frame_stacking" || isMaster,
+                        isMaster: isMaster,
                         nframes: inputCount > 0 ? inputCount : nil,
                         totalExposure: stackExposure,
                         gain: stackGain,

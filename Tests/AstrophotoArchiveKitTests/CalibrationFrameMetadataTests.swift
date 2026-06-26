@@ -57,7 +57,7 @@ struct CalibrationFrameMetadataTests {
         ("Bias Frame", "bias"),
         ("Dark Frame", "dark"),
         ("Flat Field", "flat"),
-        ("Dark Flat",  "dark"),   // dark flats normalize to "dark"
+        ("Dark Flat",  "darkFlat"),
     ])
     func calibrationDropsTargetMetadata(imageType: String, expectedType: String) throws {
         let url = tempFITSURL("cal")
@@ -150,6 +150,9 @@ struct CalibrationMigrationTests {
             ALTER TABLE frames DROP COLUMN sun_altitude;
             ALTER TABLE frames DROP COLUMN moon_separation;
             ALTER TABLE frames DROP COLUMN moon_illumination;
+            -- v35 added camera_hint to sessions; v37/v38 added is_master to frames/sessions.
+            -- sessions table was already dropped above (v31 rewind), so only frames needs cleanup.
+            ALTER TABLE frames DROP COLUMN is_master;
             PRAGMA user_version = 24;
             """, on: url)
 
@@ -216,6 +219,9 @@ struct CalibrationMigrationTests {
             ALTER TABLE frames DROP COLUMN sun_altitude;
             ALTER TABLE frames DROP COLUMN moon_separation;
             ALTER TABLE frames DROP COLUMN moon_illumination;
+            -- v35 added camera_hint to sessions; v37 added is_master to frames.
+            -- sessions table was already dropped above (v31 rewind), so only frames needs cleanup.
+            ALTER TABLE frames DROP COLUMN is_master;
             PRAGMA user_version = 25;
             """, on: url)
 

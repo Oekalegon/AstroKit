@@ -280,6 +280,7 @@ struct Frameset: AsyncParsableCommand {
             var parts: [String] = []
             if let v = q.object { parts.append(v) }
             if let v = q.type   { parts.append(v) }
+            if let v = q.camera { parts.append(v) }
             if let v = q.filter { parts.append(v) }
             if let f = q.from, let t = q.to { parts.append("\(f)–\(t)") }
             if let v = q.maxFwhm            { parts.append(String(format: "FWHM<%.1fpx", v)) }

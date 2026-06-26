@@ -1,0 +1,81 @@
+id: flat_calibration
+name: Flat Frame Calibration Pipeline
+description: |
+  Subtracts a master dark flat from each flat frame and stacks the result into a
+  master flat.
+
+  Requires a pre-made master dark flat taken at the same exposure time as the flat
+  frames (run darkflat_calibration first, or provide your own).
+
+  The flat filter must match the filter used for the light frames it will correct —
+  filter mismatches are logged as warnings during calibrate_lights.
+
+  Flats should be taken as close in time to the imaging session as possible (same
+  night is ideal) because dust and vignetting patterns can change.
+
+  Output:
+  - master_frame — master flat frame ready to use in calibrate_lights
+
+steps:
+  # Step 1: Subtract master dark flat from each flat frame
+  - id: subtract_darkflat_from_flat
+    type: subtract_frames
+    name: Subtract Dark Flat from Flat Frames
+    description: Removes thermal noise from each flat frame using the master dark flat.
+    dataInputs:
+      - name: input_frame
+        type: frameSet
+        from: flat_frames
+        is_collection: true
+        collection_mode: individually
+        metadata_restrictions:
+          frame_type:
+            - flat
+        description: Raw flat frames (one process per frame)
+      - name: subtract_frame
+        type: frame
+        from: master_darkflat
+        metadata_restrictions:
+          frame_type:
+            - darkFlat
+            - masterDarkFlat
+        description: Master dark flat to subtract from each flat frame
+    parameters:
+      - name: clip_to_zero
+        from: clip_to_zero
+        default_value: false
+        description: Clamp negative values to zero after subtraction
+    outputs:
+      - name: calibrated_frame
+        type: frame
+        description: Dark-flat-corrected flat frame
+        metadata:
+          frame_type: "calibratedFlat"
+          processing_stage: "calibration"
+          image_type: "grayscale"
+
+  # Step 2: Stack corrected flat frames into master flat
+  - id: stack_flat
+    type: stack_calibration_frames
+    name: Stack Flat Frames
+    description: Combines dark-flat-corrected flat frames into a master flat using median or mean.
+    dataInputs:
+      - name: input_frames
+        type: frameSet
+        from: subtract_darkflat_from_flat.calibrated_frame
+        is_collection: true
+        collection_mode: together
+        description: Corrected flat frames to stack
+    parameters:
+      - name: method
+        from: stacking_method
+        default_value: "median"
+        description: Combine method — median (default) or mean
+    outputs:
+      - name: master_frame
+        type: frame
+        description: Master flat frame
+        metadata:
+          frame_type: "masterFlat"
+          processing_stage: "calibration"
+          image_type: "grayscale"

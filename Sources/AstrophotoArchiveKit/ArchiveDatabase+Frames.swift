@@ -450,6 +450,8 @@ extension ArchiveDatabase {
         frame.sunAltitude    = columnDouble(stmt, 51)
         frame.moonSeparation = columnDouble(stmt, 52)
         frame.moonIllumination = columnDouble(stmt, 53)
+        // is_master (col 54) added in migration v37.
+        frame.isMaster = sqlite3_column_int(stmt, 54) != 0
         return frame
     }
 }

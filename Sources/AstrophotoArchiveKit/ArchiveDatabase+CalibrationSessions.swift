@@ -9,13 +9,17 @@ extension ArchiveDatabase {
     /// of the previous frame's end (= start + exposure), they join the same session.
     private static let calibrationSessionGapSeconds: TimeInterval = 300
 
-    /// Builds a human-readable name for a calibration session, following the same naming
-    /// convention as calibration frame display names in the archive browser.
+    /// Builds a human-readable name for a calibration session.
     ///
-    /// Examples: "Darks -10°C on 16 June 2026", "Flats OIII on 16 June 2026", "Bias on 16 June 2026"
-    private static func calibrationSessionName(
-        frameType: String, dateString: String,
-        temperature: Double?, filter: String?
+    /// Format: "{Type} [{qualifier}] - {Camera} - {Date}"
+    /// Examples: "Bias - ZWO CCD ASI290MM - 16 June 2026"
+    ///           "Dark -10°C - ZWO CCD ASI290MM - 16 June 2026"
+    ///           "Flat OIII - ZWO CCD ASI290MM - 16 June 2026"
+    ///           "Master Bias - ZWO CCD ASI290MM - 16 June 2026"
+    ///           "Bias - 16 June 2026"  (no camera in FITS header)
+    static func calibrationSessionName(
+        frameType: String, isMaster: Bool, dateString: String,
+        temperature: Double?, filter: String?, camera: String?
     ) -> String {
         let dateLabel: String
         if let date = sessionDateParser.date(from: dateString) {
@@ -23,32 +27,45 @@ extension ArchiveDatabase {
         } else {
             dateLabel = dateString
         }
-        var parts: [String]
+
+        var typeLabel: String
+        switch frameType.lowercased() {
+        case "bias":    typeLabel = isMaster ? "Master Bias"     : "Bias"
+        case "dark":    typeLabel = isMaster ? "Master Dark"     : "Dark"
+        case "flat":    typeLabel = isMaster ? "Master Flat"     : "Flat"
+        case "darkflat":typeLabel = isMaster ? "Master Dark Flat": "Dark Flat"
+        default:        typeLabel = frameType
+        }
+
         switch frameType.lowercased() {
         case "dark":
-            let tempLabel = temperature.map { String(format: "%g°C", $0) }
-            parts = ["Darks", tempLabel, "on", dateLabel].compactMap { $0 }
-        case "flat":
-            parts = ["Flats", filter, "on", dateLabel].compactMap { $0 }
-        default:
-            parts = ["Bias", "on", dateLabel]
+            if let t = temperature { typeLabel += " \(String(format: "%g°C", t))" }
+        case "flat", "darkflat":
+            if let f = filter { typeLabel += " \(f)" }
+        default: break
         }
-        return parts.joined(separator: " ")
+
+        var parts = [typeLabel]
+        if let cam = camera?.trimmingCharacters(in: .whitespaces), !cam.isEmpty {
+            parts.append(cam)
+        }
+        parts.append(dateLabel)
+        return parts.joined(separator: " - ")
     }
 
-    /// Returns true if a frame's temperature/filter constraints are compatible with a candidate
-    /// session's stored hints. Used by both `findOrCreateCalibrationSession` and
-    /// `mergeAdjacentCalibrationSessions` to keep matching rules in one place.
+    /// Returns true if a frame's constraints are compatible with a candidate session's stored hints.
+    /// Used by both `findOrCreateCalibrationSession` and `mergeAdjacentCalibrationSessions`.
     private func calibrationConstraintsMatch(
-        frameType: String,
-        frameTemp: Double?, frameFilter: String?,
-        sessionTemp: Double?, sessionFilter: String?
+        frameType: String, frameIsMaster: Bool,
+        frameTemp: Double?, frameFilter: String?, frameCamera: String?,
+        sessionIsMaster: Bool, sessionTemp: Double?, sessionFilter: String?, sessionCamera: String?
     ) -> Bool {
+        guard frameCamera == sessionCamera, frameIsMaster == sessionIsMaster else { return false }
         switch frameType.lowercased() {
         case "dark":
             if let t = frameTemp, let st = sessionTemp { return abs(t - st) <= 2.0 }
             return frameTemp == nil && sessionTemp == nil
-        case "flat":
+        case "flat", "darkflat":
             return sessionFilter == frameFilter
         default:
             return true
@@ -62,10 +79,12 @@ extension ArchiveDatabase {
     /// for darks, be within 2°C of the frame's temperature; for flats, match the filter exactly.
     func findOrCreateCalibrationSession(
         frameType: String,
+        isMaster: Bool = false,
         timestamp: Date,
         exposureTime: Double?,
         temperature: Double?,
-        filter: String?
+        filter: String?,
+        camera: String? = nil
     ) throws -> UUID {
         let df  = Self.sessionDateParser
         let frameEnd = timestamp.addingTimeInterval(exposureTime ?? 0)
@@ -77,9 +96,10 @@ extension ArchiveDatabase {
         // Without the lower bound, any frame timestamped before end_time (gap < 0) would
         // also match, incorrectly joining frames from other nights.
         let selectSQL = """
-            SELECT id, end_time, temperature_hint, filter_hint
+            SELECT id, end_time, temperature_hint, filter_hint, camera_hint, is_master
             FROM sessions
             WHERE frame_type = ?
+              AND is_master = ?
               AND end_time IS NOT NULL
               AND (julianday(?) - julianday(end_time)) * 86400 BETWEEN ? AND ?
             ORDER BY end_time DESC
@@ -88,19 +108,23 @@ extension ArchiveDatabase {
         let selectStmt = try prepare(selectSQL)
         defer { sqlite3_finalize(selectStmt) }
         bind(selectStmt, 1, frameType.lowercased())
-        bind(selectStmt, 2, iso.string(from: timestamp))
-        sqlite3_bind_double(selectStmt, 3, 0.0)
-        sqlite3_bind_double(selectStmt, 4, Self.calibrationSessionGapSeconds)
+        sqlite3_bind_int(selectStmt, 2, isMaster ? 1 : 0)
+        bind(selectStmt, 3, iso.string(from: timestamp))
+        sqlite3_bind_double(selectStmt, 4, 0.0)
+        sqlite3_bind_double(selectStmt, 5, Self.calibrationSessionGapSeconds)
 
         var matchedID: String?
         while sqlite3_step(selectStmt) == SQLITE_ROW {
             guard let idStr = columnText(selectStmt, 0) else { continue }
             let sessionTemp   = columnDouble(selectStmt, 2)
             let sessionFilter = columnText(selectStmt, 3)
+            let sessionCamera = columnText(selectStmt, 4)
+            let sessionIsMaster = sqlite3_column_int(selectStmt, 5) != 0
             guard calibrationConstraintsMatch(
-                frameType: frameType,
-                frameTemp: temperature, frameFilter: filter,
-                sessionTemp: sessionTemp, sessionFilter: sessionFilter
+                frameType: frameType, frameIsMaster: isMaster,
+                frameTemp: temperature, frameFilter: filter, frameCamera: camera,
+                sessionIsMaster: sessionIsMaster, sessionTemp: sessionTemp,
+                sessionFilter: sessionFilter, sessionCamera: sessionCamera
             ) else { continue }
             matchedID = idStr
             break
@@ -125,21 +149,22 @@ extension ArchiveDatabase {
             guard let uuid = UUID(uuidString: existing) else {
                 throw ArchiveError.databaseError("Malformed session UUID: \(existing)")
             }
-            try mergeAdjacentCalibrationSessions(into: uuid, frameType: frameType,
-                                                 temperature: temperature, filter: filter)
+            try mergeAdjacentCalibrationSessions(into: uuid, frameType: frameType, isMaster: isMaster,
+                                                 temperature: temperature, filter: filter, camera: camera)
             return uuid
         }
 
         // No matching open session — create a new one.
         let newID = UUID()
-        let name  = Self.calibrationSessionName(frameType: frameType, dateString: dateString,
-                                                temperature: temperature, filter: filter)
+        let name  = Self.calibrationSessionName(frameType: frameType, isMaster: isMaster,
+                                                dateString: dateString,
+                                                temperature: temperature, filter: filter, camera: camera)
         let insertSQL = """
             INSERT INTO sessions
                 (id, name, date, is_night, latitude, longitude, frame_type,
                  frame_count, start_time, end_time, added_at,
-                 temperature_hint, filter_hint)
-            VALUES (?, ?, ?, 0, 0, 0, ?, 1, ?, ?, ?, ?, ?)
+                 temperature_hint, filter_hint, camera_hint, is_master)
+            VALUES (?, ?, ?, 0, 0, 0, ?, 1, ?, ?, ?, ?, ?, ?, ?)
             """
         let insertStmt = try prepare(insertSQL)
         defer { sqlite3_finalize(insertStmt) }
@@ -154,11 +179,13 @@ extension ArchiveDatabase {
         bind(insertStmt, 7, iso.string(from: Date()))
         if let t = temperature { sqlite3_bind_double(insertStmt, 8, t) } else { sqlite3_bind_null(insertStmt, 8) }
         if let f = filter { bind(insertStmt, 9, f) } else { sqlite3_bind_null(insertStmt, 9) }
+        if let c = camera { bind(insertStmt, 10, c) } else { sqlite3_bind_null(insertStmt, 10) }
+        sqlite3_bind_int(insertStmt, 11, isMaster ? 1 : 0)
         guard sqlite3_step(insertStmt) == SQLITE_DONE else {
             throw ArchiveError.databaseError(dbErrorMessage())
         }
-        try mergeAdjacentCalibrationSessions(into: newID, frameType: frameType,
-                                             temperature: temperature, filter: filter)
+        try mergeAdjacentCalibrationSessions(into: newID, frameType: frameType, isMaster: isMaster,
+                                             temperature: temperature, filter: filter, camera: camera)
         return newID
     }
 
@@ -179,8 +206,10 @@ extension ArchiveDatabase {
     private func mergeAdjacentCalibrationSessions(
         into sessionID: UUID,
         frameType: String,
+        isMaster: Bool,
         temperature: Double?,
-        filter: String?
+        filter: String?,
+        camera: String?
     ) throws {
         while true {
             // Current time window of our session (need both ends for bidirectional adjacency check).
@@ -198,9 +227,10 @@ extension ArchiveDatabase {
             // out of temporal order: the newly created session may start inside an existing
             // session's window rather than after it.
             let findSQL = """
-                SELECT id, end_time, frame_count, temperature_hint, filter_hint, start_time
+                SELECT id, end_time, frame_count, temperature_hint, filter_hint, start_time, camera_hint, is_master
                 FROM sessions
                 WHERE frame_type = ?
+                  AND is_master = ?
                   AND id != ?
                   AND start_time IS NOT NULL
                   AND end_time IS NOT NULL
@@ -217,13 +247,14 @@ extension ArchiveDatabase {
             let findStmt = try prepare(findSQL)
             defer { sqlite3_finalize(findStmt) }
             bind(findStmt, 1, frameType.lowercased())
-            bind(findStmt, 2, sessionID.uuidString)
-            bind(findStmt, 3, endStr)                                    // forward: other.start vs our.end
-            sqlite3_bind_double(findStmt, 4, Self.calibrationSessionGapSeconds)
-            bind(findStmt, 5, startStr)                                  // backward: other.end vs our.start
-            sqlite3_bind_double(findStmt, 6, Self.calibrationSessionGapSeconds)
-            bind(findStmt, 7, endStr)                                    // ORDER BY forward
-            bind(findStmt, 8, startStr)                                  // ORDER BY backward
+            sqlite3_bind_int(findStmt, 2, isMaster ? 1 : 0)
+            bind(findStmt, 3, sessionID.uuidString)
+            bind(findStmt, 4, endStr)                                    // forward: other.start vs our.end
+            sqlite3_bind_double(findStmt, 5, Self.calibrationSessionGapSeconds)
+            bind(findStmt, 6, startStr)                                  // backward: other.end vs our.start
+            sqlite3_bind_double(findStmt, 7, Self.calibrationSessionGapSeconds)
+            bind(findStmt, 8, endStr)                                    // ORDER BY forward
+            bind(findStmt, 9, startStr)                                  // ORDER BY backward
 
             var srcID: String?
             var srcEndStr: String?
@@ -231,12 +262,15 @@ extension ArchiveDatabase {
             var srcCount = 0
             while sqlite3_step(findStmt) == SQLITE_ROW {
                 guard let idStr = columnText(findStmt, 0) else { continue }
-                let adjTemp   = columnDouble(findStmt, 3)
-                let adjFilter = columnText(findStmt, 4)
+                let adjTemp     = columnDouble(findStmt, 3)
+                let adjFilter   = columnText(findStmt, 4)
+                let adjCamera   = columnText(findStmt, 6)
+                let adjIsMaster = sqlite3_column_int(findStmt, 7) != 0
                 guard calibrationConstraintsMatch(
-                    frameType: frameType,
-                    frameTemp: temperature, frameFilter: filter,
-                    sessionTemp: adjTemp, sessionFilter: adjFilter
+                    frameType: frameType, frameIsMaster: isMaster,
+                    frameTemp: temperature, frameFilter: filter, frameCamera: camera,
+                    sessionIsMaster: adjIsMaster, sessionTemp: adjTemp,
+                    sessionFilter: adjFilter, sessionCamera: adjCamera
                 ) else { continue }
                 srcID       = idStr
                 srcEndStr   = columnText(findStmt, 1)
@@ -303,19 +337,19 @@ extension ArchiveDatabase {
         // this avoids holding a read cursor open across the nested SAVEPOINTs that
         // mergeAdjacentCalibrationSessions uses.
         let selectSQL = """
-            SELECT id, frame_type, timestamp, exposure_time, temperature, filter
+            SELECT id, frame_type, timestamp, exposure_time, temperature, filter, camera, is_master
             FROM frames
             WHERE session_id IS NULL
               AND timestamp IS NOT NULL
-              AND LOWER(frame_type) IN ('bias', 'dark', 'flat')
-              AND processing_level = 'raw'
-            ORDER BY LOWER(frame_type), timestamp
+              AND LOWER(frame_type) IN ('bias','dark','flat','darkflat')
+            ORDER BY LOWER(frame_type), is_master, timestamp
             """
         let stmt = try prepare(selectSQL)
         defer { sqlite3_finalize(stmt) }
 
         typealias FrameRecord = (id: String, frameType: String, timestamp: Date,
-                                 exposureTime: Double?, temperature: Double?, filter: String?)
+                                 exposureTime: Double?, temperature: Double?, filter: String?,
+                                 camera: String?, isMaster: Bool)
         var records: [FrameRecord] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             guard let frameID   = columnText(stmt, 0),
@@ -323,7 +357,8 @@ extension ArchiveDatabase {
                   let tsStr     = columnText(stmt, 2),
                   let timestamp = iso.date(from: tsStr) else { continue }
             records.append((frameID, frameType, timestamp,
-                            columnDouble(stmt, 3), columnDouble(stmt, 4), columnText(stmt, 5)))
+                            columnDouble(stmt, 3), columnDouble(stmt, 4), columnText(stmt, 5),
+                            columnText(stmt, 6), sqlite3_column_int(stmt, 7) != 0))
         }
         guard !records.isEmpty else { return }
 
@@ -337,9 +372,9 @@ extension ArchiveDatabase {
             defer { sqlite3_finalize(updateStmt) }
             for record in records {
                 let sid = try findOrCreateCalibrationSession(
-                    frameType: record.frameType, timestamp: record.timestamp,
+                    frameType: record.frameType, isMaster: record.isMaster, timestamp: record.timestamp,
                     exposureTime: record.exposureTime, temperature: record.temperature,
-                    filter: record.filter)
+                    filter: record.filter, camera: record.camera)
                 sqlite3_reset(updateStmt)
                 sqlite3_clear_bindings(updateStmt)
                 bind(updateStmt, 1, sid.uuidString)

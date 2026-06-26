@@ -154,6 +154,7 @@ public actor Archive {
             ra: meta.ra, dec: meta.dec,
             healpixPixel: healpixPixel,
             frameType: meta.frameType,
+            isMaster: meta.isMaster,
             filter: ArchiveDatabase.canonicalFilterName(meta.filter),
             camera: meta.camera,
             telescope: meta.telescope,
@@ -212,16 +213,17 @@ public actor Archive {
             try await database.updateSessionID(frameID: frame.id, sessionID: sid)
             frame.sessionID = sid
         }
-        // Auto-assign to a calibration session: new raw calibration frames with a timestamp.
+        // Auto-assign to a calibration session: new calibration frames (raw or master) with a timestamp.
         // Duplicates are skipped — backfillCalibrationSessions() handles them.
-        if isNew, frame.processingLevel == .raw,
+        if isNew,
            FITSHeaderReader.calibrationFrameTypes.contains(frame.frameType),
            let ts = meta.timestamp {
             let sid = try await database.findOrCreateCalibrationSession(
-                frameType: frame.frameType, timestamp: ts,
+                frameType: frame.frameType, isMaster: frame.isMaster, timestamp: ts,
                 exposureTime: meta.exposureTime,
                 temperature: meta.temperature,
-                filter: meta.filter)
+                filter: meta.filter,
+                camera: meta.camera)
             try await database.updateSessionID(frameID: frame.id, sessionID: sid)
             frame.sessionID = sid
         }
@@ -590,17 +592,17 @@ public actor Archive {
                     wroteAnything = true
                 }
 
-                // Auto-assign a calibration session if this raw calibration frame has a
-                // timestamp but was never grouped.
+                // Auto-assign a calibration session if this calibration frame (raw or master)
+                // has a timestamp but was never grouped.
                 if frame.sessionID == nil,
-                   frame.processingLevel == .raw,
                    FITSHeaderReader.calibrationFrameTypes.contains(frame.frameType),
                    let ts = meta.timestamp ?? frame.timestamp {
                     let sid = try await database.findOrCreateCalibrationSession(
-                        frameType: frame.frameType, timestamp: ts,
+                        frameType: frame.frameType, isMaster: frame.isMaster, timestamp: ts,
                         exposureTime: meta.exposureTime ?? frame.exposureTime,
                         temperature: meta.temperature ?? frame.temperature,
-                        filter: meta.filter ?? frame.filter)
+                        filter: meta.filter ?? frame.filter,
+                        camera: meta.camera ?? frame.camera)
                     try await database.updateSessionID(frameID: frame.id, sessionID: sid)
                     wroteAnything = true
                 }

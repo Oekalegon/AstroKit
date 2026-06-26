@@ -173,6 +173,21 @@ public actor ProcessorRegistry {
         if implementations[celestialContext.id] == nil {
             register(celestialContext)
         }
+
+        let calibrationStacking = CalibrationStackingProcessor()
+        if implementations[calibrationStacking.id] == nil {
+            register(calibrationStacking)
+        }
+
+        let subtractFrames = SubtractFramesProcessor()
+        if implementations[subtractFrames.id] == nil {
+            register(subtractFrames)
+        }
+
+        let divideNormalizedFrame = DivideNormalizedFrameProcessor()
+        if implementations[divideNormalizedFrame.id] == nil {
+            register(divideNormalizedFrame)
+        }
     }
 
     /// Register a processor using its `id` property

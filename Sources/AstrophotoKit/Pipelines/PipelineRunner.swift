@@ -583,6 +583,11 @@ public actor PipelineRunner {
             let inputs = try await prepareProcessInputs(process: runningProcess)
             var outputs = try await prepareProcessOutputs(process: runningProcess)
 
+            // Validate metadata restrictions on initial (user-supplied) inputs only.
+            if let step = pipeline.steps.first(where: { $0.id == runningProcess.stepIdentifier }) {
+                try validateMetadataRestrictions(step: step, inputs: inputs)
+            }
+
             // Execute the processor (outputs are passed as inout to be instantiated)
             try processor.execute(
                 inputs: inputs,
@@ -605,6 +610,45 @@ public actor PipelineRunner {
             runningProcess.markAsFailed(error: error)
             await processStack.update(process: runningProcess)
             throw error
+        }
+    }
+
+    /// Validates `metadata_restrictions` declared on a step's inputs against the resolved data.
+    /// Only checks initial pipeline inputs (those whose `from` does not reference a prior step),
+    /// because intermediate frames are typed by construction and checking them would produce
+    /// false positives (output placeholders default to `.light`).
+    private func validateMetadataRestrictions(
+        step: PipelineStep,
+        inputs: [String: ProcessData]
+    ) throws {
+        for dataInput in step.dataInputs {
+            // Skip frames produced by an earlier step — only validate external inputs.
+            guard !dataInput.from.contains(".") else { continue }
+            guard let restrictions = dataInput.metadataRestrictions else { continue }
+
+            let data = inputs[dataInput.name]
+            let frames: [Frame]
+            if let frame = data as? Frame {
+                frames = [frame]
+            } else if let frameSet = data as? FrameSet {
+                frames = frameSet.frames
+            } else {
+                continue
+            }
+
+            if let frameTypeRestriction = restrictions["frame_type"],
+               case .allowedValues(let allowed) = frameTypeRestriction,
+               !allowed.isEmpty {
+                for frame in frames {
+                    let actual = frame.type.rawValue
+                    if !allowed.contains(actual) {
+                        throw ProcessorExecutionError.executionFailed(
+                            "Input '\(dataInput.name)': frame type '\(actual)' is not allowed. " +
+                            "Expected one of: \(allowed.joined(separator: ", "))."
+                        )
+                    }
+                }
+            }
         }
     }
 

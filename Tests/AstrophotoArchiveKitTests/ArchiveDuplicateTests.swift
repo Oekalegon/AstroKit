@@ -27,6 +27,7 @@ extension FrameArchiveMetadata {
             processingLevel: .raw
         )
     }
+
 }
 
 // MARK: - FolderOrganizer tests
