@@ -79,12 +79,10 @@ Executes a pipeline on a FITS file and prints the results.
 ap run star_detection --input M51.fits
 ```
 
-**Multi-input pipeline:**
+**Multi-frame pipeline (FrameSet input):**
 
 ```bash
-ap run dark_calibration \
-  --input light_frame:light.fits \
-  --input dark_frame:dark.fits
+ap run master_dark --input @frameset:9895364D-AD01-4BC9-A10A-CD9911648104
 ```
 
 **With parameters:**
@@ -182,7 +180,12 @@ The same data is available for archived frames via `ap-archive headers <frame-id
 | `collimation_reflector_radial` | Radial collimation analysis |
 | `autofocus_focused` | Autofocus curve for focused images |
 | `autofocus_donut` | Autofocus curve for donut (defocused) images |
-| `dark_calibration` | Dark frame calibration |
+| `master_bias` | Stack bias frames into a master bias |
+| `master_dark` | Stack dark frames into a master dark |
+| `master_darkflat` | Stack dark flat frames into a master dark flat |
+| `calibrate_flats` | Subtract master dark flat or master bias from each flat frame |
+| `master_flat` | Stack calibrated flat frames into a master flat |
+| `calibrate_lights` | Apply master dark and master flat to light frames |
 | `frame_registration` | Register multiple frames — 4-star quad patterns |
 | `frame_registration_triangle` | Register multiple frames — 3-star triangle patterns (sparse fields) |
 | `frame_stacking` | Register and stack multiple frames into a master light |

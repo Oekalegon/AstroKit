@@ -32,6 +32,7 @@ public struct CalibrationStackingProcessor: Processor {
         var rejMode:   UInt32  // 0=none
         var rejLow:    Float
         var rejHigh:   Float
+        var yOffset:   UInt32  // strip dispatch: shader adds this to gid.y
     }
 
     private struct FrameNorm {
@@ -39,7 +40,7 @@ public struct CalibrationStackingProcessor: Processor {
         var addOffset: Float
     }
 
-    private let stackMaxFrames = 128
+    private let stackMaxFrames = 256
 
     public func execute(
         inputs: [String: ProcessData],
@@ -164,7 +165,8 @@ public struct CalibrationStackingProcessor: Processor {
             stackMode: method == "mean" ? 0 : 2,  // 0=average, 2=median
             rejMode:   0,                           // no rejection for calibration stacking
             rejLow:    3.0,
-            rejHigh:   3.0
+            rejHigh:   3.0,
+            yOffset:   0
         )
         guard let paramsBuf = device.makeBuffer(
             bytes: &params, length: MemoryLayout<StackParams>.size, options: .storageModeShared
@@ -183,6 +185,12 @@ public struct CalibrationStackingProcessor: Processor {
             throw ProcessorExecutionError.executionFailed("Failed to create norm params buffer")
         }
 
+        let maxThreads = pipeline.maxTotalThreadsPerThreadgroup
+        let execWidth  = pipeline.threadExecutionWidth
+        Logger.processor.info(
+            "CalibrationStacking stack_frames: maxTotalThreadsPerThreadgroup=\(maxThreads) threadExecutionWidth=\(execWidth)"
+        )
+
         guard let cmdBuf = commandQueue.makeCommandBuffer(),
               let enc    = cmdBuf.makeComputeCommandEncoder() else {
             throw ProcessorExecutionError.executionFailed("Failed to create compute encoder")
@@ -192,16 +200,18 @@ public struct CalibrationStackingProcessor: Processor {
         enc.setTexture(outTex,   index: 1)
         enc.setBuffer(paramsBuf, offset: 0, index: 0)
         enc.setBuffer(normBuf,   offset: 0, index: 1)
-        let tg = MTLSize(width: 16, height: 16, depth: 1)
-        let gc = MTLSize(
-            width:  (width  + 15) / 16,
-            height: (height + 15) / 16,
-            depth: 1
-        )
-        enc.dispatchThreadgroups(gc, threadsPerThreadgroup: tg)
+        let tgW = min(execWidth, maxThreads)
+        let tgH = max(1, maxThreads / tgW)
+        let tg  = MTLSize(width: tgW, height: tgH, depth: 1)
+        enc.dispatchThreads(MTLSize(width: width, height: height, depth: 1),
+                            threadsPerThreadgroup: tg)
         enc.endEncoding()
         cmdBuf.commit()
         cmdBuf.waitUntilCompleted()
+
+        if let err = cmdBuf.error {
+            Logger.processor.error("CalibrationStacking stack_frames GPU error: \(err.localizedDescription)")
+        }
 
         return outTex
     }

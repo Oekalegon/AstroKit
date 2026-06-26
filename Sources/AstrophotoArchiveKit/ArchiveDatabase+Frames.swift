@@ -18,6 +18,10 @@ extension ArchiveDatabase {
             conditions.append("camera = ?")
             bindings.append(cam)
         }
+        if let fl = query.focalLength {
+            conditions.append("focal_length = ?")
+            bindings.append(fl)
+        }
         if let pixels = healpixPixels, !pixels.isEmpty {
             conditions.append("healpix_pixel IN (\(pixels.map { _ in "?" }.joined(separator: ",")))")
             for p in pixels { bindings.append(p) }

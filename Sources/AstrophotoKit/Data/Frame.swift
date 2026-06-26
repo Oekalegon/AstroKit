@@ -169,6 +169,13 @@ public struct Frame: ProcessData {
         return metadata(for: FrameMetadataKey.ccdTemperature) as? Double
     }
 
+    /// The processing level of the frame: "raw", "calibrated", "stacked", or "stretched".
+    /// Derived from AstrophotoKit FITS keywords: `STRETCHD`, `STACKED`, `CALIBRAT`.
+    /// Defaults to "raw" when none of these keywords are present.
+    public var processingLevel: String {
+        return metadata(for: FrameMetadataKey.processingLevel) as? String ?? "raw"
+    }
+
     /// Injects an EGAIN value from an external source (e.g. the archive camera_profiles table)
     /// when the FITS header did not carry an `EGAIN` keyword. Has no effect if egain is already set.
     public mutating func injectEgainIfMissing(_ egain: Double) {
@@ -265,7 +272,8 @@ public struct Frame: ProcessData {
         camera: String? = nil,
         telescope: String? = nil,
         site: String? = nil,
-        ccdTemperature: Double? = nil
+        ccdTemperature: Double? = nil,
+        processingLevel: String? = nil
     ) {
         self.instantiatedAt = texture != nil ? Date() : nil
         self.texture = texture
@@ -289,6 +297,7 @@ public struct Frame: ProcessData {
         if let telescope       = telescope       { metadata[FrameMetadataKey.telescope]       = telescope }
         if let site            = site            { metadata[FrameMetadataKey.site]            = site }
         if let ccdTemperature  = ccdTemperature  { metadata[FrameMetadataKey.ccdTemperature]  = ccdTemperature }
+        if let processingLevel = processingLevel { metadata[FrameMetadataKey.processingLevel] = processingLevel }
         self.metadata = metadata
         self.outputLink = outputProcess
         self.inputLinks = inputProcesses
@@ -414,6 +423,10 @@ public enum FrameMetadataKey: String, MetadataKey {
     /// The CCD/sensor temperature in °C (FITS `CCD-TEMP` or `CCDTEMP`), if available.
     case ccdTemperature
 
+    /// The processing level of the frame: "raw", "calibrated", "stacked", or "stretched".
+    /// Derived from AstrophotoKit FITS keywords (CALIBRAT, STACKED, STRETCHD).
+    case processingLevel
+
     /// The identifier for the metadata key.
     public var id: String {
         return "\(String(describing: Self.self)).\(rawValue)"
@@ -452,59 +465,50 @@ public enum FrameMetadataKey: String, MetadataKey {
             return String.self
         case .ccdTemperature:
             return Double.self
+        case .processingLevel:
+            return String.self
         }
     }
 }
 
 /// The type of frame.
+///
+/// Frame types are the five base categories. Processing level (raw, calibrated,
+/// stacked, stretched) is tracked separately via the ``FrameMetadataKey/processingLevel``
+/// metadata key and the AstrophotoKit FITS keywords `CALIBRAT`, `STACKED`, `STRETCHD`.
 public enum FrameType: String, Metadata {
 
-    /// A bias frame. 
+    /// A bias frame.
     case bias
 
-    /// A master bias frame.
+    /// A master bias frame (stacked bias).
     case masterBias
 
     /// A dark frame.
     case dark
 
-    /// A calibrated dark frame.
-    case calibratedDark
-
-    /// A master dark frame.
+    /// A master dark frame (stacked dark).
     case masterDark
 
     /// A flat frame.
     case flat
 
-    /// A calibrated flat frame.
-    case calibratedFlat
-
-    /// A master flat frame.
+    /// A master flat frame (stacked flat).
     case masterFlat
 
     /// A dark flat frame.
     case darkFlat
 
-    /// A calibrated dark flat frame.
-    case calibratedDarkFlat
-
-    /// A master dark flat frame.
+    /// A master dark flat frame (stacked dark flat).
     case masterDarkFlat
 
     /// A light frame.
     case light
 
-    /// An intermediate frame.
+    /// An intermediate frame produced inside a multi-step pipeline.
     case intermediate
 
-    /// A callibrated light frame.
-    case callibratedLight
-
-    /// A processed light frame.
-    case processedLight
-
-    /// A diagnostic frame (e.g. annotated detection overlay). Not suitable for stacking or quality analysis.
+    /// A diagnostic frame (e.g. annotated detection overlay).
     case diagnostic
 
     /// An unknown frame type.
@@ -514,16 +518,16 @@ public enum FrameType: String, Metadata {
     case multiple
 
     /// Whether this is a calibration frame type (bias, dark, flat, or dark flat,
-    /// including their calibrated and master variants).
+    /// including their master variants).
     ///
     /// Calibration frames do not image a sky target, so they carry no meaningful
     /// `OBJECT` name or RA/Dec coordinates.
     public var isCalibrationFrame: Bool {
         switch self {
         case .bias, .masterBias,
-             .dark, .calibratedDark, .masterDark,
-             .flat, .calibratedFlat, .masterFlat,
-             .darkFlat, .calibratedDarkFlat, .masterDarkFlat:
+             .dark, .masterDark,
+             .flat, .masterFlat,
+             .darkFlat, .masterDarkFlat:
             return true
         default:
             return false

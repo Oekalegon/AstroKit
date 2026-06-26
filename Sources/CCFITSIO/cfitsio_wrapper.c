@@ -399,6 +399,7 @@ int write_result_frame_fits(
     const char *date_beg,       // session start; NULL or empty = skip
     const char *date_end,       // session end; NULL or empty = skip
     int         is_master,      // T → write ISMASTER = T
+    int         calibrated,     // T → write CALIBRAT = T
     int        *status_out
 ) {
     int status = 0;
@@ -485,6 +486,10 @@ int write_result_frame_fits(
     if (is_master) {
         int one = 1;
         fits_update_key(fptr, TLOGICAL, "ISMASTER", &one, "Frame is a master calibration stack", &status);
+    }
+    if (calibrated) {
+        int one = 1;
+        fits_update_key(fptr, TLOGICAL, "CALIBRAT", &one, "Frame has been calibrated", &status);
     }
 
     long fpixel[2] = {1, 1};

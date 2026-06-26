@@ -17,6 +17,7 @@ public enum RejectionFilter: String, Sendable, Codable {
 public struct FrameQuery: Sendable, Codable {
     public var objectName: String?
     public var camera: String?
+    public var focalLength: Double?
     public var coneSearch: ConeSearch?
     public var frameTypes: [String]?
     public var filters: [String]?

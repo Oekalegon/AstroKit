@@ -126,6 +126,13 @@ extension Frame {
         let telescope  = fitsImage.metadata["TELESCOP"]?.stringValue?.nilIfBlank
         let site       = fitsImage.metadata["OBSERVAT"]?.stringValue?.nilIfBlank
 
+        // Derive processing level from AstrophotoKit FITS keywords (STRETCHD wins over STACKED wins over CALIBRAT).
+        let processingLevel: String
+        if fitsImage.metadata["STRETCHD"]?.boolValue == true   { processingLevel = "stretched" }
+        else if fitsImage.metadata["STACKED"]?.boolValue == true  { processingLevel = "stacked" }
+        else if fitsImage.metadata["CALIBRAT"]?.boolValue == true { processingLevel = "calibrated" }
+        else                                                       { processingLevel = "raw" }
+
         // Initialize using the main initializer
         self.init(
             type: frameType,
@@ -149,7 +156,8 @@ extension Frame {
             camera: camera,
             telescope: telescope,
             site: site,
-            ccdTemperature: ccdTemperature
+            ccdTemperature: ccdTemperature,
+            processingLevel: processingLevel
         )
     }
 

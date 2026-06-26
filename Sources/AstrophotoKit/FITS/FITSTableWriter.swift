@@ -83,6 +83,7 @@ private func writeResultFrameFITSC(
     _ dateBeg: UnsafePointer<CChar>,
     _ dateEnd: UnsafePointer<CChar>,
     _ isMaster: Int32,
+    _ calibrated: Int32,
     _ statusOut: UnsafeMutablePointer<Int32>
 ) -> Int32
 
@@ -380,6 +381,7 @@ public struct FITSTableWriter {
         filterName: String? = nil,
         stacked: Bool = false,
         isMaster: Bool = false,
+        calibrated: Bool = false,
         nframes: Int? = nil,
         totalExposure: Double? = nil,
         gain: Double? = nil,
@@ -430,6 +432,7 @@ public struct FITSTableWriter {
                     tempMin ?? .nan, tempMax ?? .nan,
                     cDateObs, cDateBeg, cDateEnd,
                     isMaster ? 1 : 0,
+                    calibrated ? 1 : 0,
                     &statusOut
                 )
             }
@@ -702,19 +705,19 @@ public struct FITSTableWriter {
 
 extension FITSTableWriter {
     /// Maps a pipeline YAML `frame_type` metadata value to the standard FITS IMAGETYP string.
-    /// Master calibration types map to their raw equivalents; use `isMasterFrameType(_:)` to
-    /// distinguish them and write the `ISMASTER` keyword.
+    /// Master calibration types map to their base equivalents; the `ISMASTER` keyword distinguishes them.
+    /// Calibrated frames also use base IMAGETYP; the `CALIBRAT` keyword distinguishes them.
     public static func fitsImageType(forFrameTypeMeta frameTypeMeta: String?) -> String {
         switch frameTypeMeta {
-        case "masterBias":          return "Bias Frame"
-        case "masterDark":          return "Dark Frame"
-        case "masterDarkFlat":      return "Dark Flat"
-        case "masterFlat":          return "Flat Field"
-        case "calibratedDark":      return "Dark Frame"
-        case "calibratedFlat":      return "Flat Field"
-        case "calibratedDarkFlat":  return "Dark Flat"
-        case "diagnostic":          return "Diagnostic Frame"
-        default:                    return "Light Frame"
+        case "bias", "masterBias":              return "Bias Frame"
+        case "dark", "masterDark",
+             "calibratedDark":                 return "Dark Frame"
+        case "darkFlat", "masterDarkFlat",
+             "calibratedDarkFlat":             return "Dark Flat"
+        case "flat", "masterFlat",
+             "calibratedFlat":                 return "Flat Field"
+        case "diagnostic":                     return "Diagnostic Frame"
+        default:                               return "Light Frame"
         }
     }
 
@@ -724,6 +727,24 @@ extension FITSTableWriter {
         case "masterBias", "masterDark", "masterDarkFlat", "masterFlat": return true
         default: return false
         }
+    }
+
+    /// Returns true when the result frame was produced by a calibration pipeline step.
+    /// Detected via the `processing_stage: "calibration"` field in the pipeline output metadata.
+    public static func resultFrameIsCalibrated(for frame: Frame, in pipeline: Pipeline) -> Bool {
+        return processingStage(for: frame, in: pipeline) == "calibration"
+    }
+
+    private static func processingStage(for frame: Frame, in pipeline: Pipeline) -> String? {
+        guard let outputLink = frame.outputLink,
+              case .output(_, _, _, let stepLinkID) = outputLink else { return nil }
+        let parts      = stepLinkID.split(separator: ".", maxSplits: 1)
+        let stepPart   = String(parts.first ?? Substring(stepLinkID))
+        let outputName = parts.count > 1 ? String(parts[1]) : ""
+        let baseStepID = String(stepPart.split(separator: "[").first ?? Substring(stepPart))
+        guard let step   = pipeline.steps.first(where: { $0.id == baseStepID }),
+              let output = step.outputs.first(where: { $0.name == outputName }) else { return nil }
+        return output.getMetadata()["processing_stage"] as? String
     }
 
     /// Resolves the FITS IMAGETYP string for a result frame by reading the `frame_type`

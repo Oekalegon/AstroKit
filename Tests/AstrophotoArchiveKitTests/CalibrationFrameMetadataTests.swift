@@ -306,9 +306,9 @@ struct FrameTypeCalibrationTests {
     func calibrationCases() {
         let calibration: [FrameType] = [
             .bias, .masterBias,
-            .dark, .calibratedDark, .masterDark,
-            .flat, .calibratedFlat, .masterFlat,
-            .darkFlat, .calibratedDarkFlat, .masterDarkFlat,
+            .dark, .masterDark,
+            .flat, .masterFlat,
+            .darkFlat, .masterDarkFlat,
         ]
         for type in calibration {
             #expect(type.isCalibrationFrame, "\(type) should be a calibration frame")
@@ -318,8 +318,7 @@ struct FrameTypeCalibrationTests {
     @Test("light and non-imaging types are not calibration frames")
     func nonCalibrationCases() {
         let nonCalibration: [FrameType] = [
-            .light, .callibratedLight, .processedLight,
-            .intermediate, .diagnostic, .unknown, .multiple,
+            .light, .intermediate, .diagnostic, .unknown, .multiple,
         ]
         for type in nonCalibration {
             #expect(!type.isCalibrationFrame, "\(type) should not be a calibration frame")

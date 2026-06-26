@@ -26,6 +26,9 @@ struct Frameset: AsyncParsableCommand {
         @Option(name: .long, help: "Camera name (exact match).")
         var camera: String?
 
+        @Option(name: .long, help: "Focal length in mm (exact match).")
+        var focalLength: Double?
+
         @Option(name: .long, help: "Start date (YYYY-MM-DD).")
         var from: String?
 
@@ -60,6 +63,7 @@ struct Frameset: AsyncParsableCommand {
             var query = FrameQuery()
             query.objectName = object
             query.camera = camera
+            query.focalLength = focalLength
             if let t = type   { query.frameTypes = [t] }
             if let f = filter { query.filters    = [f] }
             if let lvl = level { query.processingLevel = ProcessingLevel(rawValue: lvl) }

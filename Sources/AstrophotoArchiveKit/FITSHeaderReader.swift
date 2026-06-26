@@ -230,6 +230,7 @@ enum FITSHeaderReader {
     private static func parseFrameType(_ lowercased: String) -> String {
         // "Master *" IMAGETYP from external software: strip the qualifier and return the base type.
         // The master flag is carried separately via the ISMASTER keyword → FrameArchiveMetadata.isMaster.
+        // The calibrated flag is carried via the CALIBRAT keyword → FrameArchiveMetadata.calibrated.
         if lowercased.contains("master") {
             if lowercased.contains("dark") && lowercased.contains("flat") { return "darkFlat" }
             if lowercased.contains("dark")  { return "dark" }

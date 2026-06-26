@@ -214,19 +214,21 @@ struct Tools {
             guard !archivedFrames.isEmpty else {
                 throw ToolError("Frame set '\(frameSetID)' contains no frames.")
             }
+            // When both a frameset and a frame are provided, input_name identifies the frameset's
+            // slot; the frame fills the remaining unassigned slot automatically.
             let resolvedName: String
             if let name = inputName {
                 resolvedName = name
             } else if expectedInputs.count == 1 {
                 resolvedName = expectedInputs[0]
             } else {
-                throw ToolError("Multiple pipeline inputs detected; specify input_name.")
+                throw ToolError("Multiple pipeline inputs detected; specify input_name to identify the frameset slot.")
             }
             // Determine whether the pipeline consumes its top-level input as a FrameSet
             // (stacking/registration pipelines) or as individual Frames (analysis pipelines
             // such as frame_quality, star_detection, optical_quality).
             let topLevelInputType = pipeline.steps.flatMap { $0.dataInputs }
-                .first { !$0.from.contains(".") && $0.name == resolvedName }?.type
+                .first { !$0.from.contains(".") && $0.from == resolvedName }?.type
 
             if topLevelInputType == .frameSet {
                 // Frameset-native pipeline: pass all frames together.
@@ -253,7 +255,12 @@ struct Tools {
                     commandQueue: commandQueue
                 )
             }
-        } else if let frameID = inputFrameID {
+        }
+
+        // A single archive frame can be combined with input_frameset_id (e.g. master_bias
+        // alongside dark_frames). When combined, the frame fills the remaining unassigned
+        // pipeline input slot automatically; input_name is not needed for the frame.
+        if let frameID = inputFrameID {
             guard let uuid = UUID(uuidString: frameID) else {
                 throw ToolError("input_frame_id must be a valid UUID: \(frameID)")
             }
@@ -265,8 +272,23 @@ struct Tools {
             guard FileManager.default.fileExists(atPath: af.filePath) else {
                 throw ToolError("Archive frame file not found on disk: \(af.filePath)")
             }
+            // When combined with a frameset, auto-detect the remaining unassigned input slot.
+            // When standalone, use input_name or auto-detect.
             let resolvedName: String
-            if let name = inputName {
+            let alreadyAssigned = Set(pipelineInputs.keys)
+            let remaining = expectedInputs.filter { !alreadyAssigned.contains($0) }
+            if !alreadyAssigned.isEmpty {
+                // Combined mode: fill the only remaining slot.
+                guard remaining.count == 1 else {
+                    throw ToolError(
+                        remaining.isEmpty
+                        ? "All pipeline inputs are already assigned; input_frame_id is unexpected."
+                        : "Multiple unassigned pipeline inputs (\(remaining.sorted().joined(separator: ", "))). " +
+                          "Specify input_name to identify the frame slot."
+                    )
+                }
+                resolvedName = remaining[0]
+            } else if let name = inputName {
                 resolvedName = name
             } else if expectedInputs.count == 1 {
                 resolvedName = expectedInputs[0]
@@ -279,51 +301,55 @@ struct Tools {
             let fitsFile = try FITSFile(path: af.filePath)
             let img = try fitsFile.readFITSImage()
             pipelineInputs[resolvedName] = try Frame(fitsImage: img, device: device, filePath: af.filePath)
-        } else if let paths = resolvedPaths ?? inputPaths, !paths.isEmpty {
-            // Multi-frame input → FrameSet
-            let resolvedName: String
-            if let name = inputName {
-                resolvedName = name
-            } else if expectedInputs.count == 1 {
-                resolvedName = expectedInputs[0]
-            } else {
-                throw ToolError("Multiple pipeline inputs detected; specify input_name.")
-            }
-            var frames: [Frame] = []
-            for path in paths {
+        }
+
+        if pipelineInputs.isEmpty {
+            if let paths = resolvedPaths ?? inputPaths, !paths.isEmpty {
+                // Multi-frame input → FrameSet
+                let resolvedName: String
+                if let name = inputName {
+                    resolvedName = name
+                } else if expectedInputs.count == 1 {
+                    resolvedName = expectedInputs[0]
+                } else {
+                    throw ToolError("Multiple pipeline inputs detected; specify input_name.")
+                }
+                var frames: [Frame] = []
+                for path in paths {
+                    let expanded = (path as NSString).expandingTildeInPath
+                    guard FileManager.default.fileExists(atPath: expanded) else {
+                        throw ToolError("File not found: \(path)")
+                    }
+                    let fitsFile = try FITSFile(path: expanded)
+                    let img = try fitsFile.readFITSImage()
+                    let frame = try Frame(fitsImage: img, device: device, filePath: expanded)
+                    frames.append(frame)
+                }
+                pipelineInputs[resolvedName] = FrameSet(frames: frames, outputProcess: nil, inputProcesses: [])
+            } else if let path = inputPath {
                 let expanded = (path as NSString).expandingTildeInPath
                 guard FileManager.default.fileExists(atPath: expanded) else {
                     throw ToolError("File not found: \(path)")
                 }
+                let resolvedName: String
+                if let name = inputName {
+                    resolvedName = name
+                } else if expectedInputs.count == 1 {
+                    resolvedName = expectedInputs[0]
+                } else {
+                    throw ToolError(
+                        "Pipeline '\(pipelineID)' has multiple inputs: \(expectedInputs.sorted().joined(separator: ", ")). " +
+                        "Specify input_name."
+                    )
+                }
                 let fitsFile = try FITSFile(path: expanded)
-                let img = try fitsFile.readFITSImage()
-                let frame = try Frame(fitsImage: img, device: device, filePath: expanded)
-                frames.append(frame)
-            }
-            pipelineInputs[resolvedName] = FrameSet(frames: frames, outputProcess: nil, inputProcesses: [])
-        } else if let path = inputPath {
-            let expanded = (path as NSString).expandingTildeInPath
-            guard FileManager.default.fileExists(atPath: expanded) else {
-                throw ToolError("File not found: \(path)")
-            }
-            let resolvedName: String
-            if let name = inputName {
-                resolvedName = name
-            } else if expectedInputs.count == 1 {
-                resolvedName = expectedInputs[0]
+                pipelineInputs[resolvedName] = try fitsFile.readFITSImage()
             } else {
                 throw ToolError(
-                    "Pipeline '\(pipelineID)' has multiple inputs: \(expectedInputs.sorted().joined(separator: ", ")). " +
-                    "Specify input_name."
+                    "Provide input_frameset_id (archive FrameSet), input_frame_id (archive frame), " +
+                    "input_path (single file), input_paths (array), or input_dir (directory) for pipeline '\(pipelineID)'."
                 )
             }
-            let fitsFile = try FITSFile(path: expanded)
-            pipelineInputs[resolvedName] = try fitsFile.readFITSImage()
-        } else {
-            throw ToolError(
-                "Provide input_frameset_id (archive FrameSet), input_frame_id (archive frame), " +
-                "input_path (single file), input_paths (array), or input_dir (directory) for pipeline '\(pipelineID)'."
-            )
         }
 
         let start = Date()
@@ -556,12 +582,16 @@ struct Tools {
 
             for (name, value) in pipelineInputs.sorted(by: { $0.key < $1.key }) {
                 let pathsAndFrames: [(String, Frame?)]
+                let isFrameSetInput: Bool
                 if let frameSet = value as? FrameSet {
                     pathsAndFrames = frameSet.frames.compactMap { f in f.filePath.map { ($0, f) } }
+                    isFrameSetInput = true
                 } else if let frame = value as? Frame {
                     pathsAndFrames = frame.filePath.map { [($0, frame as Frame?)] } ?? []
+                    isFrameSetInput = false
                 } else {
                     pathsAndFrames = []
+                    isFrameSetInput = false
                 }
                 for (pos, (path, inputFrame)) in pathsAndFrames.enumerated() {
                     let af = try? await archive.frame(filePath: path)
@@ -573,12 +603,17 @@ struct Tools {
                         refRA  = af?.ra
                         refDec = af?.dec
                     }
-                    inputCount += 1
+                    // Only count frames from FrameSet inputs toward inputCount/totalExposure.
+                    // Single-Frame inputs (e.g. master_bias, master_dark) are auxiliary
+                    // calibration references, not frames being stacked.
+                    if isFrameSetInput {
+                        inputCount += 1
+                        let exp = af?.exposureTime ?? inputFrame?.exposureTime
+                        if let exp { totalExposure += exp }
+                    }
                     if let v = af?.objectName ?? inputFrame?.objectName { objectNamesSet.insert(v) }
                     let fn = af?.filter ?? inputFrame?.filterName
                     if let fn { filterNamesSet.insert(fn) }
-                    let exp = af?.exposureTime ?? inputFrame?.exposureTime
-                    if let exp { totalExposure += exp }
                     if let g = af?.gain ?? inputFrame?.gain { gainsSet.insert(g) }
                     if let o = af?.offset ?? inputFrame?.offset { offsetsSet.insert(o) }
                     if let t = af?.temperature { temperatures.append(t) }
@@ -641,15 +676,32 @@ struct Tools {
                     let isMaster = resolvedPipeline.map {
                         FITSTableWriter.resultFrameIsMaster(for: frame, in: $0)
                     } ?? false
+                    let isCalibrated = resolvedPipeline.map {
+                        FITSTableWriter.resultFrameIsCalibrated(for: frame, in: $0)
+                    } ?? false
+                    let isStacking = pipelineID == "frame_stacking" || isMaster
+                    // Master calibration frames: store per-frame exposure for matching against lights.
+                    // Light stacks: store total integration time.
+                    // Per-frame calibration (calibrate_flats, calibrate_lights): use frame's own exposure.
+                    let frameExposure: Double?
+                    if isMaster && inputCount > 0 {
+                        frameExposure = stackExposure.map { $0 / Double(inputCount) }
+                    } else if isCalibrated {
+                        frameExposure = frame.exposureTime
+                            ?? stackExposure.map { $0 / Double(max(inputCount, 1)) }
+                    } else {
+                        frameExposure = stackExposure
+                    }
                     try FITSTableWriter.writeResultFrame(
                         pixelData: pixels, width: w, height: h,
                         pipelineID: pipelineID,
                         imageType: resolvedImageType,
                         filterName: stackFilter ?? frame.filterName,
-                        stacked: pipelineID == "frame_stacking" || isMaster,
+                        stacked: isStacking,
                         isMaster: isMaster,
-                        nframes: inputCount > 0 ? inputCount : nil,
-                        totalExposure: stackExposure,
+                        calibrated: isCalibrated,
+                        nframes: isStacking && inputCount > 0 ? inputCount : nil,
+                        totalExposure: frameExposure,
                         gain: stackGain,
                         offset: stackOffset,
                         temperature: stackTempMean,
