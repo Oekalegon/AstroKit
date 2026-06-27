@@ -46,6 +46,26 @@ struct AngleLabelTests {
         #expect(raised.isEmpty)
     }
 
+    @Test("attributedString: mas unit suffix has secondary foreground color")
+    func masUnitSuffixIsSecondary() {
+        let val = 1234.5 * .pi / (180.0 * 3_600_000.0)
+        let f   = AngleFormatter(format: .mas, precision: 3)
+        let as_ = f.attributedString(from: val)
+        let colored = as_.runs.filter { $0.swiftUI.foregroundColor != nil }
+        #expect(colored.count == 1, "Expected 1 colored run (unit suffix), got \(colored.count)")
+        #expect(colored.first?.swiftUI.foregroundColor == Color.secondary)
+    }
+
+    @Test("attributedString: µas unit suffix has secondary foreground color")
+    func µasUnitSuffixIsSecondary() {
+        let val = 12345.0 * .pi / (180.0 * 3_600_000_000.0)
+        let f   = AngleFormatter(format: .µas, precision: 2)
+        let as_ = f.attributedString(from: val)
+        let colored = as_.runs.filter { $0.swiftUI.foregroundColor != nil }
+        #expect(colored.count == 1, "Expected 1 colored run (unit suffix), got \(colored.count)")
+        #expect(colored.first?.swiftUI.foregroundColor == Color.secondary)
+    }
+
     @Test("attributedString: string content matches format(_:) output for all formats")
     func attributedStringTextMatchesFormat() {
         let angles: [(AngleFormatter, Double)] = [
@@ -53,6 +73,7 @@ struct AngleLabelTests {
             (.init(format: .sdms, precision: 4), siriusDec),
             (.init(format: .dms,  precision: 2), Swift.abs(siriusDec)),
             (.init(format: .mas,  precision: 3), 1234.5 * .pi / (180.0 * 3_600_000.0)),
+            (.init(format: .µas,  precision: 2), 12345.0 * .pi / (180.0 * 3_600_000_000.0)),
         ]
         for (f, v) in angles {
             #expect(String(f.attributedString(from: v).characters) == f.format(v),
