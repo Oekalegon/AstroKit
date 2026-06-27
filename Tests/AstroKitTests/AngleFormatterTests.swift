@@ -241,6 +241,14 @@ struct AngleFormatterTests {
         #expect(unsigned.format(5 * .pi / 180) == "005°")
     }
 
+    @Test("requiresSign=true: zero angle shows '+' not '-'")
+    func requiresSignZeroIsPositive() {
+        // -0.0 < 0 is false in IEEE 754 — the sign branch must use < 0, not <= 0.
+        let f = AngleFormatter(format: .dms, precision: 1, requiresSign: true)
+        #expect(f.format(0)    == "+00°")
+        #expect(f.format(-0.0) == "+00°")
+    }
+
     // MARK: - mas format
 
     @Test("mas precision=1 gives integer milliarcseconds")
@@ -270,9 +278,31 @@ struct AngleFormatterTests {
     #expect(abs(parsed - val) < 1e-12, "Round-trip error: \(abs(parsed - val))")
     }
 
+    @Test("mas precision=1 formats zero as integer")
+    func masFormatZero() {
+        #expect(AngleFormatter(format: .mas, precision: 1).format(0) == "0 mas")
+    }
+
+    @Test("mas: negative value formats and parses correctly")
+    func masNegativeValue() throws {
+        // precision=4 → decPlaces=3 → "%.3f" → "-1.500 mas"
+        let val = -1.5 * .pi / (180.0 * 3_600_000.0)
+        let f   = AngleFormatter(format: .mas, precision: 4)
+        let s   = f.format(val)
+        #expect(s == "-1.500 mas")
+        let back = try #require(f.parse(s))
+        #expect(abs(back - val) < 1e-12)
+    }
+
     @Test("mas parse returns nil for non-mas string")
     func masParseRejectsUnrelated() {
         #expect(AngleFormatter(format: .mas, precision: 2).parse("06h45m") == nil)
+    }
+
+    @Test("mas: parse rejects string without space before unit")
+    func masParseRejectsNoSpace() {
+        // parseSubArc guards hasSuffix(" mas") — missing space must return nil.
+        #expect(AngleFormatter(format: .mas, precision: 2).parse("1234mas") == nil)
     }
 
     // MARK: - µas format
