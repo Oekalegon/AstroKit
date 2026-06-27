@@ -38,7 +38,7 @@ public struct AngleFormatter: Sendable, Codable, Hashable {
     public enum Format: Sendable, Codable, Hashable {
         /// Hours–minutes–seconds. Full circle = 24 h. No sign.
         case hms
-        /// Degrees–arcminutes–arcseconds. Sign controlled by `requiresSign`.
+        /// Degrees–arcminutes–arcseconds. Sign controlled by `signPolicy`.
         case dms
         /// Signed degrees–arcminutes–arcseconds. `+`/`-` prefix (for declination).
         /// Equivalent to `.dms` + `requiresSign = true`.
@@ -59,24 +59,43 @@ public struct AngleFormatter: Sendable, Codable, Hashable {
         case tertiary
     }
 
+    /// Controls whether a `+`/`-` sign prefix is emitted.
+    /// Applies to `.dms` and `.sdms` only; ignored for `.hms`, `.mas`, and `.µas`.
+    public enum SignPolicy: Sendable, Codable, Hashable {
+        /// Sign on for `.sdms`, off for all other formats. Default.
+        case auto
+        /// Always emit a `+`/`-` prefix (e.g. DMS field used for declination).
+        case required
+        /// Never emit a sign prefix (e.g. SDMS field used without sign indicator).
+        case suppressed
+    }
+
     // MARK: - Properties
 
     public var format: Format
     public var startComponent: StartComponent
     public var precision: Int
-    /// Whether a `+`/`-` sign prefix is required.
-    /// Defaults to `true` for `.sdms` and `false` for all other formats.
-    /// Applies to `.dms` and `.sdms` only; ignored for `.hms`, `.mas`, and `.µas`.
-    public var requiresSign: Bool
+    /// Controls sign-prefix emission for DMS/SDMS output.
+    public var signPolicy: SignPolicy
+
+    /// Whether a `+`/`-` sign prefix is produced.
+    /// Derived from `signPolicy`; applies to `.dms` and `.sdms` only.
+    public var requiresSign: Bool {
+        switch signPolicy {
+        case .auto:       return format == .sdms
+        case .required:   return true
+        case .suppressed: return false
+        }
+    }
 
     // MARK: - Initialisers
 
     public init(format: Format, precision: Int = 4, startComponent: StartComponent = .primary,
-                requiresSign: Bool? = nil) {
+                signPolicy: SignPolicy = .auto) {
         self.format         = format
         self.startComponent = startComponent
         self.precision      = max(1, precision)
-        self.requiresSign   = requiresSign ?? (format == .sdms)
+        self.signPolicy     = signPolicy
     }
 
     // MARK: - Public API

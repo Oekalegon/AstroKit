@@ -221,22 +221,22 @@ struct AngleFormatterTests {
 
     @Test("requiresSign can be overridden: .dms with sign")
     func requiresSignOverriddenOn() {
-        let f = AngleFormatter(format: .dms, precision: 1, requiresSign: true)
+        let f = AngleFormatter(format: .dms, precision: 1, signPolicy: .required)
         let s = f.format(30 * .pi / 180)
         #expect(s.hasPrefix("+"), "Expected '+' prefix, got: \(s)")
     }
 
     @Test("requiresSign can be overridden: .sdms without sign")
     func requiresSignOverriddenOff() {
-        let f = AngleFormatter(format: .sdms, precision: 1, requiresSign: false)
+        let f = AngleFormatter(format: .sdms, precision: 1, signPolicy: .suppressed)
         let s = f.format(30 * .pi / 180)
         #expect(!s.hasPrefix("+") && !s.hasPrefix("-"), "Expected no sign, got: \(s)")
     }
 
     @Test("requiresSign=true uses 2-digit degree field; false uses 3-digit")
     func requiresSignAffectsDegreeWidth() {
-        let signed   = AngleFormatter(format: .dms, precision: 1, requiresSign: true)
-        let unsigned = AngleFormatter(format: .dms, precision: 1, requiresSign: false)
+        let signed   = AngleFormatter(format: .dms, precision: 1, signPolicy: .required)
+        let unsigned = AngleFormatter(format: .dms, precision: 1, signPolicy: .suppressed)
         #expect(signed.format(5 * .pi / 180)   == "+05°")
         #expect(unsigned.format(5 * .pi / 180) == "005°")
     }
@@ -244,7 +244,7 @@ struct AngleFormatterTests {
     @Test("requiresSign=true: zero angle shows '+' not '-'")
     func requiresSignZeroIsPositive() {
         // -0.0 < 0 is false in IEEE 754 — the sign branch must use < 0, not <= 0.
-        let f = AngleFormatter(format: .dms, precision: 1, requiresSign: true)
+        let f = AngleFormatter(format: .dms, precision: 1, signPolicy: .required)
         #expect(f.format(0)    == "+00°")
         #expect(f.format(-0.0) == "+00°")
     }
