@@ -265,7 +265,9 @@ struct AngleFormatterTests {
         let f   = AngleFormatter(format: .mas, precision: 3)
         let str = f.format(val)
         let parsed = try #require(f.parse(str))
-        #expect(abs(parsed - val) < 1e-20, "Round-trip error: \(abs(parsed - val))")
+        // precision=3 → 2 d.p. in the mas domain; half-ULP ≈ 0.005 mas ≈ 2.4e-14 rad.
+    // 1e-12 is 100× that, covering both formatting rounding and Double conversion.
+    #expect(abs(parsed - val) < 1e-12, "Round-trip error: \(abs(parsed - val))")
     }
 
     @Test("mas parse returns nil for non-mas string")
@@ -289,7 +291,9 @@ struct AngleFormatterTests {
         let f   = AngleFormatter(format: .µas, precision: 4)
         let str = f.format(val)
         let parsed = try #require(f.parse(str))
-        #expect(abs(parsed - val) < 1e-24, "Round-trip error: \(abs(parsed - val))")
+        // precision=4 → 3 d.p. in the µas domain; half-ULP ≈ 0.0005 µas ≈ 2.4e-18 rad.
+    // 1e-15 is 1000× that, covering both formatting rounding and Double conversion.
+    #expect(abs(parsed - val) < 1e-15, "Round-trip error: \(abs(parsed - val))")
     }
 
     // MARK: - ParseableFormatStyle
