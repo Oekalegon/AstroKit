@@ -188,6 +188,10 @@ let package = Package(
             dependencies: ["HEALPixKit"]
         ),
         .testTarget(
+            name: "AstroKitUITests",
+            dependencies: ["AstroKit", "AstroKitUI"]
+        ),
+        .testTarget(
             name: "VSOPTests",
             dependencies: ["VSOP"]
         ),
