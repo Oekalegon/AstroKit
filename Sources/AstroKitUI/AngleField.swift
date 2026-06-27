@@ -110,7 +110,7 @@ public struct AngleField: View {
 
     @ViewBuilder private var subArcBody: some View {
         let decCount = max(0, formatter.precision - 1)
-        segmentField($primary, maxLength: 10, segment: .primary)
+        segmentField($primary, maxLength: 8, segment: .primary)
         if decCount > 0 {
             Text(".").padding(.horizontal, 1)
             segmentField($decimal, maxLength: decCount, segment: .decimal)
