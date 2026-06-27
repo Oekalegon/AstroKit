@@ -161,8 +161,12 @@ public struct AngleField: View {
         let limited = String(digits.prefix(maxLength))
         // Write back only if filtering changed the value (prevents infinite loop).
         if binding.wrappedValue != limited { binding.wrappedValue = limited }
-        // Auto-advance when the sub-field is full.
-        if limited.count == maxLength, let next = nextSegment(after: segment) {
+        // Auto-advance only when a new digit brought the field to capacity.
+        // Guard against the spurious second onChange triggered by the write-back above:
+        // that call has old="06a"/new="06" — digit count didn't increase, so skip.
+        let oldDigitCount = old.filter(\.isNumber).count
+        if limited.count == maxLength && limited.count > oldDigitCount,
+           let next = nextSegment(after: segment) {
             focus = next
         }
         // Backspace that emptied this sub-field → retreat to previous.
