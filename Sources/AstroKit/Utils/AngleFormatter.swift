@@ -5,11 +5,14 @@ import Foundation
 /// Formats a radian angle as a human-readable sexagesimal string.
 ///
 /// **Format** controls the notation:
-/// - `.hms`  — Hours–minutes–seconds; wraps to [0 h, 24 h). No sign prefix.
-/// - `.dms`  — Degrees–arcminutes–arcseconds; no sign prefix (for longitude).
-/// - `.sdms` — Signed degrees–arcminutes–arcseconds; `+`/`-` prefix (for declination).
+/// - `.hms`  — Hours–minutes–seconds; wraps to [0 h, 24 h). No sign.
+/// - `.dms`  — Degrees–arcminutes–arcseconds; sign determined by `requiresSign`.
+/// - `.sdms` — Signed degrees–arcminutes–arcseconds; `+`/`-` prefix. Equivalent to
+///             `.dms` + `requiresSign = true`; retained for source compatibility.
+/// - `.mas`  — Milliarcseconds; decimal with space: `"1234.567 mas"`.
+/// - `.µas`  — Microarcseconds; decimal with space: `"1234567.890 µas"`.
 ///
-/// **StartComponent** controls which unit appears first, allowing sub-unit-only output:
+/// **StartComponent** controls which unit appears first (not applicable for `.mas`/`.µas`):
 /// - `.primary`   (default) — start from hours / degrees
 /// - `.secondary`           — start from minutes / arcminutes
 /// - `.tertiary`            — start from seconds / arcseconds
@@ -23,24 +26,31 @@ import Foundation
 /// | 3         | `06h45m08s`       | `45m08s9`      | `08s93`       |
 /// | 4         | `06h45m08s9`      | `45m08s93`     | `08s934`      |
 ///
-/// The unit symbol acts as the decimal separator for the last component:
+/// For `.mas`/`.µas`, `precision` controls decimal places (1 = integer only, 2 = 1 d.p., etc.).
+///
+/// The unit symbol acts as the decimal separator for the last sexagesimal component:
 /// `08s9` rather than `08.9s`.
-public struct AngleFormatter: Sendable {
+public struct AngleFormatter: Sendable, Codable, Hashable {
 
     // MARK: - Nested types
 
     /// The output notation.
-    public enum Format: Sendable {
+    public enum Format: Sendable, Codable, Hashable {
         /// Hours–minutes–seconds. Full circle = 24 h. No sign.
         case hms
-        /// Degrees–arcminutes–arcseconds. No sign (suitable for unsigned longitude 0°–360°).
+        /// Degrees–arcminutes–arcseconds. Sign controlled by `signPolicy`.
         case dms
-        /// Signed degrees–arcminutes–arcseconds. `+`/`-` prefix (suitable for declination).
+        /// Signed degrees–arcminutes–arcseconds. `+`/`-` prefix (for declination).
+        /// Equivalent to `.dms` + `requiresSign = true`.
         case sdms
+        /// Milliarcseconds. Decimal with space: `"1234.567 mas"`.
+        case mas
+        /// Microarcseconds. Decimal with space: `"1234567.890 µas"`.
+        case µas
     }
 
     /// Which sexagesimal unit to show first.
-    public enum StartComponent: Sendable {
+    public enum StartComponent: Sendable, Codable, Hashable {
         /// Begin with hours (HMS) or degrees (DMS/SDMS). Default.
         case primary
         /// Begin with minutes (HMS) or arcminutes (DMS/SDMS).
@@ -49,18 +59,43 @@ public struct AngleFormatter: Sendable {
         case tertiary
     }
 
+    /// Controls whether a `+`/`-` sign prefix is emitted.
+    /// Applies to `.dms` and `.sdms` only; ignored for `.hms`, `.mas`, and `.µas`.
+    public enum SignPolicy: Sendable, Codable, Hashable {
+        /// Sign on for `.sdms`, off for all other formats. Default.
+        case auto
+        /// Always emit a `+`/`-` prefix (e.g. DMS field used for declination).
+        case required
+        /// Never emit a sign prefix (e.g. SDMS field used without sign indicator).
+        case suppressed
+    }
+
     // MARK: - Properties
 
     public var format: Format
     public var startComponent: StartComponent
     public var precision: Int
+    /// Controls sign-prefix emission for DMS/SDMS output.
+    public var signPolicy: SignPolicy
+
+    /// Whether a `+`/`-` sign prefix is produced.
+    /// Derived from `signPolicy`; applies to `.dms` and `.sdms` only.
+    public var requiresSign: Bool {
+        switch signPolicy {
+        case .auto:       return format == .sdms
+        case .required:   return true
+        case .suppressed: return false
+        }
+    }
 
     // MARK: - Initialisers
 
-    public init(format: Format, precision: Int = 4, startComponent: StartComponent = .primary) {
+    public init(format: Format, precision: Int = 4, startComponent: StartComponent = .primary,
+                signPolicy: SignPolicy = .auto) {
         self.format         = format
         self.startComponent = startComponent
         self.precision      = max(1, precision)
+        self.signPolicy     = signPolicy
     }
 
     // MARK: - Public API
@@ -68,9 +103,10 @@ public struct AngleFormatter: Sendable {
     /// Convert `radians` to a formatted sexagesimal string.
     public func format(_ radians: Double) -> String {
         switch format {
-        case .hms:  return formatHMS(radians)
-        case .dms:  return formatDMS(radians, signed: false)
-        case .sdms: return formatDMS(radians, signed: true)
+        case .hms:        return formatHMS(radians)
+        case .dms, .sdms: return formatDMS(radians)
+        case .mas:        return formatSubArc(radians, scale: 180.0 / .pi * 3_600_000.0,     unit: "mas")
+        case .µas:        return formatSubArc(radians, scale: 180.0 / .pi * 3_600_000_000.0, unit: "µas")
         }
     }
 
@@ -88,17 +124,41 @@ public struct AngleFormatter: Sendable {
     /// cannot be parsed.
     public func parse(_ string: String) -> Double? {
         switch format {
-        case .hms:  return AngleFormatter.parseUnits(string, u1: "h", u2: "m", u3: "s",
-                                                      scale: .pi / 12.0, signed: false)
-        case .dms:  return AngleFormatter.parseUnits(string, u1: "°", u2: "′", u3: "″",
-                                                      scale: .pi / 180.0, signed: false)
-        case .sdms: return AngleFormatter.parseUnits(string, u1: "°", u2: "′", u3: "″",
-                                                      scale: .pi / 180.0, signed: true)
+        case .hms:
+            return AngleFormatter.parseUnits(string, u1: "h", u2: "m", u3: "s",
+                                             scale: .pi / 12.0, signed: false)
+        case .dms, .sdms:
+            return AngleFormatter.parseUnits(string, u1: "°", u2: "′", u3: "″",
+                                             scale: .pi / 180.0, signed: requiresSign)
+        case .mas:
+            return parseSubArc(string, unit: "mas", scale: .pi / (180.0 * 3_600_000.0))
+        case .µas:
+            return parseSubArc(string, unit: "µas", scale: .pi / (180.0 * 3_600_000_000.0))
         }
     }
 
     /// Alias for `parse(_:)` for callers who prefer the `double(from:)` pattern.
     public func double(from string: String) -> Double? { parse(string) }
+
+    // MARK: - Private: sub-arc formatting
+
+    private func formatSubArc(_ radians: Double, scale: Double, unit: String) -> String {
+        let value = radians * scale
+        let decPlaces = max(0, precision - 1)
+        if decPlaces == 0 {
+            return "\(Int(value.rounded())) \(unit)"
+        } else {
+            return String(format: "%.\(decPlaces)f \(unit)", value)
+        }
+    }
+
+    private func parseSubArc(_ string: String, unit: String, scale: Double) -> Double? {
+        let trimmed = string.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasSuffix(" \(unit)") else { return nil }
+        let numStr = String(trimmed.dropLast(unit.count + 1))
+        guard let value = Double(numStr) else { return nil }
+        return value * scale
+    }
 
     // MARK: - Private parsing
 
@@ -155,11 +215,11 @@ public struct AngleFormatter: Sendable {
         return sexagesimal(norm * (12.0 / .pi), u1: "h", u2: "m", u3: "s", primaryWidth: 2)
     }
 
-    private func formatDMS(_ radians: Double, signed: Bool) -> String {
-        let sign = signed ? (radians < 0 ? "-" : "+") : ""
+    private func formatDMS(_ radians: Double) -> String {
+        let sign = requiresSign ? (radians < 0 ? "-" : "+") : ""
         let deg  = Swift.abs(radians) * (180.0 / .pi)
         // Unsigned longitude: 3-digit degrees (0–359°). Signed declination: 2-digit (±90°).
-        return sign + sexagesimal(deg, u1: "°", u2: "′", u3: "″", primaryWidth: signed ? 2 : 3)
+        return sign + sexagesimal(deg, u1: "°", u2: "′", u3: "″", primaryWidth: requiresSign ? 2 : 3)
     }
 
     /// Entry point: `value` is in hours (HMS) or degrees (DMS/SDMS), always non-negative.
@@ -234,5 +294,28 @@ public struct AngleFormatter: Sendable {
                 return "\(its)\(u3)\(dec)"
             }
         }
+    }
+}
+
+// MARK: - ParseableFormatStyle
+
+extension AngleFormatter: FormatStyle {
+    public typealias FormatInput  = Double
+    public typealias FormatOutput = String
+}
+
+extension AngleFormatter: ParseableFormatStyle {
+    public var parseStrategy: AngleParseStrategy { AngleParseStrategy(formatter: self) }
+}
+
+/// `ParseStrategy` that inverts `AngleFormatter.format(_:)` back to radians.
+public struct AngleParseStrategy: ParseStrategy, Sendable {
+    public let formatter: AngleFormatter
+
+    public func parse(_ value: String) throws -> Double {
+        guard let radians = formatter.parse(value) else {
+            throw CocoaError(.formatting)
+        }
+        return radians
     }
 }

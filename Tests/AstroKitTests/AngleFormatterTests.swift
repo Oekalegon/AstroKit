@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 import AstroKit
 
 @Suite("AngleFormatter")
@@ -207,5 +208,148 @@ struct AngleFormatterTests {
         #expect(f.format(5   * .pi / 180) == "005°")
         let s = f.format(siriusDec)
         #expect(!s.hasPrefix("+") && !s.hasPrefix("-"))
+    }
+
+    // MARK: - requiresSign
+
+    @Test("requiresSign defaults to true for .sdms, false for .dms and .hms")
+    func requiresSignDefaults() {
+        #expect(AngleFormatter(format: .sdms).requiresSign == true)
+        #expect(AngleFormatter(format: .dms).requiresSign == false)
+        #expect(AngleFormatter(format: .hms).requiresSign == false)
+    }
+
+    @Test("requiresSign can be overridden: .dms with sign")
+    func requiresSignOverriddenOn() {
+        let f = AngleFormatter(format: .dms, precision: 1, signPolicy: .required)
+        let s = f.format(30 * .pi / 180)
+        #expect(s.hasPrefix("+"), "Expected '+' prefix, got: \(s)")
+    }
+
+    @Test("requiresSign can be overridden: .sdms without sign")
+    func requiresSignOverriddenOff() {
+        let f = AngleFormatter(format: .sdms, precision: 1, signPolicy: .suppressed)
+        let s = f.format(30 * .pi / 180)
+        #expect(!s.hasPrefix("+") && !s.hasPrefix("-"), "Expected no sign, got: \(s)")
+    }
+
+    @Test("requiresSign=true uses 2-digit degree field; false uses 3-digit")
+    func requiresSignAffectsDegreeWidth() {
+        let signed   = AngleFormatter(format: .dms, precision: 1, signPolicy: .required)
+        let unsigned = AngleFormatter(format: .dms, precision: 1, signPolicy: .suppressed)
+        #expect(signed.format(5 * .pi / 180)   == "+05°")
+        #expect(unsigned.format(5 * .pi / 180) == "005°")
+    }
+
+    @Test("requiresSign=true: zero angle shows '+' not '-'")
+    func requiresSignZeroIsPositive() {
+        // -0.0 < 0 is false in IEEE 754 — the sign branch must use < 0, not <= 0.
+        let f = AngleFormatter(format: .dms, precision: 1, signPolicy: .required)
+        #expect(f.format(0)    == "+00°")
+        #expect(f.format(-0.0) == "+00°")
+    }
+
+    // MARK: - mas format
+
+    @Test("mas precision=1 gives integer milliarcseconds")
+    func masPrecision1() {
+        // 1 arcsecond = 1000 mas
+        let oneArcSec = .pi / (180.0 * 3600.0)
+        let f = AngleFormatter(format: .mas, precision: 1)
+        #expect(f.format(oneArcSec) == "1000 mas")
+    }
+
+    @Test("mas precision=4 gives 3 decimal places")
+    func masPrecision4() {
+        let val = 1.234 * .pi / (180.0 * 3_600_000.0)
+        let f = AngleFormatter(format: .mas, precision: 4)
+        let s = f.format(val)
+        #expect(s == "1.234 mas", "Got: \(s)")
+    }
+
+    @Test("mas parse round-trip")
+    func masParseRoundTrip() throws {
+        let val = 567.89 * .pi / (180.0 * 3_600_000.0)
+        let f   = AngleFormatter(format: .mas, precision: 3)
+        let str = f.format(val)
+        let parsed = try #require(f.parse(str))
+        // precision=3 → 2 d.p. in the mas domain; half-ULP ≈ 0.005 mas ≈ 2.4e-14 rad.
+        // 1e-12 is 100× that, covering both formatting rounding and Double conversion.
+        #expect(abs(parsed - val) < 1e-12, "Round-trip error: \(abs(parsed - val))")
+    }
+
+    @Test("mas precision=1 formats zero as integer")
+    func masFormatZero() {
+        #expect(AngleFormatter(format: .mas, precision: 1).format(0) == "0 mas")
+    }
+
+    @Test("mas: negative value formats and parses correctly")
+    func masNegativeValue() throws {
+        // precision=4 → decPlaces=3 → "%.3f" → "-1.500 mas"
+        let val = -1.5 * .pi / (180.0 * 3_600_000.0)
+        let f   = AngleFormatter(format: .mas, precision: 4)
+        let s   = f.format(val)
+        #expect(s == "-1.500 mas")
+        let back = try #require(f.parse(s))
+        #expect(abs(back - val) < 1e-12)
+    }
+
+    @Test("mas parse returns nil for non-mas string")
+    func masParseRejectsUnrelated() {
+        #expect(AngleFormatter(format: .mas, precision: 2).parse("06h45m") == nil)
+    }
+
+    @Test("mas: parse rejects string without space before unit")
+    func masParseRejectsNoSpace() {
+        // parseSubArc guards hasSuffix(" mas") — missing space must return nil.
+        #expect(AngleFormatter(format: .mas, precision: 2).parse("1234mas") == nil)
+    }
+
+    // MARK: - µas format
+
+    @Test("µas precision=1 gives integer microarcseconds")
+    func µasPrecision1() {
+        // 1 milliarcsecond = 1000 µas
+        let oneMas = .pi / (180.0 * 3_600_000.0)
+        let f = AngleFormatter(format: .µas, precision: 1)
+        #expect(f.format(oneMas) == "1000 µas")
+    }
+
+    @Test("µas parse round-trip")
+    func µasParseRoundTrip() throws {
+        let val = 12345.678 * .pi / (180.0 * 3_600_000_000.0)
+        let f   = AngleFormatter(format: .µas, precision: 4)
+        let str = f.format(val)
+        let parsed = try #require(f.parse(str))
+        // precision=4 → 3 d.p. in the µas domain; half-ULP ≈ 0.0005 µas ≈ 2.4e-18 rad.
+        // 1e-15 is 1000× that, covering both formatting rounding and Double conversion.
+        #expect(abs(parsed - val) < 1e-15, "Round-trip error: \(abs(parsed - val))")
+    }
+
+    // MARK: - ParseableFormatStyle
+
+    @Test("ParseableFormatStyle: parseStrategy.parse inverts format")
+    func parseableFormatStyleRoundTrip() throws {
+        let f      = AngleFormatter(format: .hms, precision: 4)
+        let result = try f.parseStrategy.parse(f.format(siriusRA))
+        #expect(abs(result - siriusRA) < 1e-5)
+    }
+
+    @Test("ParseableFormatStyle: parseStrategy.parse throws on invalid input")
+    func parseableFormatStyleThrows() {
+        let f = AngleFormatter(format: .hms, precision: 4)
+        #expect(throws: (any Error).self) { try f.parseStrategy.parse("not an angle") }
+    }
+
+    @Test("AngleFormatter is Hashable and Codable")
+    func hashableAndCodable() throws {
+        let f1 = AngleFormatter(format: .hms, precision: 3)
+        let f2 = AngleFormatter(format: .hms, precision: 3)
+        let f3 = AngleFormatter(format: .dms, precision: 3)
+        #expect(f1 == f2)
+        #expect(f1 != f3)
+        let data    = try JSONEncoder().encode(f1)
+        let decoded = try JSONDecoder().decode(AngleFormatter.self, from: data)
+        #expect(decoded == f1)
     }
 }
