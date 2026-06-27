@@ -194,7 +194,7 @@ public struct AngleField: View {
         switch focus {
         case .primary:
             let val = clampedPrimary((Int(primary) ?? 0) + delta)
-            primary = String(format: "%0\(primaryWidth)d", val)
+            primary = isSubArc ? "\(val)" : String(format: "%0\(primaryWidth)d", val)
         case .secondary:
             let val = ((Int(secondary) ?? 0) + delta + 60) % 60
             secondary = String(format: "%02d", val)
