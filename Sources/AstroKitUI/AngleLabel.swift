@@ -11,14 +11,17 @@ import AstroKit
 public struct AngleLabel: View {
     public let radians: Double
     public let formatter: AngleFormatter
+    public let superscriptFont: Font
 
-    public init(_ radians: Double, formatter: AngleFormatter) {
-        self.radians   = radians
-        self.formatter = formatter
+    public init(_ radians: Double, formatter: AngleFormatter,
+                superscriptFont: Font = .system(size: 9)) {
+        self.radians         = radians
+        self.formatter       = formatter
+        self.superscriptFont = superscriptFont
     }
 
     public var body: some View {
-        Text(formatter.attributedString(from: radians))
+        Text(formatter.attributedString(from: radians, superscriptFont: superscriptFont))
     }
 }
 

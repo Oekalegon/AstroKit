@@ -4,17 +4,18 @@ import AstroKit
 extension AngleFormatter {
     /// Returns an `AttributedString` version of the formatted angle.
     ///
-    /// - `.hms`: `h`, `m`, `s` unit symbols are raised as superscript (`.caption2` font,
-    ///   `baselineOffset` = 4).
+    /// - `.hms`: `h`, `m`, `s` unit symbols are raised as superscript using `superscriptFont`
+    ///   and `baselineOffset` = 4.
     /// - `.mas` / `.µas`: the unit suffix (`"mas"` / `"µas"`) is styled with `.secondary`
     ///   foreground color so it recedes visually behind the numeric value.
     /// - `.dms` / `.sdms`: returned as plain `AttributedString` with no attribute overrides.
-    public func attributedString(from radians: Double) -> AttributedString {
+    public func attributedString(from radians: Double,
+                                 superscriptFont: Font = .system(size: 9)) -> AttributedString {
         let plain = format(radians)
         switch format {
         case .hms:
             var supAttrs = AttributeContainer()
-            supAttrs.swiftUI.font = .caption2
+            supAttrs.swiftUI.font = superscriptFont
             supAttrs.swiftUI.baselineOffset = 4
             var result = AttributedString()
             var buffer = ""
