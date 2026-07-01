@@ -34,6 +34,7 @@ public struct AngleField: View {
 
     @Binding private var radians: Double
     private let formatter: AngleFormatter
+    private let superscriptFont: Font
 
     // MARK: State
 
@@ -52,9 +53,11 @@ public struct AngleField: View {
 
     // MARK: Init
 
-    public init(_ radians: Binding<Double>, formatter: AngleFormatter) {
-        self._radians  = radians
-        self.formatter = formatter
+    public init(_ radians: Binding<Double>, formatter: AngleFormatter,
+                superscriptFont: Font = .system(size: 9)) {
+        self._radians        = radians
+        self.formatter       = formatter
+        self.superscriptFont = superscriptFont
     }
 
     // MARK: - Body
@@ -144,7 +147,7 @@ public struct AngleField: View {
 
     private func unitLabel(_ text: String, superscript sup: Bool) -> some View {
         Text(text)
-            .font(sup ? .caption2 : .body.monospacedDigit())
+            .font(sup ? superscriptFont : .body.monospacedDigit())
             .baselineOffset(sup ? 4 : 0)
     }
 
